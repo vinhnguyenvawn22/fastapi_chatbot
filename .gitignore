@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+uploads/
+.sync-manifest.json
+uris.json
+data/ChatAI/service-account.json
