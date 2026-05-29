@@ -15,7 +15,7 @@ async def handle_chat(request):
 
     context = build_context(docs)
     prompt = build_prompt(request.question, context)
-    answer = await ask_gemini(prompt)
+    answer =  ask_gemini(prompt)
 
     return {
         "question": request.question,
