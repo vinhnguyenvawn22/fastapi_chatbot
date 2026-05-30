@@ -1,6 +1,7 @@
 from google import genai
 from app.core.config import GEMINI_API_KEY, GEMINI_MODEL
 
+
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 
@@ -11,10 +12,18 @@ def ask_gemini(prompt: str) -> str:
     try:
         response = client.models.generate_content(
             model=GEMINI_MODEL,
-            contents=prompt
+            contents=prompt,
         )
 
-        return response.text
+        return response.text or "Không tìm thấy nội dung phù hợp trong tài liệu."
 
     except Exception as e:
-        return f"Lỗi khi gọi Gemini API: {str(e)}"
+        error_message = str(e)
+
+        if "429" in error_message or "RESOURCE_EXHAUSTED" in error_message:
+            return "Hệ thống AI tạm thời vượt giới hạn sử dụng. Vui lòng thử lại sau ít phút."
+
+        if "503" in error_message or "UNAVAILABLE" in error_message:
+            return "Hệ thống AI đang bận, vui lòng thử lại sau ít phút."
+
+        return "Lỗi khi gọi Gemini API. Vui lòng thử lại sau."
