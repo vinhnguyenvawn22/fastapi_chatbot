@@ -1,8 +1,18 @@
 from fastapi import APIRouter
 
-router = APIRouter(prefix="/health", tags=["Health"])
+
+router = APIRouter(
+    prefix="/api",
+    tags=["Health"],
+)
 
 
-@router.get("/")
-async def health_check():
-    return {"status": "ok"}
+@router.get("/health")
+def health_check():
+    """
+    Kiểm tra trạng thái server.
+    """
+    return {
+        "status": "ok",
+        "message": "UNETI P.CNTT Chatbot API is running",
+    }
