@@ -1,35 +1,30 @@
-from fastapi import APIRouter, File, HTTPException, UploadFile
-
-
-router = APIRouter(
-    prefix="/api/documents",
-    tags=["Documents"],
+from fastapi import APIRouter, UploadFile, File
+from app.controller.document_controller import (
+    upload_document,
+    list_documents,
+    extract_pdf_text,
 )
+
+router = APIRouter()
 
 
 @router.post("/upload")
-async def upload_document(file: UploadFile = File(...)):
-    """
-    Endpoint upload tài liệu PDF.
+async def upload(file: UploadFile = File(...)):
+    return await upload_document(file)
 
-    Router chỉ kiểm tra request cơ bản.
-    Phần lưu file, đọc PDF, chunking, ingest dữ liệu sẽ do phần controller/data-layer xử lý sau.
-    """
-    try:
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="Tên file không hợp lệ")
 
-        if not file.filename.lower().endswith(".pdf"):
-            raise HTTPException(status_code=400, detail="Chỉ hỗ trợ upload file PDF")
+@router.get("/")
+async def get_documents():
+    return {
+        "files": list_documents()
+    }
 
-        return {
-            "message": "Router upload đã nhận file",
-            "file_name": file.filename,
-            "content_type": file.content_type,
-            "note": "Phần xử lý tài liệu sẽ được nối với controller sau.",
-        }
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@router.get("/{file_name}/text")
+async def get_document_text(file_name: str):
+    text = extract_pdf_text(file_name)
+
+    return {
+        "file_name": file_name,
+        "text": text,
+    }
