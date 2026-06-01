@@ -6,7 +6,7 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
-DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", "uploads/ChatAI")
+DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", "documents/pcntt")
 
 MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "20"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1200"))

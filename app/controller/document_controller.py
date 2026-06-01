@@ -40,12 +40,36 @@ def _safe_pdf_filename(filename: str) -> str:
     return name
 
 
+def _safe_relative_pdf_path(file_name: str) -> Path:
+    raw_name = str(file_name or "").strip().replace("\\", "/")
+
+    if not raw_name:
+        raise HTTPException(status_code=400, detail="Tên file không hợp lệ")
+
+    relative_path = Path(raw_name)
+
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        raise HTTPException(status_code=400, detail="Tên file không hợp lệ")
+
+    for part in relative_path.parts:
+        if not part or part in {".", ".."}:
+            raise HTTPException(status_code=400, detail="Tên file không hợp lệ")
+
+        if UNSAFE_FILENAME_PATTERN.search(part):
+            raise HTTPException(status_code=400, detail="Tên file không hợp lệ")
+
+    if relative_path.suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ file PDF")
+
+    return relative_path
+
+
 def _resolve_document_path(file_name: str) -> Path:
     documents_path = _documents_path()
-    safe_name = _safe_pdf_filename(file_name)
-    file_path = (documents_path / safe_name).resolve()
+    relative_path = _safe_relative_pdf_path(file_name)
+    file_path = (documents_path / relative_path).resolve()
 
-    if documents_path not in file_path.parents and file_path != documents_path:
+    if not file_path.is_relative_to(documents_path):
         raise HTTPException(status_code=400, detail="Tên file không hợp lệ")
 
     return file_path
