@@ -7,4 +7,3 @@ venv/
 .sync-manifest.json
 uris.json
 data/ChatAI/service-account.json
-uploads/
