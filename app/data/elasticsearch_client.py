@@ -1,6 +1,7 @@
 from collections import Counter
 import math
 import unicodedata
+from typing import Any
 
 from app.controller.document_controller import build_document_chunks, list_documents
 from app.core.config import MIN_SEARCH_SCORE, SEARCH_TOP_K
@@ -11,141 +12,46 @@ STOP_WORDS = {
     "được", "trong", "về", "cho", "các", "những", "một", "này",
     "tôi", "em", "anh", "chị", "hỏi", "muốn", "biết", "thì",
 }
+
 QUERY_EXPANSION = {
-    "bao nhiêu tín chỉ": [
-        "khối lượng kiến thức toàn khóa",
-        "chương trình cử nhân",
-        "chương trình kỹ sư",
-        "120 tín chỉ",
-        "150 tín chỉ",
+    "support": [
+        "đăng ký kỹ thuật hỗ trợ sự kiện",
+        "hỗ trợ sự kiện trên support",
+        "quy trình đăng ký kỹ thuật",
     ],
-    "đăng ký môn": ["đăng ký học phần", "thời gian đăng ký"],
-    "bỏ môn": ["rút bớt học phần", "hủy đăng ký học phần"],
-    "hủy môn": ["rút bớt học phần", "hủy đăng ký học phần"],
-    "trượt": ["học lại", "điểm F", "không đạt", "cải thiện điểm"],
-    "rớt": ["học lại", "điểm F", "không đạt"],
-    "thi lại": ["kỳ thi phụ", "đánh giá lại học phần"],
-    "qua môn": ["điểm học phần đạt", "đánh giá học phần", "điểm D trở lên"],
-    "cách tính điểm": [
-        "điểm trung bình học kỳ",
-        "điểm trung bình tích lũy",
-        "thang điểm 4",
-        "thang điểm 10",
+    "sự kiện": [
+        "đăng ký kỹ thuật hỗ trợ sự kiện",
+        "hỗ trợ sự kiện",
+        "support",
     ],
-    "gpa": ["điểm trung bình tích lũy", "điểm hệ 4"],
-    "ra trường": ["điều kiện xét tốt nghiệp", "công nhận tốt nghiệp"],
-    "tốt nghiệp": [
-        "điều kiện xét tốt nghiệp",
-        "công nhận tốt nghiệp",
-        "hạng tốt nghiệp",
+    "phần mềm": [
+        "quản lý và sử dụng phần mềm",
+        "cài đặt phần mềm",
+        "ứng dụng phần mềm",
     ],
-    "bằng giỏi": ["hạng tốt nghiệp giỏi", "xếp loại tốt nghiệp"],
-    "bằng khá": ["hạng tốt nghiệp khá", "xếp loại tốt nghiệp"],
-    "đuổi học": ["buộc thôi học", "cảnh báo học vụ", "xử lý học vụ"],
-    "nghỉ học": ["nghỉ học tạm thời", "bảo lưu kết quả", "thôi học"],
-    "chuyển ngành": [
-        "chuyển ngành đào tạo",
-        "chuyển chương trình",
-        "học cùng lúc hai chương trình",
+    "hệ thống mạng": [
+        "quản lý sử dụng hệ thống mạng",
+        "vận hành hệ thống mạng",
+        "kết nối mạng",
     ],
-    "một tín chỉ": [
-        "tín chỉ được sử dụng để tính khối lượng học tập",
-        "một tín chỉ được quy định bằng",
-        "15 tiết học lý thuyết",
-        "quy chế đào tạo",
+    "camera": [
+        "hệ thống camera giám sát",
+        "quản lý vận hành khai thác camera",
     ],
-    "bao nhiêu tiết": [
-        "tiết học lý thuyết",
-        "tiết thảo luận",
-        "thực hành môn học",
-        "tiết thí nghiệm",
+    "thiết bị phòng học": [
+        "khai thác sử dụng bảo trì thiết bị phòng học",
+        "thiết bị trên giảng đường",
     ],
-    "học 2 ngành": ["học cùng lúc hai chương trình", "đào tạo song ngành"],
     "hoãn thi": [
         "vắng mặt dự thi có lý do chính đáng",
         "đơn xin hoãn thi",
-        "lý do bất khả kháng",
         "điểm I",
         "kỳ thi phụ",
     ],
-    "nghỉ thi": [
-        "vắng mặt dự thi",
-        "không tham gia kỳ thi",
-        "lý do chính đáng",
-        "nhận điểm 0",
-    ],
-    "ốm không thi được": [
-        "vắng mặt dự thi có lý do chính đáng",
-        "đơn xin hoãn thi",
-        "chứng từ y tế",
-        "lý do bất khả kháng",
-    ],
-    "cấm thi": [
-        "không đủ điều kiện dự thi",
-        "điểm đánh giá quá trình",
-        "nghỉ học quá số buổi",
-        "không hoàn thành học phí",
-    ],
-    "không được thi": [
-        "không đủ điều kiện dự thi",
-        "không có tên trong danh sách dự thi",
-        "điểm chuyên cần",
-    ],
-    "nợ học phí thi": [
-        "không đủ điều kiện dự thi",
-        "nghĩa vụ học phí",
-        "cấm dự thi",
-    ],
-    "đình chỉ thi": [
-        "đình chỉ làm bài",
-        "vi phạm quy chế thi",
-        "hủy kết quả thi",
-        "lập biên bản",
-        "nhận điểm 0",
-    ],
-    "bắt phao": [
-        "vi phạm quy chế thi",
-        "đình chỉ làm bài",
-        "sử dụng tài liệu trái phép",
-        "nhận điểm 0",
-    ],
-    "quay cóp": [
-        "vi phạm quy chế thi",
-        "khiển trách",
-        "cảnh cáo",
-        "đình chỉ thi",
-        "trao đổi bài",
-    ],
-    "dùng điện thoại lúc thi": [
-        "vi phạm quy chế thi",
-        "đình chỉ làm bài",
-        "mang vật dụng cấm",
-        "sử dụng thiết bị",
-    ],
-    "quên pass email": [
-        "quên mật khẩu email",
-        "xử lý vấn đề Email/LMS",
-        "thủ tục hành chính",
-        "một cửa đào tạo",
-    ],
-    "quên mật khẩu email": [
-        "xử lý vấn đề Email/LMS",
-        "thủ tục hành chính",
-        "một cửa đào tạo",
-    ],
-    "mất pass email": [
-        "quên mật khẩu email",
-        "xử lý vấn đề Email/LMS",
-        "một cửa đào tạo",
-    ],
-    "không đăng nhập được email": [
-        "không đăng nhập được",
-        "xử lý vấn đề Email/LMS",
-        "một cửa đào tạo",
-    ],
 }
 
-_INDEX_CACHE = {
+
+_INDEX_CACHE: dict[str, Any] = {
     "signature": None,
     "chunks": [],
     "doc_freq": Counter(),
@@ -153,7 +59,10 @@ _INDEX_CACHE = {
 }
 
 
-def normalize_text(text: str = ""):
+def normalize_text(text: str = "") -> str:
+    """
+    Chuẩn hóa text: bỏ dấu tiếng Việt, viết thường, gộp khoảng trắng.
+    """
     text = str(text or "")
     text = unicodedata.normalize("NFD", text)
     text = "".join(char for char in text if unicodedata.category(char) != "Mn")
@@ -164,7 +73,10 @@ def normalize_text(text: str = ""):
 NORMALIZED_STOP_WORDS = {normalize_text(word) for word in STOP_WORDS}
 
 
-def clear_document_index_cache():
+def clear_document_index_cache() -> None:
+    """
+    Xóa cache index local.
+    """
     _INDEX_CACHE["signature"] = None
     _INDEX_CACHE["chunks"] = []
     _INDEX_CACHE["doc_freq"] = Counter()
@@ -172,6 +84,9 @@ def clear_document_index_cache():
 
 
 def apply_uneti_query_expansion(query: str) -> str:
+    """
+    Mở rộng câu hỏi để tăng khả năng tìm đúng tài liệu.
+    """
     normalized_query = normalize_text(query)
     expanded_terms = [query]
 
@@ -182,7 +97,10 @@ def apply_uneti_query_expansion(query: str) -> str:
     return " ".join(dict.fromkeys(expanded_terms))
 
 
-def get_keywords(text: str):
+def get_keywords(text: str) -> list[str]:
+    """
+    Tách từ khóa từ câu/text.
+    """
     normalized = normalize_text(text)
     words = [
         word.strip(".,;:!?()[]{}\"'")
@@ -196,34 +114,86 @@ def get_keywords(text: str):
     ]
 
 
-def _document_signature(files):
+def _document_signature(files: list[dict[str, Any]]) -> tuple:
+    """
+    Tạo signature để biết khi nào cần build lại index.
+    """
     return tuple(
-        (file["file_name"], file["file_size_kb"], file.get("updated_at"))
+        (
+            file.get("file_name"),
+            file.get("file_size_kb"),
+            file.get("updated_at"),
+        )
         for file in files
     )
 
 
-def _load_document_index():
-    files = list_documents()
+def _load_document_index() -> tuple[list[dict[str, Any]], Counter, int]:
+    """
+    Đọc tài liệu trong uploads/ChatAI và build index local.
+    Nếu file PDF nào lỗi thì bỏ qua file đó, không làm crash API.
+    """
+    try:
+        files = list_documents()
+    except Exception as exc:
+        print(f"[ERROR] Không đọc được danh sách tài liệu: {exc}")
+        return [], Counter(), 0
+
     signature = _document_signature(files)
 
     if _INDEX_CACHE["signature"] == signature:
-        return _INDEX_CACHE["chunks"], _INDEX_CACHE["doc_freq"], _INDEX_CACHE["total_docs"]
+        return (
+            _INDEX_CACHE["chunks"],
+            _INDEX_CACHE["doc_freq"],
+            _INDEX_CACHE["total_docs"],
+        )
 
-    chunks = []
-    doc_freq = Counter()
+    chunks: list[dict[str, Any]] = []
+    doc_freq: Counter = Counter()
 
     for file in files:
-        file_chunks = build_document_chunks(file["file_name"])
+        file_name = file.get("file_name")
+        if not file_name:
+            continue
+
+        try:
+            file_chunks = build_document_chunks(file_name)
+        except Exception as exc:
+            print(f"[WARN] Bỏ qua file lỗi: {file_name} | {exc}")
+            continue
 
         for chunk in file_chunks:
-            title = chunk.get("title", "")
-            content = chunk.get("content", "")
-            tokens = get_keywords(f"{title} {content}")
-            chunk["_token_counts"] = Counter(tokens)
-            chunk["_token_set"] = set(tokens)
-            chunks.append(chunk)
-            doc_freq.update(chunk["_token_set"])
+            try:
+                title = str(chunk.get("title") or "Không rõ mục")
+                content = str(chunk.get("content") or "")
+
+                if not content.strip():
+                    continue
+
+                doc_name = str(chunk.get("doc_name") or file_name)
+                file_path = str(chunk.get("file_path") or file.get("file_path") or "")
+
+                tokens = get_keywords(f"{title} {content} {doc_name}")
+                token_counts = Counter(tokens)
+                token_set = set(tokens)
+
+                clean_chunk = {
+                    "doc_name": doc_name,
+                    "title": title,
+                    "dieu": chunk.get("dieu"),
+                    "content": content,
+                    "file_path": file_path,
+                    "chunk_index": chunk.get("chunk_index", 0),
+                    "_token_counts": token_counts,
+                    "_token_set": token_set,
+                }
+
+                chunks.append(clean_chunk)
+                doc_freq.update(token_set)
+
+            except Exception as exc:
+                print(f"[WARN] Bỏ qua chunk lỗi trong file {file_name}: {exc}")
+                continue
 
     _INDEX_CACHE["signature"] = signature
     _INDEX_CACHE["chunks"] = chunks
@@ -233,59 +203,132 @@ def _load_document_index():
     return chunks, doc_freq, len(chunks)
 
 
-def score_chunk(question: str, title: str, content: str, doc_freq=None, total_docs=0, token_counts=None):
+def score_chunk(
+    question: str,
+    title: str,
+    content: str,
+    doc_name: str = "",
+    doc_freq: Counter | None = None,
+    total_docs: int = 0,
+    token_counts: Counter | None = None,
+) -> float:
+    """
+    Tính điểm liên quan theo keyword.
+    Boost theo title, content, doc_name.
+    """
     query_keywords = get_keywords(question)
     if not query_keywords:
         return 0.0
 
     title_tokens = set(get_keywords(title))
     content_tokens = set(get_keywords(content))
-    token_counts = token_counts or Counter(get_keywords(f"{title} {content}"))
+    doc_name_tokens = set(get_keywords(doc_name))
+
+    token_counts = token_counts or Counter(get_keywords(f"{title} {content} {doc_name}"))
     doc_freq = doc_freq or Counter()
     total_docs = total_docs or 1
 
     score = 0.0
 
-    for word in query_keywords:
-        if word not in token_counts:
-            continue
+    normalized_question = normalize_text(question)
+    normalized_title = normalize_text(title)
+    normalized_content = normalize_text(content)
+    normalized_doc_name = normalize_text(doc_name)
 
+    if normalized_question and normalized_question in normalized_title:
+        score += 30.0
+
+    if normalized_question and normalized_question in normalized_content:
+        score += 20.0
+
+    if normalized_question and normalized_question in normalized_doc_name:
+        score += 10.0
+
+    for word in query_keywords:
         idf = math.log((1 + total_docs) / (1 + doc_freq.get(word, 0))) + 1
-        score += token_counts[word] * idf
 
         if word in title_tokens:
-            score += 4.0 * idf
+            score += 8.0 * idf
 
         if word in content_tokens:
-            score += 0.5 * idf
+            score += 5.0 * idf
+
+        if word in doc_name_tokens:
+            score += 2.0 * idf
+
+        score += token_counts.get(word, 0) * idf
 
     return round(score, 4)
 
 
-async def search_documents(question: str):
-    results = []
-    expanded_question = apply_uneti_query_expansion(question)
-    chunks, doc_freq, total_docs = _load_document_index()
+def _make_highlight(content: str, max_chars: int = 1200) -> dict[str, list[str]]:
+    """
+    Tạo highlight giống format Elasticsearch để prompt_builder dùng được.
+    """
+    clean_content = " ".join(str(content or "").split())
+    return {"content": [clean_content[:max_chars]]}
 
-    for chunk in chunks:
-        score = score_chunk(
-            expanded_question,
-            chunk.get("title", ""),
-            chunk.get("content", ""),
-            doc_freq=doc_freq,
-            total_docs=total_docs,
-            token_counts=chunk.get("_token_counts"),
-        )
 
-        if score >= MIN_SEARCH_SCORE:
-            clean_chunk = {
-                key: value
-                for key, value in chunk.items()
-                if not key.startswith("_")
-            }
-            clean_chunk["score"] = score
-            results.append(clean_chunk)
+async def search_documents(query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    """
+    Tìm kiếm tài liệu đã upload.
 
-    results.sort(key=lambda item: item["score"], reverse=True)
+    Bản này chạy local trong uploads/ChatAI, không cần Elasticsearch server.
+    Hàm có try/except để tránh lỗi 500 khi một file PDF bị lỗi đọc text.
+    """
+    try:
+        query = (query or "").strip()
+        if not query:
+            return []
 
-    return results[:SEARCH_TOP_K]
+        expanded_query = apply_uneti_query_expansion(query)
+        chunks, doc_freq, total_docs = _load_document_index()
+
+        results: list[dict[str, Any]] = []
+
+        for chunk in chunks:
+            try:
+                title = str(chunk.get("title") or "")
+                content = str(chunk.get("content") or "")
+                doc_name = str(chunk.get("doc_name") or "")
+
+                score = score_chunk(
+                    question=expanded_query,
+                    title=title,
+                    content=content,
+                    doc_name=doc_name,
+                    doc_freq=doc_freq,
+                    total_docs=total_docs,
+                    token_counts=chunk.get("_token_counts"),
+                )
+
+                try:
+                    min_score = float(MIN_SEARCH_SCORE)
+                except Exception:
+                    min_score = 0.1
+
+                if score >= min_score:
+                    clean_chunk = {
+                        key: value
+                        for key, value in chunk.items()
+                        if not key.startswith("_")
+                    }
+
+                    clean_chunk["_score"] = score
+                    clean_chunk["score"] = score
+                    clean_chunk["highlight"] = _make_highlight(content)
+
+                    results.append(clean_chunk)
+
+            except Exception as exc:
+                print(f"[WARN] Bỏ qua chunk khi search: {exc}")
+                continue
+
+        results.sort(key=lambda item: item.get("_score", 0), reverse=True)
+
+        limit = top_k or SEARCH_TOP_K or 5
+        return results[:limit]
+
+    except Exception as exc:
+        print(f"[ERROR] search_documents failed: {exc}")
+        return []
