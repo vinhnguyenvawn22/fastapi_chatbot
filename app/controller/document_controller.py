@@ -173,12 +173,27 @@ async def upload_document(file: UploadFile):
     except Exception:
         pass
 
+    vector_index_status = "skipped"
+    vector_indexed_chunks = 0
+
+    # Index các chunk mới sau upload để lần chat sau ưu tiên vector search.
+    try:
+        from app.data.vector_store import index_chunks
+
+        document_chunks = build_document_chunks(file_path.name)
+        vector_indexed_chunks = index_chunks(document_chunks)
+        vector_index_status = "indexed"
+    except Exception as exc:
+        vector_index_status = f"failed: {exc}"
+
     return {
         "message": "Upload tài liệu thành công",
         "file_name": file_path.name,
         "file_path": str(file_path),
         "file_size_kb": round(file_path.stat().st_size / 1024, 2),
         "content_hash": _file_sha256(file_path),
+        "vector_index_status": vector_index_status,
+        "vector_indexed_chunks": vector_indexed_chunks,
     }
 
 

@@ -4,6 +4,7 @@ import unicodedata
 
 from app.controller.document_controller import build_document_chunks, list_documents
 from app.core.config import MIN_SEARCH_SCORE, SEARCH_TOP_K
+from app.data.vector_store import search_similar_chunks
 
 
 STOP_WORDS = {
@@ -263,6 +264,16 @@ def score_chunk(question: str, title: str, content: str, doc_freq=None, total_do
 
 
 async def search_documents(question: str):
+    # Ưu tiên vector search để tìm các chunk gần nghĩa với câu hỏi.
+    try:
+        vector_results = search_similar_chunks(question, top_k=SEARCH_TOP_K)
+        if vector_results:
+            return vector_results
+    except Exception:
+        # Nếu embedding/vector store lỗi, fallback keyword search giữ hệ thống vẫn trả lời được.
+        pass
+
+    # Fallback keyword + IDF cho trường hợp chưa index vector hoặc vector search lỗi.
     results = []
     expanded_question = apply_uneti_query_expansion(question)
     chunks, doc_freq, total_docs = _load_document_index()
