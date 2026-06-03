@@ -27,11 +27,18 @@ def build_context(docs):
         chunk_index = doc.get("chunk_index", "unknown")
         score = doc.get("score", 0)
         content = doc.get("content", "")
+        so_van_ban = doc.get("so_van_ban") or ""
+        ngay_ban_hanh = doc.get("ngay_ban_hanh") or ""
+        ngay_hieu_luc = doc.get("ngay_hieu_luc") or ""
+        loai_van_ban = doc.get("loai_van_ban") or ""
+        don_vi_ban_hanh = doc.get("don_vi_ban_hanh") or ""
 
         block = (
             f'<NGUON id="{index}" ten_tai_lieu="{file_name}" '
             f'dieu_khoan="{section_name}" chunk_index="{chunk_index}" '
-            f'diem_lien_quan="{score}">\n'
+            f'diem_lien_quan="{score}" so_van_ban="{so_van_ban}" '
+            f'ngay_ban_hanh="{ngay_ban_hanh}" ngay_hieu_luc="{ngay_hieu_luc}" '
+            f'loai_van_ban="{loai_van_ban}" don_vi_ban_hanh="{don_vi_ban_hanh}">\n'
             f'{content}\n'
             f'</NGUON>'
         )
@@ -60,7 +67,7 @@ MỤC TIÊU TRẢ LỜI:
 GIỚI HẠN BẮT BUỘC:
 - Chỉ dùng thông tin có trong THÔNG TIN THAM KHẢO bên dưới.
 - Không bịa, không suy diễn ngoài tài liệu, không tự thêm chính sách hoặc lời khuyên không có căn cứ.
-- Nếu tài liệu không đủ thông tin để trả lời, hãy trả lời đúng câu: "Không tìm thấy nội dung phù hợp trong tài liệu."
+- Nếu tài liệu không đủ thông tin để trả lời, hãy trả lời đúng câu: "Không tìm thấy căn cứ đủ rõ trong tài liệu đã cung cấp."
 - Nếu các nguồn mâu thuẫn hoặc chưa đủ rõ, hãy nói rõ rằng tài liệu chưa đủ thông tin.
 - Không nhắc các cụm như "theo context", "dựa trên thông tin tham khảo" hoặc "trong dữ liệu được cung cấp".
 

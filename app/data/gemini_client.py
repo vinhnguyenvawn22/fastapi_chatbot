@@ -15,7 +15,7 @@ def ask_gemini(prompt: str) -> str:
             contents=prompt,
         )
 
-        return response.text or "Không tìm thấy nội dung phù hợp trong tài liệu."
+        return response.text or "Không tìm thấy căn cứ đủ rõ trong tài liệu đã cung cấp."
 
     except Exception as e:
         error_message = str(e)

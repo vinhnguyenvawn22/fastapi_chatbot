@@ -13,12 +13,17 @@ from app.core.config import (
     DOCUMENTS_DIR,
     MAX_UPLOAD_SIZE_MB,
 )
+from app.data.query_analyzer import normalize_date, normalize_text
 
 
 PDF_MIME_TYPES = {"application/pdf", "application/octet-stream"}
 UNSAFE_FILENAME_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 SECTION_PATTERN = re.compile(
-    r"(?im)^(Điều\s+\d+[\.\:\s]+.*|Mục\s+\d+[\.\:\s]+.*|Chương\s+\d+[\.\:\s]+.*)$"
+    r"(?im)^\s*((?:Điều|Dieu)\s+\d+[\.\:\s]+.*|(?:Mục|Muc)\s+\d+[\.\:\s]+.*|(?:Chương|Chuong)\s+(?:[IVXLCDM]+|\d+)[\.\:\s]+.*)$"
+)
+DOCUMENT_TYPE_PATTERN = re.compile(
+    r"\b(Quyết định|Quyet dinh|Quy định|Quy dinh|Quy chế|Quy che|Thông báo|Thong bao|Hướng dẫn|Huong dan|Kế hoạch|Ke hoach)\b",
+    flags=re.IGNORECASE,
 )
 
 
@@ -63,6 +68,82 @@ def _file_sha256(file_path: Path) -> str:
             hasher.update(block)
 
     return hasher.hexdigest()
+
+
+def _first_match(pattern: str, text: str, flags=re.IGNORECASE):
+    match = re.search(pattern, text, flags=flags)
+    return match.group(1).strip() if match else None
+
+
+def _extract_document_metadata(text: str, file_name: str) -> dict:
+    """Extract business metadata from common Vietnamese administrative document headers."""
+    lines = [
+        " ".join(line.split())
+        for line in text.splitlines()
+        if line and " ".join(line.split())
+    ]
+    header_text = "\n".join(lines[:80])
+    normalized_header = normalize_text(header_text)
+
+    so_van_ban = _first_match(
+        r"(?:Số|So)\s*[:\-]?\s*([0-9]{1,6}(?:/[A-Za-z0-9.\-]+)?)",
+        header_text,
+    )
+    if not so_van_ban:
+        match = re.search(
+            r"(?:so|van\s*ban|quyet\s*dinh|quy\s*dinh|qd)\s*[:\-]?\s*([0-9]{1,6}(?:\s*/\s*[a-z0-9.\-]+)?)",
+            normalized_header,
+        )
+        if not match:
+            match = re.search(r"\b([0-9]{2,6})\s*/\s*(?:qd|vb|tb|qc)", normalized_header)
+        if not match:
+            match = re.search(r"\b([0-9]{2,6})\b", normalize_text(file_name))
+        if match:
+            so_van_ban = re.sub(r"\s+", "", match.group(1)).upper()
+
+    so_van_ban_ngan = None
+    if so_van_ban:
+        short_match = re.search(r"\d{1,6}", so_van_ban)
+        so_van_ban_ngan = short_match.group(0) if short_match else so_van_ban
+
+    ngay_ban_hanh = _first_match(
+        r"ngày\s+(\d{1,2}\s+tháng\s+\d{1,2}\s+năm\s+\d{4})",
+        header_text,
+    )
+    ngay_hieu_luc = _first_match(
+        r"hiệu lực(?:\s+thi hành)?(?:\s+kể)?\s+từ\s+ngày\s+(\d{1,2}\s*(?:/|-|\.|tháng)\s*\d{1,2}\s*(?:/|-|\.|năm)?\s*\d{4})",
+        header_text,
+    )
+
+    type_match = DOCUMENT_TYPE_PATTERN.search(header_text)
+    loai_van_ban = type_match.group(1) if type_match else None
+
+    don_vi_ban_hanh = None
+    for line in lines[:20]:
+        normalized_line = normalize_text(line)
+        if any(term in normalized_line for term in ("bo ", "truong ", "phong ", "khoa ", "uy ban")):
+            don_vi_ban_hanh = line
+            break
+
+    ten_van_ban = None
+    for line in lines[:80]:
+        normalized_line = normalize_text(line)
+        if len(line) >= 12 and any(
+            term in normalized_line
+            for term in ("quy dinh", "quy che", "quyet dinh", "thong bao", "huong dan")
+        ):
+            ten_van_ban = line
+            break
+
+    return {
+        "so_van_ban": so_van_ban,
+        "so_van_ban_ngan": so_van_ban_ngan,
+        "ngay_ban_hanh": normalize_date(ngay_ban_hanh) if ngay_ban_hanh else None,
+        "ngay_hieu_luc": normalize_date(ngay_hieu_luc) if ngay_hieu_luc else None,
+        "ten_van_ban": ten_van_ban or Path(file_name).stem,
+        "don_vi_ban_hanh": don_vi_ban_hanh,
+        "loai_van_ban": loai_van_ban,
+    }
 
 
 def _unique_file_path(file_path: Path) -> Path:
@@ -306,12 +387,16 @@ def split_text_by_metadata(text: str):
             {
                 "title": f"Đoạn {index}",
                 "dieu": None,
+                "muc": None,
+                "chuong": None,
                 "content": chunk,
             }
             for index, chunk in enumerate(fallback_chunks, start=1)
         ]
 
     chunks = []
+    current_chuong = None
+    current_muc = None
 
     if matches[0].start() > 0:
         intro = text[:matches[0].start()].strip()
@@ -321,6 +406,8 @@ def split_text_by_metadata(text: str):
                 chunks.append({
                     "title": title,
                     "dieu": None,
+                    "muc": None,
+                    "chuong": None,
                     "content": chunk,
                 })
 
@@ -330,7 +417,16 @@ def split_text_by_metadata(text: str):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         content = text[start:end].strip()
 
-        dieu_match = re.search(r"Điều\s+(\d+)", title, flags=re.IGNORECASE)
+        chuong_match = re.search(r"(?:Chương|Chuong)\s+([IVXLCDM]+|\d+)", title, flags=re.IGNORECASE)
+        if chuong_match:
+            current_chuong = chuong_match.group(1).upper()
+            current_muc = None
+
+        muc_match = re.search(r"(?:Mục|Muc)\s+(\d+)", title, flags=re.IGNORECASE)
+        if muc_match:
+            current_muc = int(muc_match.group(1))
+
+        dieu_match = re.search(r"(?:Điều|Dieu)\s+(\d+)", title, flags=re.IGNORECASE)
         dieu = int(dieu_match.group(1)) if dieu_match else None
 
         split_chunks = chunk_text(content)
@@ -339,6 +435,8 @@ def split_text_by_metadata(text: str):
             chunks.append({
                 "title": chunk_title,
                 "dieu": dieu,
+                "muc": current_muc,
+                "chuong": current_chuong,
                 "content": split_chunk,
             })
 
@@ -350,6 +448,7 @@ def build_document_chunks(file_name: str):
     file_path = _resolve_document_path(file_name)
     text = extract_pdf_text(file_name)
     chunks = split_text_by_metadata(text)
+    document_metadata = _extract_document_metadata(text, file_path.name)
     stat = file_path.stat()
     content_hash = _file_sha256(file_path)
 
@@ -360,6 +459,8 @@ def build_document_chunks(file_name: str):
             "doc_name": file_path.name,
             "title": chunk["title"],
             "dieu": chunk["dieu"],
+            "muc": chunk.get("muc"),
+            "chuong": chunk.get("chuong"),
             "chunk_index": index,
             "content": chunk["content"],
             "file_path": str(file_path),
@@ -367,8 +468,7 @@ def build_document_chunks(file_name: str):
             "is_active": True,
             "content_hash": content_hash,
             "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+            **document_metadata,
         })
 
     return documents
-
-
