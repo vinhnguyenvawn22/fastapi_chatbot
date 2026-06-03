@@ -4,14 +4,34 @@ import unicodedata
 
 from app.controller.document_controller import build_document_chunks, list_documents
 from app.core.config import MIN_SEARCH_SCORE, SEARCH_TOP_K
+from app.data.vector_store import search_similar_chunks
 
 
 STOP_WORDS = {
     "là", "gì", "của", "và", "có", "không", "như", "nào",
     "được", "trong", "về", "cho", "các", "những", "một", "này",
     "tôi", "em", "anh", "chị", "hỏi", "muốn", "biết", "thì",
+    "khi", "cần", "chú", "ý", "lưu",
 }
 QUERY_EXPANSION = {
+    "sử dụng phòng học": [
+        "quy định chung khi khai thác sử dụng phòng học",
+        "quy định thực hiện 5S trong phòng học",
+        "bảo quản bảo trì thiết bị trong phòng học",
+        "trách nhiệm người học khi sử dụng phòng học",
+    ],
+    "phòng học cần chú ý": [
+        "quy định chung khi khai thác sử dụng phòng học",
+        "quy định thực hiện 5S trong phòng học",
+        "bảo quản bảo trì thiết bị trong phòng học",
+        "trách nhiệm người học khi sử dụng phòng học",
+    ],
+    "lưu ý khi sử dụng phòng học": [
+        "quy định chung khi khai thác sử dụng phòng học",
+        "quy định thực hiện 5S trong phòng học",
+        "bảo quản bảo trì thiết bị trong phòng học",
+        "trách nhiệm người học khi sử dụng phòng học",
+    ],
     "bao nhiêu tín chỉ": [
         "khối lượng kiến thức toàn khóa",
         "chương trình cử nhân",
@@ -151,9 +171,12 @@ _INDEX_CACHE = {
     "doc_freq": Counter(),
     "total_docs": 0,
 }
+RRF_K = 60
+HYBRID_CANDIDATE_MULTIPLIER = 4
 
 
 def normalize_text(text: str = ""):
+    """Chuẩn hóa text về chữ thường, bỏ dấu tiếng Việt để so khớp keyword ổn định hơn."""
     text = str(text or "")
     text = unicodedata.normalize("NFD", text)
     text = "".join(char for char in text if unicodedata.category(char) != "Mn")
@@ -165,6 +188,7 @@ NORMALIZED_STOP_WORDS = {normalize_text(word) for word in STOP_WORDS}
 
 
 def clear_document_index_cache():
+    """Xóa cache keyword index trong RAM sau khi tài liệu được upload hoặc cập nhật."""
     _INDEX_CACHE["signature"] = None
     _INDEX_CACHE["chunks"] = []
     _INDEX_CACHE["doc_freq"] = Counter()
@@ -172,6 +196,7 @@ def clear_document_index_cache():
 
 
 def apply_uneti_query_expansion(query: str) -> str:
+    """Mở rộng câu hỏi bằng các cụm từ đồng nghĩa/quy ước nội bộ để keyword search dễ trúng hơn."""
     normalized_query = normalize_text(query)
     expanded_terms = [query]
 
@@ -183,6 +208,7 @@ def apply_uneti_query_expansion(query: str) -> str:
 
 
 def get_keywords(text: str):
+    """Tách text thành các keyword đã chuẩn hóa, bỏ stop words và từ quá ngắn."""
     normalized = normalize_text(text)
     words = [
         word.strip(".,;:!?()[]{}\"'")
@@ -197,6 +223,7 @@ def get_keywords(text: str):
 
 
 def _document_signature(files):
+    """Tạo chữ ký từ danh sách file để biết cache keyword index còn hợp lệ hay không."""
     return tuple(
         (file["file_name"], file["file_size_kb"], file.get("updated_at"))
         for file in files
@@ -204,6 +231,7 @@ def _document_signature(files):
 
 
 def _load_document_index():
+    """Load và cache toàn bộ chunk tài liệu cho luồng keyword/IDF search."""
     files = list_documents()
     signature = _document_signature(files)
 
@@ -234,6 +262,7 @@ def _load_document_index():
 
 
 def score_chunk(question: str, title: str, content: str, doc_freq=None, total_docs=0, token_counts=None):
+    """Tính điểm liên quan keyword/IDF giữa câu hỏi và một chunk tài liệu."""
     query_keywords = get_keywords(question)
     if not query_keywords:
         return 0.0
@@ -262,7 +291,25 @@ def score_chunk(question: str, title: str, content: str, doc_freq=None, total_do
     return round(score, 4)
 
 
-async def search_documents(question: str):
+def _chunk_key(chunk: dict):
+    """Tạo khóa định danh chunk để gộp kết quả vector và keyword không bị trùng."""
+    content_hash = chunk.get("content_hash")
+    chunk_index = chunk.get("chunk_index")
+
+    if content_hash is not None and chunk_index is not None:
+        return f"{content_hash}:{chunk_index}"
+
+    return (
+        chunk.get("doc_name"),
+        chunk.get("title"),
+        chunk_index,
+        chunk.get("content", "")[:200],
+    )
+
+
+def _search_keyword_documents(question: str, limit: int):
+    """Tìm các chunk liên quan bằng keyword/IDF, bổ sung tốt cho vector search."""
+    # Keyword/IDF search giữ vai trò bắt đúng tên riêng, mã văn bản, điều khoản.
     results = []
     expanded_question = apply_uneti_query_expansion(question)
     chunks, doc_freq, total_docs = _load_document_index()
@@ -284,8 +331,63 @@ async def search_documents(question: str):
                 if not key.startswith("_")
             }
             clean_chunk["score"] = score
+            clean_chunk["keyword_score"] = score
             results.append(clean_chunk)
 
     results.sort(key=lambda item: item["score"], reverse=True)
 
-    return results[:SEARCH_TOP_K]
+    return results[:limit]
+
+
+def _merge_with_rrf(result_sets: list[list[dict]], limit: int):
+    """Gộp nhiều danh sách kết quả bằng Reciprocal Rank Fusion dựa trên thứ hạng."""
+    fused = {}
+
+    for result_set in result_sets:
+        for rank, chunk in enumerate(result_set, start=1):
+            key = _chunk_key(chunk)
+            item = fused.setdefault(
+                key,
+                {
+                    "chunk": dict(chunk),
+                    "rrf_score": 0.0,
+                },
+            )
+            item["rrf_score"] += 1 / (RRF_K + rank)
+
+            if "distance" in chunk:
+                item["chunk"]["vector_score"] = chunk.get("score")
+                item["chunk"]["distance"] = chunk.get("distance")
+
+            if "keyword_score" in chunk:
+                item["chunk"]["keyword_score"] = chunk.get("keyword_score")
+
+    ranked = sorted(fused.values(), key=lambda item: item["rrf_score"], reverse=True)
+    results = []
+
+    for item in ranked[:limit]:
+        chunk = item["chunk"]
+        chunk["score"] = round(item["rrf_score"], 6)
+        results.append(chunk)
+
+    return results
+
+
+async def search_documents(question: str):
+    """Truy xuất tài liệu theo hybrid search: vector semantic + keyword/IDF + RRF."""
+    # Hybrid search: vector bắt ngữ nghĩa, keyword/IDF bắt chính xác thuật ngữ.
+    candidate_limit = max(SEARCH_TOP_K * HYBRID_CANDIDATE_MULTIPLIER, SEARCH_TOP_K)
+    vector_results = []
+
+    try:
+        vector_results = search_similar_chunks(question, top_k=candidate_limit)
+    except Exception:
+        # Nếu embedding/vector store lỗi, keyword search vẫn giữ hệ thống trả lời được.
+        pass
+
+    keyword_results = _search_keyword_documents(question, candidate_limit)
+
+    if vector_results and keyword_results:
+        return _merge_with_rrf([vector_results, keyword_results], SEARCH_TOP_K)
+
+    return (vector_results or keyword_results)[:SEARCH_TOP_K]
