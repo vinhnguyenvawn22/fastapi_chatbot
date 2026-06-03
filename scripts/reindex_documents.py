@@ -1,6 +1,8 @@
 from pathlib import Path
 import sys
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
@@ -8,15 +10,18 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from app.controller.document_controller import build_document_chunks, list_documents
-from app.data.vector_store import get_collection, index_chunks
+from app.data.vector_store import clear_collection, get_collection, index_chunks
 
 
 def reindex_documents():
+    """Xóa vector cũ, đọc lại toàn bộ PDF và index lại tất cả chunk vào Chroma."""
     # Đọc toàn bộ PDF hiện có để tạo lại vector index mà không cần upload lại.
     files = list_documents()
     indexed_files = []
     failed_files = []
     total_chunks = 0
+
+    clear_collection()
 
     for file_info in files:
         file_name = file_info["file_name"]
@@ -52,6 +57,7 @@ def reindex_documents():
 
 
 def main():
+    """Chạy reindex từ command line và in báo cáo tổng kết."""
     result = reindex_documents()
 
     print("\n=== Reindex summary ===")

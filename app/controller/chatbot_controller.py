@@ -5,6 +5,7 @@ from app.data.prompt_builder import build_context, build_prompt
 
 
 async def handle_chat(request):
+    """Xử lý một lượt chat: kiểm tra câu hỏi, truy xuất tài liệu, build prompt và gọi LLM."""
     question = request.question.strip()
 
     if not question:

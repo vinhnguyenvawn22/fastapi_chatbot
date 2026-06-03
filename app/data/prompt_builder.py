@@ -1,11 +1,27 @@
 from app.core.config import MAX_CONTEXT_CHARS
 
 
+def _reorder_for_generation(docs):
+    """Sắp xếp lại context để các đoạn quan trọng nằm gần đầu/cuối prompt."""
+    # Keep the strongest passages near the prompt edges to reduce lost-in-the-middle.
+    front = []
+    back = []
+
+    for index, doc in enumerate(docs):
+        if index % 2 == 0:
+            front.append(doc)
+        else:
+            back.append(doc)
+
+    return front + list(reversed(back))
+
+
 def build_context(docs):
+    """Ghép các chunk truy xuất được thành khối context có thẻ nguồn cho LLM."""
     context_parts = []
     current_length = 0
 
-    for index, doc in enumerate(docs, start=1):
+    for index, doc in enumerate(_reorder_for_generation(docs), start=1):
         file_name = doc.get("doc_name", "unknown")
         section_name = doc.get("title", "Không rõ mục")
         chunk_index = doc.get("chunk_index", "unknown")
@@ -30,6 +46,7 @@ def build_context(docs):
 
 
 def build_prompt(question, context):
+    """Tạo prompt cuối cùng gồm hướng dẫn, context truy xuất và câu hỏi người dùng."""
     prompt = f"""
 Bạn là trợ lý AI tư vấn dựa trên tài liệu nội bộ của nhà trường.
 
