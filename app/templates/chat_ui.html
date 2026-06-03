@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UNETI P.CNTT Chatbot</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background: #f4f6fb;
+      color: #111827;
+    }
+
+    .layout {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      width: 250px;
+      background: #ffffff;
+      border-right: 1px solid #e5e7eb;
+      padding: 24px 18px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 34px;
+    }
+
+    .brand-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      background: #2563eb;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 900;
+    }
+
+    .brand-title {
+      font-weight: 800;
+      font-size: 16px;
+    }
+
+    .brand-subtitle {
+      color: #6b7280;
+      font-size: 13px;
+      margin-top: 3px;
+    }
+
+    .menu-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 13px 14px;
+      margin-bottom: 10px;
+      border-radius: 12px;
+      color: #374151;
+      font-size: 15px;
+    }
+
+    .menu-item.active {
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-weight: 700;
+    }
+
+    .main {
+      flex: 1;
+      padding: 32px 42px;
+      min-width: 0;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+      margin-bottom: 28px;
+    }
+
+    .title {
+      font-size: 28px;
+      font-weight: 900;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      color: #6b7280;
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    .time {
+      background: white;
+      border: 1px solid #e5e7eb;
+      padding: 11px 18px;
+      border-radius: 999px;
+      color: #6b7280;
+      white-space: nowrap;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      gap: 24px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 18px;
+      border: 1px solid #eef0f4;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+      padding: 22px;
+    }
+
+    .card-title {
+      font-size: 20px;
+      font-weight: 800;
+      margin-bottom: 18px;
+    }
+
+    label {
+      display: block;
+      color: #6b7280;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 150px;
+      border: 1px solid #d1d5db;
+      border-radius: 14px;
+      padding: 13px;
+      resize: vertical;
+      outline: none;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    textarea:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+
+    .form-group {
+      margin-bottom: 18px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    button {
+      border: none;
+      border-radius: 12px;
+      padding: 13px 16px;
+      font-weight: 800;
+      cursor: pointer;
+      font-size: 15px;
+      transition: opacity 0.15s ease, transform 0.15s ease;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-secondary {
+      flex: 1;
+      background: #f3f4f6;
+      color: #374151;
+    }
+
+    .btn-primary {
+      flex: 1;
+      background: #2563eb;
+      color: white;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 18px;
+    }
+
+    .chip {
+      background: #f3f4f6;
+      color: #374151;
+      padding: 8px 11px;
+      border-radius: 999px;
+      font-size: 13px;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+
+    .chip:hover {
+      border-color: #bfdbfe;
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+
+    .banner {
+      background: linear-gradient(120deg, #0f766e, #059669);
+      color: white;
+      border-radius: 18px;
+      padding: 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 22px;
+      margin-bottom: 22px;
+      min-height: 135px;
+    }
+
+    .banner-small {
+      font-size: 15px;
+      opacity: 0.95;
+    }
+
+    .banner-title {
+      font-size: 34px;
+      font-weight: 900;
+      margin: 8px 0;
+    }
+
+    .banner-desc {
+      font-size: 17px;
+      line-height: 1.45;
+    }
+
+    .status-pill {
+      min-width: 150px;
+      text-align: center;
+      border-radius: 999px;
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.16);
+      border: 1px solid rgba(255, 255, 255, 0.26);
+      font-weight: 800;
+    }
+
+    .topic {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 22px;
+    }
+
+    .topic-icon {
+      width: 62px;
+      height: 62px;
+      border-radius: 18px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 900;
+      flex: 0 0 auto;
+    }
+
+    .topic-name {
+      font-size: 20px;
+      font-weight: 900;
+    }
+
+    .topic-question {
+      color: #6b7280;
+      margin-top: 4px;
+      font-size: 14px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    .tag {
+      display: inline-block;
+      margin-top: 8px;
+      margin-right: 6px;
+      padding: 5px 9px;
+      background: #f3e8ff;
+      color: #7e22ce;
+      border-radius: 999px;
+      font-size: 12px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 22px;
+    }
+
+    .metric {
+      background: white;
+      border-radius: 18px;
+      padding: 18px;
+      border: 1px solid #eef0f4;
+    }
+
+    .metric-label {
+      color: #6b7280;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    .metric-value {
+      color: #f97316;
+      font-size: 26px;
+      font-weight: 900;
+      overflow-wrap: anywhere;
+    }
+
+    .metric-desc {
+      color: #6b7280;
+      font-size: 13px;
+      line-height: 1.45;
+      margin-top: 8px;
+    }
+
+    .answer {
+      white-space: pre-wrap;
+      line-height: 1.7;
+      font-size: 16px;
+      overflow-wrap: anywhere;
+    }
+
+    .source {
+      border-top: 1px solid #e5e7eb;
+      padding: 14px 0;
+    }
+
+    .source:first-child {
+      border-top: none;
+      padding-top: 0;
+    }
+
+    .source-title {
+      font-weight: 800;
+      margin-bottom: 5px;
+    }
+
+    .source-preview {
+      color: #4b5563;
+      font-size: 14px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    .loading {
+      color: #6b7280;
+      margin-top: 14px;
+      font-size: 14px;
+      min-height: 20px;
+    }
+
+    .error-box {
+      display: none;
+      margin-top: 12px;
+      color: #991b1b;
+      background: #fee2e2;
+      border: 1px solid #fecaca;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .empty-text {
+      color: #6b7280;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 1000px) {
+      .sidebar {
+        display: none;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .metrics {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 640px) {
+      .main {
+        padding: 18px;
+      }
+
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .time {
+        width: 100%;
+        border-radius: 12px;
+        white-space: normal;
+      }
+
+      .banner {
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 22px;
+      }
+
+      .banner-title {
+        font-size: 28px;
+      }
+
+      .status-pill {
+        width: 100%;
+      }
+
+      .metrics {
+        grid-template-columns: 1fr;
+      }
+
+      .actions {
+        flex-direction: column;
+      }
+
+      .topic {
+        align-items: flex-start;
+      }
+
+      .title {
+        font-size: 24px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">AI</div>
+        <div>
+          <div class="brand-title">UNETI Chatbot</div>
+          <div class="brand-subtitle">P.CNTT Assistant</div>
+        </div>
+      </div>
+
+      <div class="menu-item active">Tra cứu tài liệu</div>
+      <div class="menu-item">Lịch sử câu hỏi</div>
+      <div class="menu-item">Nguồn tài liệu</div>
+      <div class="menu-item">Chunk đã truy xuất</div>
+      <div class="menu-item">Cấu hình hệ thống</div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div>
+          <div class="title">Chatbot AI Phòng CNTT</div>
+          <div class="subtitle">Tra cứu tài liệu, quy trình, quy định và hướng dẫn nội bộ</div>
+        </div>
+
+        <div class="time" id="timeBox"></div>
+      </div>
+
+      <div class="grid">
+        <section class="card">
+          <div class="card-title">Tra cứu tài liệu</div>
+
+          <div class="form-group">
+            <label for="questionInput">Câu hỏi</label>
+            <textarea id="questionInput" spellcheck="false">Phòng Tổ hợp STUDIO ở đâu?</textarea>
+          </div>
+
+          <div class="actions">
+            <button id="previewButton" class="btn-secondary" type="button">Xem trước</button>
+            <button id="askButton" class="btn-primary" type="button">Hỏi chatbot</button>
+          </div>
+
+          <div class="chips" aria-label="Câu hỏi mẫu">
+            <button class="chip" type="button" data-question="Phòng Tổ hợp STUDIO ở đâu?">STUDIO ở đâu?</button>
+            <button class="chip" type="button" data-question="Muốn đề nghị sử dụng STUDIO thì cần chuẩn bị hồ sơ gì?">Hồ sơ STUDIO</button>
+            <button class="chip" type="button" data-question="Cần báo hỏng hệ thống mạng LAN WIFI thì làm thế nào?">Báo hỏng WIFI</button>
+            <button class="chip" type="button" data-question="Quy định khai thác hệ thống camera giám sát như thế nào?">Camera</button>
+          </div>
+
+          <div id="loading" class="loading" aria-live="polite"></div>
+          <div id="errorBox" class="error-box" aria-live="polite"></div>
+        </section>
+
+        <section>
+          <div class="banner" id="banner">
+            <div>
+              <div class="banner-small">KẾT QUẢ TRA CỨU</div>
+              <div class="banner-title" id="bannerTitle">SẴN SÀNG</div>
+              <div class="banner-desc" id="bannerDesc">Nhập câu hỏi và bấm Hỏi chatbot.</div>
+            </div>
+            <div class="status-pill" id="sourceStatus">Chưa có nguồn</div>
+          </div>
+
+          <div class="card topic" id="topicCard">
+            <div class="topic-icon" id="topicIcon">TL</div>
+            <div>
+              <div class="topic-name" id="topicName">Chưa có chủ đề</div>
+              <div class="topic-question" id="topicQuestion">Chưa có câu hỏi</div>
+              <span class="tag">RAG</span>
+              <span class="tag">PDF</span>
+              <span class="tag">FastAPI</span>
+              <span class="tag">Chatbot</span>
+            </div>
+          </div>
+
+          <div class="metrics">
+            <div class="metric">
+              <div class="metric-label">Số nguồn truy xuất</div>
+              <div class="metric-value" id="sourceCount">0</div>
+              <div class="metric-desc">Nguồn hoặc chunk liên quan được trả về từ API</div>
+            </div>
+
+            <div class="metric">
+              <div class="metric-label">Điểm nguồn tốt nhất</div>
+              <div class="metric-value" id="bestScore">N/A</div>
+              <div class="metric-desc">Score của nguồn liên quan nhất nếu backend trả về</div>
+            </div>
+
+            <div class="metric">
+              <div class="metric-label">Chế độ trả lời</div>
+              <div class="metric-value">API</div>
+              <div class="metric-desc">Gọi endpoint POST /api/chat/</div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom: 22px;">
+            <div class="card-title">Câu trả lời</div>
+            <div class="answer" id="answerBox">Chưa có câu trả lời.</div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Nguồn tài liệu được sử dụng</div>
+            <div id="sourcesBox" class="empty-text">Chưa có nguồn.</div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const API_URL = "/api/chat/";
+
+    const questionInput = document.getElementById("questionInput");
+    const askButton = document.getElementById("askButton");
+    const previewButton = document.getElementById("previewButton");
+    const loading = document.getElementById("loading");
+    const errorBox = document.getElementById("errorBox");
+
+    document.getElementById("timeBox").textContent =
+      new Date().toLocaleString("vi-VN");
+
+    function setQuestion(text) {
+      questionInput.value = text;
+      clearError();
+    }
+
+    function showError(message) {
+      errorBox.textContent = message;
+      errorBox.style.display = "block";
+    }
+
+    function clearError() {
+      errorBox.textContent = "";
+      errorBox.style.display = "none";
+    }
+
+    function setLoading(isLoading) {
+      askButton.disabled = isLoading;
+      previewButton.disabled = isLoading;
+      askButton.textContent = isLoading ? "Đang hỏi..." : "Hỏi chatbot";
+      loading.textContent = isLoading ? "Đang gọi API chatbot..." : "";
+    }
+
+    function guessTopic(question) {
+      const q = question.toLowerCase();
+
+      if (q.includes("studio")) return { name: "STUDIO", icon: "ST" };
+      if (q.includes("mạng") || q.includes("wifi") || q.includes("lan")) {
+        return { name: "Hệ thống mạng", icon: "NET" };
+      }
+      if (q.includes("camera")) return { name: "Camera giám sát", icon: "CAM" };
+      if (q.includes("thiết bị") || q.includes("phòng học")) {
+        return { name: "Thiết bị phòng học", icon: "TB" };
+      }
+
+      return { name: "Tài liệu P.CNTT", icon: "TL" };
+    }
+
+    function normalizeAnswer(data) {
+      if (data.answer) return data.answer;
+      if (data.message) return data.message;
+      if (data.response) return data.response;
+      return JSON.stringify(data, null, 2);
+    }
+
+    function normalizeSources(data) {
+      if (Array.isArray(data.sources)) return data.sources;
+
+      if (data.source) {
+        return [{
+          title: data.source,
+          doc_name: data.source,
+          preview: ""
+        }];
+      }
+
+      if (data.source_panel && Array.isArray(data.source_panel.items)) {
+        return data.source_panel.items;
+      }
+
+      return [];
+    }
+
+    function renderBanner(hasSources) {
+      document.getElementById("bannerTitle").textContent =
+        hasSources ? "ĐÃ TÌM THẤY" : "ĐÃ TRẢ LỜI";
+      document.getElementById("bannerDesc").textContent =
+        hasSources
+          ? "Có nguồn tài liệu phù hợp để tham khảo."
+          : "API đã phản hồi, nhưng chưa có danh sách nguồn chi tiết.";
+      document.getElementById("sourceStatus").textContent =
+        hasSources ? "Có nguồn" : "Chưa có nguồn";
+    }
+
+    function renderTopic(question) {
+      const topic = guessTopic(question);
+
+      document.getElementById("topicIcon").textContent = topic.icon;
+      document.getElementById("topicName").textContent = topic.name;
+      document.getElementById("topicQuestion").textContent = question;
+    }
+
+    function renderMetrics(sources) {
+      const bestScoreValue = sources.length > 0 && sources[0].score !== undefined
+        ? Number(sources[0].score).toFixed(4)
+        : "N/A";
+
+      document.getElementById("sourceCount").textContent = String(sources.length);
+      document.getElementById("bestScore").textContent = bestScoreValue;
+    }
+
+    function appendTextElement(parent, className, text) {
+      const element = document.createElement("div");
+      element.className = className;
+      element.textContent = text || "";
+      parent.appendChild(element);
+    }
+
+    function renderSources(sources) {
+      const box = document.getElementById("sourcesBox");
+      box.textContent = "";
+      box.classList.toggle("empty-text", sources.length === 0);
+
+      if (!sources.length) {
+        box.textContent = "API chưa trả danh sách nguồn.";
+        return;
+      }
+
+      sources.forEach((source, index) => {
+        const item = document.createElement("div");
+        item.className = "source";
+
+        const title = source.title || source.source || source.source_id || `Nguồn ${index + 1}`;
+        const fileName = source.doc_name || source.file_name || "";
+        const preview = source.preview || source.content || "";
+
+        appendTextElement(item, "source-title", title);
+
+        if (fileName && fileName !== title) {
+          appendTextElement(item, "source-preview", fileName);
+        }
+
+        if (preview) {
+          appendTextElement(item, "source-preview", preview);
+        }
+
+        box.appendChild(item);
+      });
+    }
+
+    function previewQuestion() {
+      const question = questionInput.value.trim();
+
+      clearError();
+
+      if (!question) {
+        showError("Bạn chưa nhập câu hỏi.");
+        return;
+      }
+
+      renderTopic(question);
+      document.getElementById("answerBox").textContent = "Câu hỏi sẽ gửi: " + question;
+    }
+
+    async function askChatbot() {
+      const question = questionInput.value.trim();
+
+      clearError();
+
+      if (!question) {
+        showError("Bạn chưa nhập câu hỏi.");
+        return;
+      }
+
+      setLoading(true);
+
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            question: question
+          })
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || "API trả về lỗi không xác định.");
+        }
+
+        const data = await res.json();
+        const answer = normalizeAnswer(data);
+        const sources = normalizeSources(data);
+
+        renderBanner(sources.length > 0);
+        renderTopic(question);
+        renderMetrics(sources);
+        renderSources(sources);
+
+        document.getElementById("answerBox").textContent = answer;
+      } catch (error) {
+        showError("Lỗi gọi API: " + error.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    document.querySelectorAll(".chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        setQuestion(chip.dataset.question || "");
+      });
+    });
+
+    previewButton.addEventListener("click", previewQuestion);
+    askButton.addEventListener("click", askChatbot);
+  </script>
+</body>
+</html>
