@@ -5,6 +5,7 @@ File này phụ trách:
 - Gọi Gemini API thật bằng thư viện google-genai.
 - Có mock_gemini() để test khi chưa có API key.
 - Đảm bảo câu trả lời cuối cùng luôn có dòng nguồn.
+- Không có căn cứ trong tài liệu thì trả lời an toàn, không bịa.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import html
 import logging
 import os
 import re
+import unicodedata
 from importlib import import_module
 from typing import Any
 
@@ -31,7 +33,8 @@ if load_dotenv:
 
 logger = logging.getLogger(__name__)
 
-NO_DATA_MESSAGE = "Không tìm thấy nội dung phù hợp"
+NO_DATA_MESSAGE = "Không có căn cứ trong tài liệu được cung cấp để trả lời câu hỏi này."
+SOURCE_LINE_PATTERN = re.compile(r"\((?:Nguồn|Nguon|Source)\s*:\s*([^)]+)\)", flags=re.IGNORECASE)
 
 
 def _get_config_value(*names: str, default: Any = None) -> Any:
@@ -54,6 +57,14 @@ def _get_config_value(*names: str, default: Any = None) -> Any:
             return env_value
 
     return default
+
+
+def _normalize_text(text: str = "") -> str:
+    text = str(text or "")
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(char for char in text if unicodedata.category(char) != "Mn")
+    text = text.replace("đ", "d").replace("Đ", "D")
+    return " ".join(text.lower().split())
 
 
 def _extract_question_from_prompt(prompt: str) -> str:
@@ -82,7 +93,8 @@ def _extract_first_source_from_prompt(prompt: str) -> str:
     """
     match = re.search(r'ten_tai_lieu="([^"]+)"', prompt, flags=re.IGNORECASE)
     if match:
-        return html.unescape(match.group(1).strip())
+        source = html.unescape(match.group(1).strip())
+        return source or "Không có"
 
     return "Không có"
 
@@ -91,7 +103,7 @@ def _extract_first_source_from_answer(answer: str) -> str | None:
     """
     Lấy nguồn có sẵn từ câu trả lời nếu model đã trích dẫn.
     """
-    match = re.search(r"\(Nguồn:\s*([^)]+)\)", answer, flags=re.IGNORECASE)
+    match = SOURCE_LINE_PATTERN.search(str(answer or ""))
     if match:
         source = match.group(1).strip()
         return source or None
@@ -107,21 +119,50 @@ def _remove_duplicate_source_lines(answer: str) -> str:
     content_lines = [
         line
         for line in lines
-        if not re.fullmatch(r"\(Nguồn:\s*[^)]+\)", line.strip(), flags=re.IGNORECASE)
+        if not SOURCE_LINE_PATTERN.fullmatch(line.strip())
     ]
     return "\n".join(content_lines).strip()
+
+
+def _is_no_data_answer(answer: str) -> bool:
+    """
+    Kiểm tra câu trả lời có phải dạng không có căn cứ hay không.
+    """
+    normalized = _normalize_text(answer)
+    no_data_phrases = [
+        _normalize_text(NO_DATA_MESSAGE),
+        "khong co can cu",
+        "khong co thong tin",
+        "khong co nguon phu hop",
+        "khong tim thay",
+        "khong tim thay noi dung phu hop",
+        "khong co du lieu phu hop",
+        "khong du can cu",
+        "tai lieu chua du thong tin",
+        "chua du thong tin de tra loi",
+        "chua du thong tin de xac dinh",
+        "khong the xac dinh duy nhat",
+    ]
+    return any(phrase in normalized for phrase in no_data_phrases)
 
 
 def ensure_source_line(answer: str, fallback_source: str = "Không có") -> str:
     """
     Đảm bảo câu trả lời luôn kết thúc bằng đúng một dòng:
     (Nguồn: tên_tài_liệu)
+
+    Nếu câu trả lời là không có căn cứ thì nguồn phải là "Không có".
     """
     answer = str(answer or "").strip()
-    source = _extract_first_source_from_answer(answer) or fallback_source or "Không có"
     clean_answer = _remove_duplicate_source_lines(answer)
 
     if not clean_answer:
+        clean_answer = NO_DATA_MESSAGE
+
+    source = _extract_first_source_from_answer(answer) or fallback_source or "Không có"
+
+    if _is_no_data_answer(clean_answer):
+        source = "Không có"
         clean_answer = NO_DATA_MESSAGE
 
     return f"{clean_answer}\n\n(Nguồn: {source})"
@@ -158,6 +199,55 @@ def _extract_context_blocks_from_prompt(prompt: str) -> list[str]:
     return cleaned_blocks
 
 
+def _extract_attr_from_first_source(prompt: str, attr_name: str) -> str | None:
+    """
+    Lấy attribute trong thẻ <NGUON> đầu tiên.
+    """
+    pattern = rf'{re.escape(attr_name)}="([^"]*)"'
+    match = re.search(pattern, prompt, flags=re.IGNORECASE)
+    if not match:
+        return None
+
+    value = html.unescape(match.group(1).strip())
+    return value or None
+
+
+def _mock_answer_from_metadata(prompt: str, question: str) -> str | None:
+    """
+    Mock thông minh hơn một chút cho các câu hỏi metadata phổ biến.
+    Gemini thật sẽ xử lý tốt hơn, nhưng mock cần đủ an toàn để test.
+    """
+    normalized_question = _normalize_text(question)
+    source = _extract_first_source_from_prompt(prompt)
+
+    so_van_ban = _extract_attr_from_first_source(prompt, "so_van_ban")
+    ngay_ban_hanh = _extract_attr_from_first_source(prompt, "ngay_ban_hanh")
+    ngay_hieu_luc = _extract_attr_from_first_source(prompt, "ngay_hieu_luc")
+    loai_van_ban = _extract_attr_from_first_source(prompt, "loai_van_ban")
+    dieu_khoan = _extract_attr_from_first_source(prompt, "dieu_khoan")
+
+    if "ban hanh" in normalized_question and ngay_ban_hanh:
+        prefix = f"{loai_van_ban.capitalize()} " if loai_van_ban else "Văn bản "
+        number_part = f"số {so_van_ban} " if so_van_ban else ""
+        return ensure_source_line(
+            f"{prefix}{number_part}được ban hành ngày {ngay_ban_hanh}.",
+            fallback_source=source,
+        )
+
+    if "hieu luc" in normalized_question and ngay_hieu_luc:
+        prefix = f"{loai_van_ban.capitalize()} " if loai_van_ban else "Văn bản "
+        number_part = f"số {so_van_ban} " if so_van_ban else ""
+        return ensure_source_line(
+            f"{prefix}{number_part}có hiệu lực từ ngày {ngay_hieu_luc}.",
+            fallback_source=source,
+        )
+
+    if "dieu" in normalized_question and dieu_khoan:
+        return None  # để mock dùng nội dung context, không trả mỗi tên điều.
+
+    return None
+
+
 def mock_gemini(prompt: str) -> str:
     """
     Mock Gemini khi chưa có API key thật.
@@ -176,10 +266,17 @@ def mock_gemini(prompt: str) -> str:
             fallback_source="Không có",
         )
 
+    metadata_answer = _mock_answer_from_metadata(prompt, question)
+    if metadata_answer:
+        return metadata_answer
+
     context = context_blocks[0]
     context = re.sub(r"Trang\s+\d+\s*-+", " ", context, flags=re.IGNORECASE)
     context = re.sub(r"TÀI LIỆU HƯỚNG DẪN[^.]*", " ", context, flags=re.IGNORECASE)
     context = re.sub(r"\s+", " ", context).strip()
+
+    if not context:
+        return ensure_source_line(NO_DATA_MESSAGE, fallback_source="Không có")
 
     step_matches = re.findall(
         r"(Bước\s+\d+[:：.]?.*?)(?=Bước\s+\d+[:：.]?|$)",
@@ -203,8 +300,9 @@ def mock_gemini(prompt: str) -> str:
             + "\n".join(steps)
         )
     else:
+        # Mock chỉ trích phần context đầu tiên, không tự suy luận thêm.
         answer = (
-            f"Nội dung liên quan đến câu hỏi \"{question}\" trong tài liệu là:\n\n"
+            f"Nội dung có căn cứ trong tài liệu liên quan đến câu hỏi \"{question}\" là:\n\n"
             f"{context[:1200].rstrip()}"
         )
 
@@ -254,7 +352,7 @@ def call_gemini(prompt: str) -> str:
         if not answer.strip():
             return ensure_source_line(
                 NO_DATA_MESSAGE,
-                fallback_source=fallback_source,
+                fallback_source="Không có",
             )
 
         return ensure_source_line(answer, fallback_source=fallback_source)
