@@ -13,6 +13,7 @@ from app.data.embedding_client import embed_documents, embed_query
 
 
 def _clean_metadata(metadata: dict[str, Any]) -> dict[str, str | int | float | bool]:
+    """Lọc metadata về các kiểu dữ liệu đơn giản mà ChromaDB hỗ trợ."""
     # Chroma chỉ nhận metadata kiểu đơn giản, nên cần bỏ None/list/dict.
     cleaned = {}
 
@@ -29,6 +30,7 @@ def _clean_metadata(metadata: dict[str, Any]) -> dict[str, str | int | float | b
 
 
 def _chunk_id(chunk: dict) -> str:
+    """Tạo ID ổn định cho chunk để upsert không sinh bản ghi trùng khi reindex."""
     # ID ổn định giúp upsert không tạo trùng chunk khi index lại cùng tài liệu.
     content_hash = chunk.get("content_hash") or chunk.get("doc_name") or "unknown"
     chunk_index = chunk.get("chunk_index", 0)
@@ -36,6 +38,7 @@ def _chunk_id(chunk: dict) -> str:
 
 
 def get_collection():
+    """Mở hoặc tạo Chroma collection dùng để lưu vector tài liệu bền vững trên disk."""
     # Tạo Chroma persistent collection để vector vẫn còn sau khi restart server.
     Path(VECTOR_STORE_DIR).mkdir(parents=True, exist_ok=True)
     client = chromadb.PersistentClient(path=VECTOR_STORE_DIR)
@@ -46,6 +49,7 @@ def get_collection():
 
 
 def index_chunks(chunks: list[dict]) -> int:
+    """Embedding và upsert danh sách chunk vào ChromaDB, trả về số chunk đã xử lý."""
     # Index chunk vào Chroma sau khi upload để chat không cần parse PDF lại.
     if not chunks:
         return 0
@@ -71,6 +75,7 @@ def index_chunks(chunks: list[dict]) -> int:
 
 
 def search_similar_chunks(question: str, top_k: int = VECTOR_SEARCH_TOP_K) -> list[dict]:
+    """Tìm top chunk gần nghĩa nhất với câu hỏi bằng embedding và cosine distance."""
     # Tìm các chunk gần nghĩa nhất với câu hỏi bằng cosine distance trong Chroma.
     collection = get_collection()
 
@@ -104,6 +109,17 @@ def search_similar_chunks(question: str, top_k: int = VECTOR_SEARCH_TOP_K) -> li
 
 
 def delete_document(doc_name: str) -> None:
+    """Xóa toàn bộ vector chunk thuộc một tài liệu theo tên file."""
     # Xóa vector theo tên tài liệu khi cần re-index hoặc gỡ tài liệu.
     collection = get_collection()
     collection.delete(where={"doc_name": doc_name})
+
+
+def clear_collection() -> None:
+    """Xóa toàn bộ vector trong collection, thường dùng trước khi reindex toàn bộ."""
+    collection = get_collection()
+    existing = collection.get(include=[])
+    ids = existing.get("ids", [])
+
+    if ids:
+        collection.delete(ids=ids)
