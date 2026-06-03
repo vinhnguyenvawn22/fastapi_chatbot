@@ -386,8 +386,13 @@ async def search_documents(question: str):
         pass
 
     keyword_results = _search_keyword_documents(question, candidate_limit)
+    result_sets = [
+        result_set
+        for result_set in (vector_results, keyword_results)
+        if result_set
+    ]
 
-    if vector_results and keyword_results:
-        return _merge_with_rrf([vector_results, keyword_results], SEARCH_TOP_K)
+    if not result_sets:
+        return []
 
-    return (vector_results or keyword_results)[:SEARCH_TOP_K]
+    return _merge_with_rrf(result_sets, SEARCH_TOP_K)
