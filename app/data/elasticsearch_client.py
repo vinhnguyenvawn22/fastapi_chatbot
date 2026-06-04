@@ -1,17 +1,39 @@
 from collections import Counter
 import math
+import re
 import unicodedata
 
 from app.controller.document_controller import build_document_chunks, list_documents
 from app.core.config import MIN_SEARCH_SCORE, SEARCH_TOP_K
+from app.data.query_analyzer import extract_metadata_constraints, normalize_date
+from app.data.vector_store import search_similar_chunks
 
 
 STOP_WORDS = {
     "là", "gì", "của", "và", "có", "không", "như", "nào",
     "được", "trong", "về", "cho", "các", "những", "một", "này",
     "tôi", "em", "anh", "chị", "hỏi", "muốn", "biết", "thì",
+    "khi", "cần", "chú", "ý", "lưu",
 }
 QUERY_EXPANSION = {
+    "sử dụng phòng học": [
+        "quy định chung khi khai thác sử dụng phòng học",
+        "quy định thực hiện 5S trong phòng học",
+        "bảo quản bảo trì thiết bị trong phòng học",
+        "trách nhiệm người học khi sử dụng phòng học",
+    ],
+    "phòng học cần chú ý": [
+        "quy định chung khi khai thác sử dụng phòng học",
+        "quy định thực hiện 5S trong phòng học",
+        "bảo quản bảo trì thiết bị trong phòng học",
+        "trách nhiệm người học khi sử dụng phòng học",
+    ],
+    "lưu ý khi sử dụng phòng học": [
+        "quy định chung khi khai thác sử dụng phòng học",
+        "quy định thực hiện 5S trong phòng học",
+        "bảo quản bảo trì thiết bị trong phòng học",
+        "trách nhiệm người học khi sử dụng phòng học",
+    ],
     "bao nhiêu tín chỉ": [
         "khối lượng kiến thức toàn khóa",
         "chương trình cử nhân",
@@ -151,9 +173,13 @@ _INDEX_CACHE = {
     "doc_freq": Counter(),
     "total_docs": 0,
 }
+RRF_K = 60
+HYBRID_CANDIDATE_MULTIPLIER = 4
+METADATA_EXACT_SCORE = 100.0
 
 
 def normalize_text(text: str = ""):
+    """Chuẩn hóa text về chữ thường, bỏ dấu tiếng Việt để so khớp keyword ổn định hơn."""
     text = str(text or "")
     text = unicodedata.normalize("NFD", text)
     text = "".join(char for char in text if unicodedata.category(char) != "Mn")
@@ -165,6 +191,7 @@ NORMALIZED_STOP_WORDS = {normalize_text(word) for word in STOP_WORDS}
 
 
 def clear_document_index_cache():
+    """Xóa cache keyword index trong RAM sau khi tài liệu được upload hoặc cập nhật."""
     _INDEX_CACHE["signature"] = None
     _INDEX_CACHE["chunks"] = []
     _INDEX_CACHE["doc_freq"] = Counter()
@@ -172,6 +199,7 @@ def clear_document_index_cache():
 
 
 def apply_uneti_query_expansion(query: str) -> str:
+    """Mở rộng câu hỏi bằng các cụm từ đồng nghĩa/quy ước nội bộ để keyword search dễ trúng hơn."""
     normalized_query = normalize_text(query)
     expanded_terms = [query]
 
@@ -183,6 +211,7 @@ def apply_uneti_query_expansion(query: str) -> str:
 
 
 def get_keywords(text: str):
+    """Tách text thành các keyword đã chuẩn hóa, bỏ stop words và từ quá ngắn."""
     normalized = normalize_text(text)
     words = [
         word.strip(".,;:!?()[]{}\"'")
@@ -197,6 +226,7 @@ def get_keywords(text: str):
 
 
 def _document_signature(files):
+    """Tạo chữ ký từ danh sách file để biết cache keyword index còn hợp lệ hay không."""
     return tuple(
         (file["file_name"], file["file_size_kb"], file.get("updated_at"))
         for file in files
@@ -204,6 +234,7 @@ def _document_signature(files):
 
 
 def _load_document_index():
+    """Load và cache toàn bộ chunk tài liệu cho luồng keyword/IDF search."""
     files = list_documents()
     signature = _document_signature(files)
 
@@ -233,7 +264,122 @@ def _load_document_index():
     return chunks, doc_freq, len(chunks)
 
 
+def _metadata_filter_from_constraints(constraints: dict) -> dict:
+    metadata_filter = {}
+
+    if constraints.get("so_van_ban"):
+        metadata_filter["so_van_ban_ngan"] = str(constraints["so_van_ban"])
+
+    for key in ("dieu", "muc", "chuong"):
+        if constraints.get(key) is not None:
+            metadata_filter[key] = constraints[key]
+
+    return metadata_filter
+
+
+def _metadata_value_matches(chunk: dict, key: str, expected) -> bool:
+    if expected is None:
+        return True
+
+    if key == "ngay":
+        expected_date = normalize_date(str(expected))
+        searchable_text = normalize_text(
+            " ".join([
+                str(chunk.get("title", "")),
+                str(chunk.get("content", "")),
+                str(chunk.get("ngay_ban_hanh", "")),
+                str(chunk.get("ngay_hieu_luc", "")),
+            ])
+        )
+        return expected_date in {
+            normalize_date(str(chunk.get("ngay_ban_hanh", ""))),
+            normalize_date(str(chunk.get("ngay_hieu_luc", ""))),
+        } or normalize_text(expected_date) in searchable_text
+
+    if key == "so_van_ban":
+        expected_number = str(expected)
+        if expected_number in {
+            str(chunk.get("so_van_ban_ngan", "")),
+            str(chunk.get("so_van_ban", "")).split("/", 1)[0],
+        }:
+            return True
+
+        searchable_text = normalize_text(
+            " ".join([
+                str(chunk.get("so_van_ban", "")),
+                str(chunk.get("ten_van_ban", "")),
+                str(chunk.get("doc_name", "")),
+                str(chunk.get("title", "")),
+                str(chunk.get("content", "")),
+            ])
+        )
+        return any(
+            re_pattern.search(searchable_text)
+            for re_pattern in (
+                re.compile(rf"\bso\s*{re.escape(expected_number)}\b"),
+                re.compile(rf"\b{re.escape(expected_number)}\s*/\s*(?:qd|vb|tb|qc)\b"),
+                re.compile(rf"\b{re.escape(expected_number)}\b"),
+            )
+        )
+
+    return str(chunk.get(key, "")).lower() == str(expected).lower()
+
+
+def _metadata_match_count(chunk: dict, constraints: dict) -> int:
+    return sum(
+        1
+        for key, expected in constraints.items()
+        if _metadata_value_matches(chunk, key, expected)
+    )
+
+
+def _search_metadata_documents(question: str, limit: int):
+    constraints = extract_metadata_constraints(question)
+    if not constraints:
+        return [], {}
+
+    chunks, _, _ = _load_document_index()
+    results = []
+
+    for chunk in chunks:
+        match_count = _metadata_match_count(chunk, constraints)
+        if match_count == 0:
+            continue
+
+        if constraints.get("so_van_ban") and not _metadata_value_matches(
+            chunk, "so_van_ban", constraints["so_van_ban"]
+        ):
+            continue
+
+        clean_chunk = {
+            key: value
+            for key, value in chunk.items()
+            if not key.startswith("_")
+        }
+        clean_chunk["score"] = METADATA_EXACT_SCORE + match_count
+        clean_chunk["keyword_score"] = score_chunk(
+            question,
+            chunk.get("title", ""),
+            chunk.get("content", ""),
+        )
+        clean_chunk["metadata_score"] = match_count
+        clean_chunk["metadata_matched"] = True
+        results.append(clean_chunk)
+
+    results.sort(
+        key=lambda item: (
+            item.get("metadata_score", 0),
+            item.get("keyword_score", 0),
+            item.get("chunk_index", 0),
+        ),
+        reverse=True,
+    )
+
+    return results[:limit], constraints
+
+
 def score_chunk(question: str, title: str, content: str, doc_freq=None, total_docs=0, token_counts=None):
+    """Tính điểm liên quan keyword/IDF giữa câu hỏi và một chunk tài liệu."""
     query_keywords = get_keywords(question)
     if not query_keywords:
         return 0.0
@@ -262,7 +408,25 @@ def score_chunk(question: str, title: str, content: str, doc_freq=None, total_do
     return round(score, 4)
 
 
-async def search_documents(question: str):
+def _chunk_key(chunk: dict):
+    """Tạo khóa định danh chunk để gộp kết quả vector và keyword không bị trùng."""
+    content_hash = chunk.get("content_hash")
+    chunk_index = chunk.get("chunk_index")
+
+    if content_hash is not None and chunk_index is not None:
+        return f"{content_hash}:{chunk_index}"
+
+    return (
+        chunk.get("doc_name"),
+        chunk.get("title"),
+        chunk_index,
+        chunk.get("content", "")[:200],
+    )
+
+
+def _search_keyword_documents(question: str, limit: int):
+    """Tìm các chunk liên quan bằng keyword/IDF, bổ sung tốt cho vector search."""
+    # Keyword/IDF search giữ vai trò bắt đúng tên riêng, mã văn bản, điều khoản.
     results = []
     expanded_question = apply_uneti_query_expansion(question)
     chunks, doc_freq, total_docs = _load_document_index()
@@ -284,8 +448,91 @@ async def search_documents(question: str):
                 if not key.startswith("_")
             }
             clean_chunk["score"] = score
+            clean_chunk["keyword_score"] = score
             results.append(clean_chunk)
 
     results.sort(key=lambda item: item["score"], reverse=True)
+
+    return results[:limit]
+
+
+def _merge_with_rrf(result_sets: list[list[dict]], limit: int):
+    """Gộp nhiều danh sách kết quả bằng Reciprocal Rank Fusion dựa trên thứ hạng."""
+    fused = {}
+
+    for result_set in result_sets:
+        for rank, chunk in enumerate(result_set, start=1):
+            key = _chunk_key(chunk)
+            item = fused.setdefault(
+                key,
+                {
+                    "chunk": dict(chunk),
+                    "rrf_score": 0.0,
+                },
+            )
+            item["rrf_score"] += 1 / (RRF_K + rank)
+
+            if "distance" in chunk:
+                item["chunk"]["vector_score"] = chunk.get("score")
+                item["chunk"]["distance"] = chunk.get("distance")
+
+            if "keyword_score" in chunk:
+                item["chunk"]["keyword_score"] = chunk.get("keyword_score")
+
+    ranked = sorted(fused.values(), key=lambda item: item["rrf_score"], reverse=True)
+    results = []
+
+    for item in ranked[:limit]:
+        chunk = item["chunk"]
+        chunk["score"] = round(item["rrf_score"], 6)
+        results.append(chunk)
+
+    return results
+
+
+async def search_documents(question: str):
+    """Truy xuất tài liệu theo hybrid search: vector semantic + keyword/IDF + RRF."""
+    # Hybrid search: vector bắt ngữ nghĩa, keyword/IDF bắt chính xác thuật ngữ.
+    candidate_limit = max(SEARCH_TOP_K * HYBRID_CANDIDATE_MULTIPLIER, SEARCH_TOP_K)
+    metadata_results, metadata_constraints = _search_metadata_documents(question, candidate_limit)
+    metadata_filter = _metadata_filter_from_constraints(metadata_constraints)
+    if metadata_constraints and not metadata_results:
+        return []
+
+    vector_results = []
+
+    try:
+        vector_results = search_similar_chunks(
+            question,
+            top_k=candidate_limit,
+            metadata_filter=metadata_filter if metadata_results else None,
+        )
+    except Exception:
+        # Nếu embedding/vector store lỗi, keyword search vẫn giữ hệ thống trả lời được.
+        pass
+
+    keyword_results = _search_keyword_documents(question, candidate_limit)
+    result_sets = [
+        result_set
+        for result_set in (metadata_results, vector_results, keyword_results)
+        if result_set
+    ]
+
+    if not result_sets:
+        return []
+
+    results = _merge_with_rrf(result_sets, SEARCH_TOP_K)
+
+    if metadata_results:
+        metadata_keys = {_chunk_key(chunk) for chunk in metadata_results}
+        results.sort(
+            key=lambda item: (
+                _chunk_key(item) in metadata_keys,
+                item.get("metadata_score", 0),
+                item.get("keyword_score", 0) or 0,
+                item.get("score", 0) or 0,
+            ),
+            reverse=True,
+        )
 
     return results[:SEARCH_TOP_K]

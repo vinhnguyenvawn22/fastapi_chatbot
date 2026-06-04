@@ -1,6 +1,6 @@
 from fastapi import FastAPI
-from app.routers.page_router import router as page_router
 
+from app.routers.page_router import router as page_router
 from app.routers.chat_router import router as chat_router
 from app.routers.document_router import router as document_router
 from app.routers.health_router import router as health_router

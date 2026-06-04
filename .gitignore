@@ -3,7 +3,64 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-
+storage/chroma_db
 .sync-manifest.json
 uris.json
 data/ChatAI/service-account.json
+# =========================
+# ENV / SECRET FILES
+# =========================
+.env
+*.env
+!.env.example
+
+# API keys / credentials
+*service-account*.json
+credentials.json
+token.json
+uris.json
+.sync-manifest.json
+
+# =========================
+# PYTHON CACHE
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =========================
+# VIRTUAL ENV
+# =========================
+venv/
+.venv/
+env/
+ENV/
+
+# =========================
+# FASTAPI / LOCAL FILES
+# =========================
+uploads/
+*.log
+
+# =========================
+# CHROMA / VECTOR DATABASE
+# =========================
+storage/chroma_db/
+storage/**/*.sqlite3
+storage/**/*.sqlite
+chroma.sqlite3
+
+# =========================
+# IDE
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# OS FILES
+# =========================
+.DS_Store
+Thumbs.db

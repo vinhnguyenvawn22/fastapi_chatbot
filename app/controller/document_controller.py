@@ -13,20 +13,27 @@ from app.core.config import (
     DOCUMENTS_DIR,
     MAX_UPLOAD_SIZE_MB,
 )
+from app.data.query_analyzer import normalize_date, normalize_text
 
 
 PDF_MIME_TYPES = {"application/pdf", "application/octet-stream"}
 UNSAFE_FILENAME_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 SECTION_PATTERN = re.compile(
-    r"(?im)^(Điều\s+\d+[\.\:\s]+.*|Mục\s+\d+[\.\:\s]+.*|Chương\s+\d+[\.\:\s]+.*)$"
+    r"(?im)^\s*((?:Điều|Dieu)\s+\d+[\.\:\s]+.*|(?:Mục|Muc)\s+\d+[\.\:\s]+.*|(?:Chương|Chuong)\s+(?:[IVXLCDM]+|\d+)[\.\:\s]+.*)$"
+)
+DOCUMENT_TYPE_PATTERN = re.compile(
+    r"\b(Quyết định|Quyet dinh|Quy định|Quy dinh|Quy chế|Quy che|Thông báo|Thong bao|Hướng dẫn|Huong dan|Kế hoạch|Ke hoach)\b",
+    flags=re.IGNORECASE,
 )
 
 
 def _documents_path() -> Path:
+    """Trả về đường dẫn tuyệt đối tới thư mục lưu tài liệu PDF."""
     return Path(DOCUMENTS_DIR).resolve()
 
 
 def _safe_pdf_filename(filename: str) -> str:
+    """Chuẩn hóa tên file upload và chặn tên không hợp lệ hoặc không phải PDF."""
     name = Path(filename).name.strip()
     name = UNSAFE_FILENAME_PATTERN.sub("_", name)
     name = re.sub(r"\s+", " ", name)
@@ -41,6 +48,7 @@ def _safe_pdf_filename(filename: str) -> str:
 
 
 def _resolve_document_path(file_name: str) -> Path:
+    """Tạo đường dẫn PDF an toàn bên trong DOCUMENTS_DIR, tránh path traversal."""
     documents_path = _documents_path()
     safe_name = _safe_pdf_filename(file_name)
     file_path = (documents_path / safe_name).resolve()
@@ -52,6 +60,7 @@ def _resolve_document_path(file_name: str) -> Path:
 
 
 def _file_sha256(file_path: Path) -> str:
+    """Tính mã SHA-256 của file để định danh nội dung tài liệu."""
     hasher = hashlib.sha256()
 
     with file_path.open("rb") as file:
@@ -61,7 +70,84 @@ def _file_sha256(file_path: Path) -> str:
     return hasher.hexdigest()
 
 
+def _first_match(pattern: str, text: str, flags=re.IGNORECASE):
+    match = re.search(pattern, text, flags=flags)
+    return match.group(1).strip() if match else None
+
+
+def _extract_document_metadata(text: str, file_name: str) -> dict:
+    """Extract business metadata from common Vietnamese administrative document headers."""
+    lines = [
+        " ".join(line.split())
+        for line in text.splitlines()
+        if line and " ".join(line.split())
+    ]
+    header_text = "\n".join(lines[:80])
+    normalized_header = normalize_text(header_text)
+
+    so_van_ban = _first_match(
+        r"(?:Số|So)\s*[:\-]?\s*([0-9]{1,6}(?:/[A-Za-z0-9.\-]+)?)",
+        header_text,
+    )
+    if not so_van_ban:
+        match = re.search(
+            r"(?:so|van\s*ban|quyet\s*dinh|quy\s*dinh|qd)\s*[:\-]?\s*([0-9]{1,6}(?:\s*/\s*[a-z0-9.\-]+)?)",
+            normalized_header,
+        )
+        if not match:
+            match = re.search(r"\b([0-9]{2,6})\s*/\s*(?:qd|vb|tb|qc)", normalized_header)
+        if not match:
+            match = re.search(r"\b([0-9]{2,6})\b", normalize_text(file_name))
+        if match:
+            so_van_ban = re.sub(r"\s+", "", match.group(1)).upper()
+
+    so_van_ban_ngan = None
+    if so_van_ban:
+        short_match = re.search(r"\d{1,6}", so_van_ban)
+        so_van_ban_ngan = short_match.group(0) if short_match else so_van_ban
+
+    ngay_ban_hanh = _first_match(
+        r"ngày\s+(\d{1,2}\s+tháng\s+\d{1,2}\s+năm\s+\d{4})",
+        header_text,
+    )
+    ngay_hieu_luc = _first_match(
+        r"hiệu lực(?:\s+thi hành)?(?:\s+kể)?\s+từ\s+ngày\s+(\d{1,2}\s*(?:/|-|\.|tháng)\s*\d{1,2}\s*(?:/|-|\.|năm)?\s*\d{4})",
+        header_text,
+    )
+
+    type_match = DOCUMENT_TYPE_PATTERN.search(header_text)
+    loai_van_ban = type_match.group(1) if type_match else None
+
+    don_vi_ban_hanh = None
+    for line in lines[:20]:
+        normalized_line = normalize_text(line)
+        if any(term in normalized_line for term in ("bo ", "truong ", "phong ", "khoa ", "uy ban")):
+            don_vi_ban_hanh = line
+            break
+
+    ten_van_ban = None
+    for line in lines[:80]:
+        normalized_line = normalize_text(line)
+        if len(line) >= 12 and any(
+            term in normalized_line
+            for term in ("quy dinh", "quy che", "quyet dinh", "thong bao", "huong dan")
+        ):
+            ten_van_ban = line
+            break
+
+    return {
+        "so_van_ban": so_van_ban,
+        "so_van_ban_ngan": so_van_ban_ngan,
+        "ngay_ban_hanh": normalize_date(ngay_ban_hanh) if ngay_ban_hanh else None,
+        "ngay_hieu_luc": normalize_date(ngay_hieu_luc) if ngay_hieu_luc else None,
+        "ten_van_ban": ten_van_ban or Path(file_name).stem,
+        "don_vi_ban_hanh": don_vi_ban_hanh,
+        "loai_van_ban": loai_van_ban,
+    }
+
+
 def _unique_file_path(file_path: Path) -> Path:
+    """Tạo đường dẫn không trùng bằng cách thêm hậu tố _1, _2, ... nếu file đã tồn tại."""
     if not file_path.exists():
         return file_path
 
@@ -78,6 +164,7 @@ def _unique_file_path(file_path: Path) -> Path:
 
 
 def list_documents():
+    """Liệt kê các file PDF hiện có kèm kích thước và thời điểm cập nhật."""
     documents_path = _documents_path()
 
     if not documents_path.exists():
@@ -98,6 +185,7 @@ def list_documents():
 
 
 def extract_pdf_text(file_name: str):
+    """Đọc PDF và trích xuất text theo từng trang để phục vụ xem nội dung và chunking."""
     file_path = _resolve_document_path(file_name)
 
     if not file_path.exists():
@@ -120,6 +208,7 @@ def extract_pdf_text(file_name: str):
 
 
 async def upload_document(file: UploadFile):
+    """Nhận PDF upload, lưu vào thư mục tài liệu, kiểm tra hợp lệ và index vào vector store."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="Tên file không hợp lệ")
 
@@ -173,16 +262,106 @@ async def upload_document(file: UploadFile):
     except Exception:
         pass
 
+    vector_index_status = "skipped"
+    vector_indexed_chunks = 0
+
+    # Index các chunk mới sau upload để lần chat sau ưu tiên vector search.
+    try:
+        from app.data.vector_store import index_chunks
+
+        document_chunks = build_document_chunks(file_path.name)
+        vector_indexed_chunks = index_chunks(document_chunks)
+        vector_index_status = "indexed"
+    except Exception as exc:
+        vector_index_status = f"failed: {exc}"
+
     return {
         "message": "Upload tài liệu thành công",
         "file_name": file_path.name,
         "file_path": str(file_path),
         "file_size_kb": round(file_path.stat().st_size / 1024, 2),
         "content_hash": _file_sha256(file_path),
+        "vector_index_status": vector_index_status,
+        "vector_indexed_chunks": vector_indexed_chunks,
     }
 
 
+def _split_recursive(text: str, chunk_size: int, separators: list[str]) -> list[str]:
+    """Chia text đệ quy theo danh sách separator để giữ đoạn/câu tự nhiên nhất có thể."""
+    text = text.strip()
+
+    if not text:
+        return []
+
+    if len(text) <= chunk_size:
+        return [text]
+
+    if not separators:
+        return [
+            text[start:start + chunk_size].strip()
+            for start in range(0, len(text), chunk_size)
+            if text[start:start + chunk_size].strip()
+        ]
+
+    separator = separators[0]
+    raw_parts = text.split(separator)
+
+    if len(raw_parts) == 1:
+        return _split_recursive(text, chunk_size, separators[1:])
+
+    parts = [
+        f"{part}{separator}" if index < len(raw_parts) - 1 else part
+        for index, part in enumerate(raw_parts)
+    ]
+    chunks = []
+    current = ""
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        candidate = part if not current else f"{current} {part}"
+
+        if len(candidate) <= chunk_size:
+            current = candidate
+            continue
+
+        if current:
+            chunks.extend(_split_recursive(current, chunk_size, separators[1:]))
+
+        current = part
+
+    if current:
+        chunks.extend(_split_recursive(current, chunk_size, separators[1:]))
+
+    return chunks
+
+
+def _with_overlap(chunks: list[str], overlap: int, chunk_size: int) -> list[str]:
+    """Thêm phần overlap giữa các chunk liền kề để giảm mất ngữ cảnh tại điểm cắt."""
+    if overlap <= 0 or len(chunks) <= 1:
+        return chunks
+
+    overlapped = [chunks[0]]
+
+    for previous, current in zip(chunks, chunks[1:]):
+        prefix = previous[-overlap:].strip()
+        if len(previous) > overlap and " " in prefix:
+            prefix = prefix.split(" ", 1)[1].strip()
+
+        combined = f"{prefix} {current}".strip()
+
+        if len(combined) > chunk_size + overlap:
+            combined = combined[-(chunk_size + overlap):].strip()
+
+        overlapped.append(combined)
+
+    return overlapped
+
+
 def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP):
+    """Chia văn bản dài thành các chunk có overlap, ưu tiên cắt theo đoạn/câu trước."""
     if chunk_size <= 0:
         raise ValueError("chunk_size phải lớn hơn 0")
 
@@ -192,29 +371,84 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     if overlap >= chunk_size:
         overlap = max(chunk_size // 5, 0)
 
+    separators = ["\n\n", "\n", ". ", "; ", ", ", " "]
+    chunks = _split_recursive(text, chunk_size, separators)
+
+    return _with_overlap(chunks, overlap, chunk_size)
+
+
+def split_text_by_metadata(text: str):
+    """Tách text theo tiêu đề Điều/Mục/Chương; nếu không có tiêu đề thì fallback chunk thường."""
+    matches = list(SECTION_PATTERN.finditer(text))
+
+    if not matches:
+        fallback_chunks = chunk_text(text)
+        return [
+            {
+                "title": f"Đoạn {index}",
+                "dieu": None,
+                "muc": None,
+                "chuong": None,
+                "content": chunk,
+            }
+            for index, chunk in enumerate(fallback_chunks, start=1)
+        ]
+
     chunks = []
-    start = 0
-    text_length = len(text)
+    current_chuong = None
+    current_muc = None
 
-    while start < text_length:
-        end = min(start + chunk_size, text_length)
-        chunk = text[start:end].strip()
+    if matches[0].start() > 0:
+        intro = text[:matches[0].start()].strip()
+        if intro:
+            for index, chunk in enumerate(chunk_text(intro), start=1):
+                title = "Phần mở đầu" if index == 1 else f"Phần mở đầu ({index})"
+                chunks.append({
+                    "title": title,
+                    "dieu": None,
+                    "muc": None,
+                    "chuong": None,
+                    "content": chunk,
+                })
 
-        if chunk:
-            chunks.append(chunk)
+    for index, match in enumerate(matches):
+        title = match.group(1).strip()
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        content = text[start:end].strip()
 
-        if end == text_length:
-            break
+        chuong_match = re.search(r"(?:Chương|Chuong)\s+([IVXLCDM]+|\d+)", title, flags=re.IGNORECASE)
+        if chuong_match:
+            current_chuong = chuong_match.group(1).upper()
+            current_muc = None
 
-        start = end - overlap
+        muc_match = re.search(r"(?:Mục|Muc)\s+(\d+)", title, flags=re.IGNORECASE)
+        if muc_match:
+            current_muc = int(muc_match.group(1))
+
+        dieu_match = re.search(r"(?:Điều|Dieu)\s+(\d+)", title, flags=re.IGNORECASE)
+        dieu = int(dieu_match.group(1)) if dieu_match else None
+
+        split_chunks = chunk_text(content)
+        for split_index, split_chunk in enumerate(split_chunks, start=1):
+            chunk_title = title if len(split_chunks) == 1 else f"{title} ({split_index})"
+            chunks.append({
+                "title": chunk_title,
+                "dieu": dieu,
+                "muc": current_muc,
+                "chuong": current_chuong,
+                "content": split_chunk,
+            })
 
     return chunks
 
 
 def build_document_chunks(file_name: str):
+    """Chuyển một PDF thành danh sách chunk có metadata để index và truy xuất RAG."""
     file_path = _resolve_document_path(file_name)
     text = extract_pdf_text(file_name)
     chunks = split_text_by_metadata(text)
+    document_metadata = _extract_document_metadata(text, file_path.name)
     stat = file_path.stat()
     content_hash = _file_sha256(file_path)
 
@@ -225,6 +459,8 @@ def build_document_chunks(file_name: str):
             "doc_name": file_path.name,
             "title": chunk["title"],
             "dieu": chunk["dieu"],
+            "muc": chunk.get("muc"),
+            "chuong": chunk.get("chuong"),
             "chunk_index": index,
             "content": chunk["content"],
             "file_path": str(file_path),
@@ -232,54 +468,7 @@ def build_document_chunks(file_name: str):
             "is_active": True,
             "content_hash": content_hash,
             "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+            **document_metadata,
         })
 
     return documents
-
-
-def split_text_by_metadata(text: str):
-    matches = list(SECTION_PATTERN.finditer(text))
-
-    if not matches:
-        fallback_chunks = chunk_text(text)
-        return [
-            {
-                "title": f"Đoạn {index}",
-                "dieu": None,
-                "content": chunk,
-            }
-            for index, chunk in enumerate(fallback_chunks, start=1)
-        ]
-
-    chunks = []
-
-    if matches[0].start() > 0:
-        intro = text[:matches[0].start()].strip()
-        if intro:
-            for index, chunk in enumerate(chunk_text(intro), start=1):
-                title = "Phần mở đầu" if index == 1 else f"Phần mở đầu ({index})"
-                chunks.append({
-                    "title": title,
-                    "dieu": None,
-                    "content": chunk,
-                })
-
-    for index, match in enumerate(matches):
-        title = match.group(1).strip()
-        start = match.start()
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        content = text[start:end].strip()
-
-        dieu_match = re.search(r"Điều\s+(\d+)", title, flags=re.IGNORECASE)
-        dieu = int(dieu_match.group(1)) if dieu_match else None
-
-        split_chunks = chunk_text(content)
-        for split_index, split_chunk in enumerate(split_chunks, start=1):
-            chunk_title = title if len(split_chunks) == 1 else f"{title} ({split_index})"
-            chunks.append({
-                "title": chunk_title,
-                "dieu": dieu,
-                "content": split_chunk,
-            })
-
-    return chunks
