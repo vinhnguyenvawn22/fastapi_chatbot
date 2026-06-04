@@ -37,6 +37,25 @@ def _chunk_id(chunk: dict) -> str:
     return f"{content_hash}:{chunk_index}"
 
 
+def _build_chroma_where(metadata_filter: dict | None):
+    if not metadata_filter:
+        return None
+
+    filters = [
+        {key: value}
+        for key, value in metadata_filter.items()
+        if value is not None
+    ]
+
+    if not filters:
+        return None
+
+    if len(filters) == 1:
+        return filters[0]
+
+    return {"$and": filters}
+
+
 def get_collection():
     """Mở hoặc tạo Chroma collection dùng để lưu vector tài liệu bền vững trên disk."""
     # Tạo Chroma persistent collection để vector vẫn còn sau khi restart server.
@@ -74,7 +93,11 @@ def index_chunks(chunks: list[dict]) -> int:
     return len(chunks)
 
 
-def search_similar_chunks(question: str, top_k: int = VECTOR_SEARCH_TOP_K) -> list[dict]:
+def search_similar_chunks(
+    question: str,
+    top_k: int = VECTOR_SEARCH_TOP_K,
+    metadata_filter: dict | None = None,
+) -> list[dict]:
     """Tìm top chunk gần nghĩa nhất với câu hỏi bằng embedding và cosine distance."""
     # Tìm các chunk gần nghĩa nhất với câu hỏi bằng cosine distance trong Chroma.
     collection = get_collection()
@@ -83,11 +106,16 @@ def search_similar_chunks(question: str, top_k: int = VECTOR_SEARCH_TOP_K) -> li
         return []
 
     query_vector = embed_query(question)
-    result = collection.query(
-        query_embeddings=[query_vector],
-        n_results=top_k,
-        include=["documents", "metadatas", "distances"],
-    )
+    query_args = {
+        "query_embeddings": [query_vector],
+        "n_results": top_k,
+        "include": ["documents", "metadatas", "distances"],
+    }
+    where = _build_chroma_where(metadata_filter)
+    if where:
+        query_args["where"] = where
+
+    result = collection.query(**query_args)
 
     documents = result.get("documents", [[]])[0]
     metadatas = result.get("metadatas", [[]])[0]

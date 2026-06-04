@@ -1,9 +1,11 @@
 from collections import Counter
 import math
+import re
 import unicodedata
 
 from app.controller.document_controller import build_document_chunks, list_documents
 from app.core.config import MIN_SEARCH_SCORE, SEARCH_TOP_K
+from app.data.query_analyzer import extract_metadata_constraints, normalize_date
 from app.data.vector_store import search_similar_chunks
 
 
@@ -173,6 +175,7 @@ _INDEX_CACHE = {
 }
 RRF_K = 60
 HYBRID_CANDIDATE_MULTIPLIER = 4
+METADATA_EXACT_SCORE = 100.0
 
 
 def normalize_text(text: str = ""):
@@ -259,6 +262,120 @@ def _load_document_index():
     _INDEX_CACHE["total_docs"] = len(chunks)
 
     return chunks, doc_freq, len(chunks)
+
+
+def _metadata_filter_from_constraints(constraints: dict) -> dict:
+    metadata_filter = {}
+
+    if constraints.get("so_van_ban"):
+        metadata_filter["so_van_ban_ngan"] = str(constraints["so_van_ban"])
+
+    for key in ("dieu", "muc", "chuong"):
+        if constraints.get(key) is not None:
+            metadata_filter[key] = constraints[key]
+
+    return metadata_filter
+
+
+def _metadata_value_matches(chunk: dict, key: str, expected) -> bool:
+    if expected is None:
+        return True
+
+    if key == "ngay":
+        expected_date = normalize_date(str(expected))
+        searchable_text = normalize_text(
+            " ".join([
+                str(chunk.get("title", "")),
+                str(chunk.get("content", "")),
+                str(chunk.get("ngay_ban_hanh", "")),
+                str(chunk.get("ngay_hieu_luc", "")),
+            ])
+        )
+        return expected_date in {
+            normalize_date(str(chunk.get("ngay_ban_hanh", ""))),
+            normalize_date(str(chunk.get("ngay_hieu_luc", ""))),
+        } or normalize_text(expected_date) in searchable_text
+
+    if key == "so_van_ban":
+        expected_number = str(expected)
+        if expected_number in {
+            str(chunk.get("so_van_ban_ngan", "")),
+            str(chunk.get("so_van_ban", "")).split("/", 1)[0],
+        }:
+            return True
+
+        searchable_text = normalize_text(
+            " ".join([
+                str(chunk.get("so_van_ban", "")),
+                str(chunk.get("ten_van_ban", "")),
+                str(chunk.get("doc_name", "")),
+                str(chunk.get("title", "")),
+                str(chunk.get("content", "")),
+            ])
+        )
+        return any(
+            re_pattern.search(searchable_text)
+            for re_pattern in (
+                re.compile(rf"\bso\s*{re.escape(expected_number)}\b"),
+                re.compile(rf"\b{re.escape(expected_number)}\s*/\s*(?:qd|vb|tb|qc)\b"),
+                re.compile(rf"\b{re.escape(expected_number)}\b"),
+            )
+        )
+
+    return str(chunk.get(key, "")).lower() == str(expected).lower()
+
+
+def _metadata_match_count(chunk: dict, constraints: dict) -> int:
+    return sum(
+        1
+        for key, expected in constraints.items()
+        if _metadata_value_matches(chunk, key, expected)
+    )
+
+
+def _search_metadata_documents(question: str, limit: int):
+    constraints = extract_metadata_constraints(question)
+    if not constraints:
+        return [], {}
+
+    chunks, _, _ = _load_document_index()
+    results = []
+
+    for chunk in chunks:
+        match_count = _metadata_match_count(chunk, constraints)
+        if match_count == 0:
+            continue
+
+        if constraints.get("so_van_ban") and not _metadata_value_matches(
+            chunk, "so_van_ban", constraints["so_van_ban"]
+        ):
+            continue
+
+        clean_chunk = {
+            key: value
+            for key, value in chunk.items()
+            if not key.startswith("_")
+        }
+        clean_chunk["score"] = METADATA_EXACT_SCORE + match_count
+        clean_chunk["keyword_score"] = score_chunk(
+            question,
+            chunk.get("title", ""),
+            chunk.get("content", ""),
+        )
+        clean_chunk["metadata_score"] = match_count
+        clean_chunk["metadata_matched"] = True
+        results.append(clean_chunk)
+
+    results.sort(
+        key=lambda item: (
+            item.get("metadata_score", 0),
+            item.get("keyword_score", 0),
+            item.get("chunk_index", 0),
+        ),
+        reverse=True,
+    )
+
+    return results[:limit], constraints
 
 
 def score_chunk(question: str, title: str, content: str, doc_freq=None, total_docs=0, token_counts=None):
@@ -377,10 +494,19 @@ async def search_documents(question: str):
     """Truy xuất tài liệu theo hybrid search: vector semantic + keyword/IDF + RRF."""
     # Hybrid search: vector bắt ngữ nghĩa, keyword/IDF bắt chính xác thuật ngữ.
     candidate_limit = max(SEARCH_TOP_K * HYBRID_CANDIDATE_MULTIPLIER, SEARCH_TOP_K)
+    metadata_results, metadata_constraints = _search_metadata_documents(question, candidate_limit)
+    metadata_filter = _metadata_filter_from_constraints(metadata_constraints)
+    if metadata_constraints and not metadata_results:
+        return []
+
     vector_results = []
 
     try:
-        vector_results = search_similar_chunks(question, top_k=candidate_limit)
+        vector_results = search_similar_chunks(
+            question,
+            top_k=candidate_limit,
+            metadata_filter=metadata_filter if metadata_results else None,
+        )
     except Exception:
         # Nếu embedding/vector store lỗi, keyword search vẫn giữ hệ thống trả lời được.
         pass
@@ -388,11 +514,25 @@ async def search_documents(question: str):
     keyword_results = _search_keyword_documents(question, candidate_limit)
     result_sets = [
         result_set
-        for result_set in (vector_results, keyword_results)
+        for result_set in (metadata_results, vector_results, keyword_results)
         if result_set
     ]
 
     if not result_sets:
         return []
 
-    return _merge_with_rrf(result_sets, SEARCH_TOP_K)
+    results = _merge_with_rrf(result_sets, SEARCH_TOP_K)
+
+    if metadata_results:
+        metadata_keys = {_chunk_key(chunk) for chunk in metadata_results}
+        results.sort(
+            key=lambda item: (
+                _chunk_key(item) in metadata_keys,
+                item.get("metadata_score", 0),
+                item.get("keyword_score", 0) or 0,
+                item.get("score", 0) or 0,
+            ),
+            reverse=True,
+        )
+
+    return results[:SEARCH_TOP_K]
