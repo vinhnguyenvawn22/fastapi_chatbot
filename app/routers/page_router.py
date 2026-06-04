@@ -10,6 +10,7 @@ HTML_FILE = BASE_DIR / "templates" / "chat_ui.html"
 
 
 @router.get("/")
+@router.get("/chat-ui")
 async def chat_page():
     return FileResponse(
         path=str(HTML_FILE),
