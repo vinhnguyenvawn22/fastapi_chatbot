@@ -228,7 +228,7 @@ def get_keywords(text: str):
 def _document_signature(files):
     """Tạo chữ ký từ danh sách file để biết cache keyword index còn hợp lệ hay không."""
     return tuple(
-        (file["file_name"], file["file_size_kb"], file.get("updated_at"))
+        (file.get("relative_path") or file["file_name"], file["file_size_kb"], file.get("updated_at"))
         for file in files
     )
 
@@ -245,7 +245,7 @@ def _load_document_index():
     doc_freq = Counter()
 
     for file in files:
-        file_chunks = build_document_chunks(file["file_name"])
+        file_chunks = build_document_chunks(file.get("relative_path") or file["file_name"])
 
         for chunk in file_chunks:
             title = chunk.get("title", "")
@@ -264,8 +264,11 @@ def _load_document_index():
     return chunks, doc_freq, len(chunks)
 
 
-def _metadata_filter_from_constraints(constraints: dict) -> dict:
+def _metadata_filter_from_constraints(constraints: dict, source_type_filter: str | None = None) -> dict:
     metadata_filter = {}
+
+    if source_type_filter:
+        metadata_filter["source_type"] = source_type_filter
 
     if constraints.get("so_van_ban"):
         metadata_filter["so_van_ban_ngan"] = str(constraints["so_van_ban"])
@@ -424,7 +427,7 @@ def _chunk_key(chunk: dict):
     )
 
 
-def _search_keyword_documents(question: str, limit: int):
+def _search_keyword_documents(question: str, limit: int, source_type_filter: str | None = None):
     """Tìm các chunk liên quan bằng keyword/IDF, bổ sung tốt cho vector search."""
     # Keyword/IDF search giữ vai trò bắt đúng tên riêng, mã văn bản, điều khoản.
     results = []
@@ -432,6 +435,9 @@ def _search_keyword_documents(question: str, limit: int):
     chunks, doc_freq, total_docs = _load_document_index()
 
     for chunk in chunks:
+        if source_type_filter and chunk.get("source_type") != source_type_filter:
+            continue
+
         score = score_chunk(
             expanded_question,
             chunk.get("title", ""),
@@ -490,28 +496,61 @@ def _merge_with_rrf(result_sets: list[list[dict]], limit: int):
     return results
 
 
-async def search_documents(question: str):
+def _compact_debug_sources(results: list[dict], limit: int = 5) -> list[dict]:
+    return [
+        {
+            "title": item.get("title"),
+            "doc_name": item.get("doc_name"),
+            "relative_path": item.get("relative_path"),
+            "phong_ban": item.get("phong_ban"),
+            "score": item.get("score"),
+            "vector_score": item.get("vector_score"),
+            "keyword_score": item.get("keyword_score"),
+            "distance": item.get("distance"),
+            "metadata_matched": item.get("metadata_matched"),
+        }
+        for item in results[:limit]
+    ]
+
+
+async def search_documents(
+    question: str,
+    debug: dict | None = None,
+    source_type_filter: str | None = None,
+):
     """Truy xuất tài liệu theo hybrid search: vector semantic + keyword/IDF + RRF."""
     # Hybrid search: vector bắt ngữ nghĩa, keyword/IDF bắt chính xác thuật ngữ.
     candidate_limit = max(SEARCH_TOP_K * HYBRID_CANDIDATE_MULTIPLIER, SEARCH_TOP_K)
     metadata_results, metadata_constraints = _search_metadata_documents(question, candidate_limit)
-    metadata_filter = _metadata_filter_from_constraints(metadata_constraints)
+    metadata_filter = _metadata_filter_from_constraints(metadata_constraints, source_type_filter)
     if metadata_constraints and not metadata_results:
+        if debug is not None:
+            debug.update({
+                "metadata_constraints": metadata_constraints,
+                "source_type_filter": source_type_filter,
+                "metadata_results_count": 0,
+                "vector_results_count": 0,
+                "keyword_results_count": 0,
+                "vector_error": None,
+                "final_results_count": 0,
+                "final_sources": [],
+            })
         return []
 
     vector_results = []
+    vector_error = None
 
     try:
         vector_results = search_similar_chunks(
             question,
             top_k=candidate_limit,
-            metadata_filter=metadata_filter if metadata_results else None,
+            metadata_filter=metadata_filter if metadata_filter else None,
         )
-    except Exception:
+    except Exception as exc:
         # Nếu embedding/vector store lỗi, keyword search vẫn giữ hệ thống trả lời được.
-        pass
+        vector_error = str(exc)
 
-    keyword_results = _search_keyword_documents(question, candidate_limit)
+    keyword_results = _search_keyword_documents(question, candidate_limit, source_type_filter)
     result_sets = [
         result_set
         for result_set in (metadata_results, vector_results, keyword_results)
@@ -519,6 +558,20 @@ async def search_documents(question: str):
     ]
 
     if not result_sets:
+        if debug is not None:
+            debug.update({
+                "metadata_constraints": metadata_constraints,
+                "source_type_filter": source_type_filter,
+                "metadata_results_count": len(metadata_results),
+                "vector_results_count": len(vector_results),
+                "keyword_results_count": len(keyword_results),
+                "vector_error": vector_error,
+                "metadata_sources": _compact_debug_sources(metadata_results),
+                "vector_sources": _compact_debug_sources(vector_results),
+                "keyword_sources": _compact_debug_sources(keyword_results),
+                "final_results_count": 0,
+                "final_sources": [],
+            })
         return []
 
     results = _merge_with_rrf(result_sets, SEARCH_TOP_K)
@@ -535,4 +588,21 @@ async def search_documents(question: str):
             reverse=True,
         )
 
-    return results[:SEARCH_TOP_K]
+    final_results = results[:SEARCH_TOP_K]
+
+    if debug is not None:
+        debug.update({
+            "metadata_constraints": metadata_constraints,
+            "source_type_filter": source_type_filter,
+            "metadata_results_count": len(metadata_results),
+            "vector_results_count": len(vector_results),
+            "keyword_results_count": len(keyword_results),
+            "vector_error": vector_error,
+            "metadata_sources": _compact_debug_sources(metadata_results),
+            "vector_sources": _compact_debug_sources(vector_results),
+            "keyword_sources": _compact_debug_sources(keyword_results),
+            "final_results_count": len(final_results),
+            "final_sources": _compact_debug_sources(final_results),
+        })
+
+    return final_results

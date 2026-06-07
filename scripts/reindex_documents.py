@@ -24,7 +24,7 @@ def reindex_documents():
     clear_collection()
 
     for file_info in files:
-        file_name = file_info["file_name"]
+        file_name = file_info.get("relative_path") or file_info["file_name"]
 
         try:
             # Tách PDF thành chunks kèm metadata trước khi đưa vào vector store.
@@ -34,13 +34,17 @@ def reindex_documents():
             indexed_count = index_chunks(chunks)
             total_chunks += indexed_count
             indexed_files.append({
-                "file_name": file_name,
+                "file_name": file_info["file_name"],
+                "relative_path": file_name,
+                "phong_ban": file_info.get("phong_ban"),
                 "chunks": indexed_count,
             })
             print(f"[OK] {file_name}: {indexed_count} chunks")
         except Exception as exc:
             failed_files.append({
-                "file_name": file_name,
+                "file_name": file_info["file_name"],
+                "relative_path": file_name,
+                "phong_ban": file_info.get("phong_ban"),
                 "error": str(exc),
             })
             print(f"[ERROR] {file_name}: {exc}")
@@ -50,6 +54,7 @@ def reindex_documents():
 
     return {
         "indexed_file_count": len(indexed_files),
+        "discovered_pdf_count": len(files),
         "total_chunks_indexed": total_chunks,
         "vector_count": vector_count,
         "failed_files": failed_files,
@@ -61,6 +66,7 @@ def main():
     result = reindex_documents()
 
     print("\n=== Reindex summary ===")
+    print(f"Discovered PDFs: {result['discovered_pdf_count']}")
     print(f"Indexed files: {result['indexed_file_count']}")
     print(f"Indexed chunks: {result['total_chunks_indexed']}")
     print(f"Vector count: {result['vector_count']}")
@@ -68,7 +74,7 @@ def main():
     if result["failed_files"]:
         print("\nFailed files:")
         for item in result["failed_files"]:
-            print(f"- {item['file_name']}: {item['error']}")
+            print(f"- {item['relative_path']}: {item['error']}")
     else:
         print("Failed files: 0")
 

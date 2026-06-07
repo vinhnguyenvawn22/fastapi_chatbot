@@ -17,7 +17,7 @@ from app.data.query_analyzer import normalize_date, normalize_text
 
 
 PDF_MIME_TYPES = {"application/pdf", "application/octet-stream"}
-UNSAFE_FILENAME_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
+UNSAFE_FILENAME_PATTERN = re.compile(r'[<>:"\\|?*\x00-\x1f]+')
 SECTION_PATTERN = re.compile(
     r"(?im)^\s*((?:Điều|Dieu)\s+\d+[\.\:\s]+.*|(?:Mục|Muc)\s+\d+[\.\:\s]+.*|(?:Chương|Chuong)\s+(?:[IVXLCDM]+|\d+)[\.\:\s]+.*)$"
 )
@@ -28,39 +28,78 @@ DOCUMENT_TYPE_PATTERN = re.compile(
 
 
 def _documents_path() -> Path:
-    """Trả về đường dẫn tuyệt đối tới thư mục lưu tài liệu PDF."""
     return Path(DOCUMENTS_DIR).resolve()
 
 
+def _relative_document_path(file_path: Path) -> str:
+    return file_path.resolve().relative_to(_documents_path()).as_posix()
+
+
+def _extract_source_metadata(file_path: Path) -> dict:
+    documents_path = _documents_path()
+    relative_path = _relative_document_path(file_path)
+    parent_parts = Path(relative_path).parts[:-1]
+    phong_ban = None
+
+    for part in reversed(parent_parts):
+        normalized = normalize_text(part)
+        if normalized.startswith("phong ") or normalized.startswith("trung tam "):
+            phong_ban = part
+            break
+
+    if not phong_ban and parent_parts:
+        phong_ban = parent_parts[0]
+
+    return {
+        "phong_ban": phong_ban,
+        "relative_path": relative_path,
+        "source_root": documents_path.name,
+    }
+
+
 def _safe_pdf_filename(filename: str) -> str:
-    """Chuẩn hóa tên file upload và chặn tên không hợp lệ hoặc không phải PDF."""
     name = Path(filename).name.strip()
     name = UNSAFE_FILENAME_PATTERN.sub("_", name)
     name = re.sub(r"\s+", " ", name)
 
     if not name or name in {".", ".."}:
-        raise HTTPException(status_code=400, detail="Tên file không hợp lệ")
+        raise HTTPException(status_code=400, detail="Ten file khong hop le")
 
     if not name.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ file PDF")
+        raise HTTPException(status_code=400, detail="Chi ho tro file PDF")
 
     return name
 
 
-def _resolve_document_path(file_name: str) -> Path:
-    """Tạo đường dẫn PDF an toàn bên trong DOCUMENTS_DIR, tránh path traversal."""
+def _resolve_document_path(file_name: str | Path) -> Path:
     documents_path = _documents_path()
-    safe_name = _safe_pdf_filename(file_name)
-    file_path = (documents_path / safe_name).resolve()
+    raw_name = str(file_name or "").replace("\\", "/").strip()
 
-    if documents_path not in file_path.parents and file_path != documents_path:
-        raise HTTPException(status_code=400, detail="Tên file không hợp lệ")
+    if not raw_name:
+        raise HTTPException(status_code=400, detail="Ten file khong hop le")
+
+    if Path(raw_name).is_absolute():
+        file_path = Path(raw_name).resolve()
+    else:
+        parts = raw_name.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise HTTPException(status_code=400, detail="Ten file khong hop le")
+        if UNSAFE_FILENAME_PATTERN.search("".join(parts)):
+            raise HTTPException(status_code=400, detail="Ten file khong hop le")
+        if not raw_name.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Chi ho tro file PDF")
+        file_path = (documents_path / raw_name).resolve()
+
+    if documents_path not in file_path.parents:
+        raise HTTPException(status_code=400, detail="Ten file khong hop le")
+
+    if file_path.suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail="Chi ho tro file PDF")
 
     return file_path
 
 
 def _file_sha256(file_path: Path) -> str:
-    """Tính mã SHA-256 của file để định danh nội dung tài liệu."""
     hasher = hashlib.sha256()
 
     with file_path.open("rb") as file:
@@ -76,7 +115,6 @@ def _first_match(pattern: str, text: str, flags=re.IGNORECASE):
 
 
 def _extract_document_metadata(text: str, file_name: str) -> dict:
-    """Extract business metadata from common Vietnamese administrative document headers."""
     lines = [
         " ".join(line.split())
         for line in text.splitlines()
@@ -147,7 +185,6 @@ def _extract_document_metadata(text: str, file_name: str) -> dict:
 
 
 def _unique_file_path(file_path: Path) -> Path:
-    """Tạo đường dẫn không trùng bằng cách thêm hậu tố _1, _2, ... nếu file đã tồn tại."""
     if not file_path.exists():
         return file_path
 
@@ -160,11 +197,10 @@ def _unique_file_path(file_path: Path) -> Path:
         if not candidate.exists():
             return candidate
 
-    raise HTTPException(status_code=409, detail="Không thể tạo tên file không trùng")
+    raise HTTPException(status_code=409, detail="Khong the tao ten file khong trung")
 
 
 def list_documents():
-    """Liệt kê các file PDF hiện có kèm kích thước và thời điểm cập nhật."""
     documents_path = _documents_path()
 
     if not documents_path.exists():
@@ -172,31 +208,34 @@ def list_documents():
 
     files = []
 
-    for file_path in sorted(documents_path.glob("*.pdf")):
+    for file_path in sorted(documents_path.rglob("*.pdf")):
         stat = file_path.stat()
+        source_metadata = _extract_source_metadata(file_path)
         files.append({
             "file_name": file_path.name,
+            "relative_path": source_metadata["relative_path"],
             "file_path": str(file_path),
             "file_size_kb": round(stat.st_size / 1024, 2),
             "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+            "phong_ban": source_metadata["phong_ban"],
+            "source_root": source_metadata["source_root"],
         })
 
     return files
 
 
 def extract_pdf_text(file_name: str):
-    """Đọc PDF và trích xuất text theo từng trang để phục vụ xem nội dung và chunking."""
     file_path = _resolve_document_path(file_name)
 
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy file: {file_name}")
+        raise HTTPException(status_code=404, detail=f"Khong tim thay file: {file_name}")
 
     try:
         reader = PdfReader(str(file_path))
     except PdfReadError as exc:
-        raise HTTPException(status_code=400, detail="File PDF không đọc được") from exc
+        raise HTTPException(status_code=400, detail="File PDF khong doc duoc") from exc
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="Không thể mở file PDF") from exc
+        raise HTTPException(status_code=400, detail="Khong the mo file PDF") from exc
 
     text_parts = []
 
@@ -208,12 +247,11 @@ def extract_pdf_text(file_name: str):
 
 
 async def upload_document(file: UploadFile):
-    """Nhận PDF upload, lưu vào thư mục tài liệu, kiểm tra hợp lệ và index vào vector store."""
     if not file.filename:
-        raise HTTPException(status_code=400, detail="Tên file không hợp lệ")
+        raise HTTPException(status_code=400, detail="Ten file khong hop le")
 
     if file.content_type and file.content_type not in PDF_MIME_TYPES:
-        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ file PDF")
+        raise HTTPException(status_code=400, detail="Chi ho tro file PDF")
 
     safe_name = _safe_pdf_filename(file.filename)
     documents_path = _documents_path()
@@ -236,7 +274,7 @@ async def upload_document(file: UploadFile):
                     file_path.unlink(missing_ok=True)
                     raise HTTPException(
                         status_code=413,
-                        detail=f"File vượt quá giới hạn {MAX_UPLOAD_SIZE_MB}MB",
+                        detail=f"File vuot qua gioi han {MAX_UPLOAD_SIZE_MB}MB",
                     )
 
                 buffer.write(chunk)
@@ -244,7 +282,7 @@ async def upload_document(file: UploadFile):
         raise
     except Exception as exc:
         file_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail="Không thể lưu file upload") from exc
+        raise HTTPException(status_code=500, detail="Khong the luu file upload") from exc
     finally:
         await file.close()
 
@@ -252,9 +290,8 @@ async def upload_document(file: UploadFile):
         PdfReader(str(file_path))
     except Exception as exc:
         file_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail="File upload không phải PDF hợp lệ") from exc
+        raise HTTPException(status_code=400, detail="File upload khong phai PDF hop le") from exc
 
-    # Invalidate in-memory retrieval cache after a successful upload.
     try:
         from app.data.elasticsearch_client import clear_document_index_cache
 
@@ -265,19 +302,19 @@ async def upload_document(file: UploadFile):
     vector_index_status = "skipped"
     vector_indexed_chunks = 0
 
-    # Index các chunk mới sau upload để lần chat sau ưu tiên vector search.
     try:
         from app.data.vector_store import index_chunks
 
-        document_chunks = build_document_chunks(file_path.name)
+        document_chunks = build_document_chunks(_relative_document_path(file_path))
         vector_indexed_chunks = index_chunks(document_chunks)
         vector_index_status = "indexed"
     except Exception as exc:
         vector_index_status = f"failed: {exc}"
 
     return {
-        "message": "Upload tài liệu thành công",
+        "message": "Upload tai lieu thanh cong",
         "file_name": file_path.name,
+        "relative_path": _relative_document_path(file_path),
         "file_path": str(file_path),
         "file_size_kb": round(file_path.stat().st_size / 1024, 2),
         "content_hash": _file_sha256(file_path),
@@ -287,7 +324,6 @@ async def upload_document(file: UploadFile):
 
 
 def _split_recursive(text: str, chunk_size: int, separators: list[str]) -> list[str]:
-    """Chia text đệ quy theo danh sách separator để giữ đoạn/câu tự nhiên nhất có thể."""
     text = text.strip()
 
     if not text:
@@ -339,7 +375,6 @@ def _split_recursive(text: str, chunk_size: int, separators: list[str]) -> list[
 
 
 def _with_overlap(chunks: list[str], overlap: int, chunk_size: int) -> list[str]:
-    """Thêm phần overlap giữa các chunk liền kề để giảm mất ngữ cảnh tại điểm cắt."""
     if overlap <= 0 or len(chunks) <= 1:
         return chunks
 
@@ -361,12 +396,11 @@ def _with_overlap(chunks: list[str], overlap: int, chunk_size: int) -> list[str]
 
 
 def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP):
-    """Chia văn bản dài thành các chunk có overlap, ưu tiên cắt theo đoạn/câu trước."""
     if chunk_size <= 0:
-        raise ValueError("chunk_size phải lớn hơn 0")
+        raise ValueError("chunk_size phai lon hon 0")
 
     if overlap < 0:
-        raise ValueError("overlap không được âm")
+        raise ValueError("overlap khong duoc am")
 
     if overlap >= chunk_size:
         overlap = max(chunk_size // 5, 0)
@@ -378,7 +412,6 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
 
 
 def split_text_by_metadata(text: str):
-    """Tách text theo tiêu đề Điều/Mục/Chương; nếu không có tiêu đề thì fallback chunk thường."""
     matches = list(SECTION_PATTERN.finditer(text))
 
     if not matches:
@@ -444,11 +477,11 @@ def split_text_by_metadata(text: str):
 
 
 def build_document_chunks(file_name: str):
-    """Chuyển một PDF thành danh sách chunk có metadata để index và truy xuất RAG."""
     file_path = _resolve_document_path(file_name)
     text = extract_pdf_text(file_name)
     chunks = split_text_by_metadata(text)
     document_metadata = _extract_document_metadata(text, file_path.name)
+    source_metadata = _extract_source_metadata(file_path)
     stat = file_path.stat()
     content_hash = _file_sha256(file_path)
 
@@ -457,6 +490,9 @@ def build_document_chunks(file_name: str):
     for index, chunk in enumerate(chunks, start=1):
         documents.append({
             "doc_name": file_path.name,
+            "relative_path": source_metadata["relative_path"],
+            "phong_ban": source_metadata["phong_ban"],
+            "source_root": source_metadata["source_root"],
             "title": chunk["title"],
             "dieu": chunk["dieu"],
             "muc": chunk.get("muc"),

@@ -6,6 +6,7 @@ from enum import Enum
 
 class QueryIntent(str, Enum):
     INTERNAL_DOCUMENT = "internal_document"
+    WEBSITE_UNETI = "website_uneti"
     GENERAL_ADVICE = "general_advice"
     OUT_OF_SCOPE = "out_of_scope"
 
@@ -16,6 +17,18 @@ class QueryAnalysis:
     metadata: dict[str, str | int] = field(default_factory=dict)
     reason: str = ""
 
+
+WEBSITE_TERMS = {
+    "website", "trang web", "web uneti", "uneti.edu.vn", "api.uneti.edu.vn",
+    "bai viet", "tin tuc", "tin moi", "thong bao tren web", "tren website",
+    "link", "duong dan", "cong thong tin",
+}
+
+WEBSITE_NEWS_TERMS = {
+    "lich nghi", "ngay nghi", "nghi le", "gio to", "hung vuong",
+    "30/4", "1/5", "quoc te lao dong", "tuyen sinh", "diem chuan",
+    "thong tin tuyen sinh", "xet tuyen", "nhap hoc",
+}
 
 DOCUMENT_TERMS = {
     "quy dinh", "quy che", "quyet dinh", "thong bao", "van ban",
@@ -31,7 +44,7 @@ GENERAL_TERMS = {
 
 OUT_OF_SCOPE_TERMS = {
     "thoi tiet", "bong da", "gia vang", "chung khoan", "bitcoin",
-    "tin tuc", "nau an", "du lich", "mua gi", "phim", "am nhac",
+    "nau an", "du lich", "mua gi", "phim", "am nhac",
 }
 
 
@@ -40,6 +53,7 @@ def normalize_text(text: str = "") -> str:
     text = unicodedata.normalize("NFD", text)
     text = "".join(char for char in text if unicodedata.category(char) != "Mn")
     text = text.replace("đ", "d").replace("Đ", "D")
+    text = text.replace("Ä‘", "d").replace("Ä", "D")
     return " ".join(text.lower().split())
 
 
@@ -103,6 +117,12 @@ def classify_query(question: str) -> QueryAnalysis:
 
     if not normalized:
         return QueryAnalysis(QueryIntent.OUT_OF_SCOPE, reason="empty_question")
+
+    if any(term in normalized for term in WEBSITE_TERMS):
+        return QueryAnalysis(QueryIntent.WEBSITE_UNETI, metadata, "website_terms")
+
+    if any(term in normalized for term in WEBSITE_NEWS_TERMS):
+        return QueryAnalysis(QueryIntent.WEBSITE_UNETI, metadata, "website_news_terms")
 
     if metadata:
         return QueryAnalysis(QueryIntent.INTERNAL_DOCUMENT, metadata, "metadata_query")
