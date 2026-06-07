@@ -32,13 +32,16 @@ def build_context(docs):
         ngay_hieu_luc = doc.get("ngay_hieu_luc") or ""
         loai_van_ban = doc.get("loai_van_ban") or ""
         don_vi_ban_hanh = doc.get("don_vi_ban_hanh") or ""
+        phong_ban = doc.get("phong_ban") or ""
+        relative_path = doc.get("relative_path") or ""
 
         block = (
             f'<NGUON id="{index}" ten_tai_lieu="{file_name}" '
             f'dieu_khoan="{section_name}" chunk_index="{chunk_index}" '
             f'diem_lien_quan="{score}" so_van_ban="{so_van_ban}" '
             f'ngay_ban_hanh="{ngay_ban_hanh}" ngay_hieu_luc="{ngay_hieu_luc}" '
-            f'loai_van_ban="{loai_van_ban}" don_vi_ban_hanh="{don_vi_ban_hanh}">\n'
+            f'loai_van_ban="{loai_van_ban}" don_vi_ban_hanh="{don_vi_ban_hanh}" '
+            f'phong_ban="{phong_ban}" relative_path="{relative_path}">\n'
             f'{content}\n'
             f'</NGUON>'
         )

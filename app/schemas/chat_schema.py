@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Any, Optional
 
 
 class ChatRequest(BaseModel):
@@ -11,6 +11,12 @@ class ChatSource(BaseModel):
     """Mot nguon tai lieu duoc dung de tao cau tra loi."""
     title: Optional[str] = None
     doc_name: Optional[str] = None
+    url: Optional[str] = None
+    attachment_url: Optional[str] = None
+    source_type: Optional[str] = None
+    relative_path: Optional[str] = None
+    phong_ban: Optional[str] = None
+    source_root: Optional[str] = None
     so_van_ban: Optional[str] = None
     ngay_ban_hanh: Optional[str] = None
     ngay_hieu_luc: Optional[str] = None
@@ -34,4 +40,23 @@ class ChatResponse(BaseModel):
     answer: str
     source: Optional[str] = None
     intent: Optional[str] = None
+    trace_id: Optional[str] = None
     sources: list[ChatSource] = Field(default_factory=list)
+
+
+class TraceStep(BaseModel):
+    name: str
+    status: str
+    started_at: str
+    finished_at: str
+    input: dict[str, Any] = Field(default_factory=dict)
+    output: dict[str, Any] = Field(default_factory=dict)
+
+
+class TraceResponse(BaseModel):
+    trace_id: str
+    question: str
+    created_at: str
+    updated_at: str
+    steps: list[TraceStep] = Field(default_factory=list)
+    response: dict[str, Any] | None = None
