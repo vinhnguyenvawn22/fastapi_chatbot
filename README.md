@@ -6,11 +6,13 @@ Dự án xây dựng một chatbot sử dụng FastAPI, có khả năng nhận c
 
 Mục tiêu chính của dự án:
 
-- Xây dựng API chatbot bằng FastAPI.
-- Chia code rõ ràng theo từng module: `routers`, `controller`, `data`, `schemas`, `core`.
-- Mô phỏng luồng xử lý chatbot: nhận câu hỏi, tìm tài liệu liên quan, xây dựng prompt và trả lời kèm nguồn.
-- Làm việc nhóm bằng GitHub theo quy trình: clone repo, tạo branch, commit, push và tạo Pull Request.
-- Không code trực tiếp trên nhánh `main`.
+* Xây dựng API chatbot bằng FastAPI.
+* Chia code rõ ràng theo từng module: `routers`, `controller`, `data`, `schemas`, `core`.
+* Có giao diện web chatbot đơn giản để người dùng nhập câu hỏi và nhận câu trả lời.
+* Mô phỏng hoặc triển khai luồng RAG: nhận câu hỏi, tìm tài liệu liên quan, xây dựng context, tạo prompt và trả lời kèm nguồn.
+* Hỗ trợ vector search bằng ChromaDB để cải thiện khả năng tìm kiếm tài liệu.
+* Làm việc nhóm bằng GitHub theo quy trình: clone repo, tạo branch, commit, push và tạo Pull Request.
+* Không code trực tiếp trên nhánh `main`.
 
 ---
 
@@ -18,29 +20,32 @@ Mục tiêu chính của dự án:
 
 Nhóm gồm 4 thành viên. Mỗi thành viên phụ trách một phần riêng để tránh sửa trùng file và hạn chế conflict khi làm việc nhóm.
 
-| STT | Thành viên | Branch phụ trách | Folder/File chính | Nhiệm vụ |
-|---|---|---|---|---|
-| 1 | Nguyễn Thị Hải Yến | `feature/routers` | `app/routers` | Tạo các API endpoint, nhận request từ người dùng và gọi sang controller |
-| 2 | Nguyễn Văn Vinh | `feature/controllers` | `app/controller` | Điều phối logic chatbot, xử lý luồng nghiệp vụ chính |
-| 3 | Phương Thảo | `feature/data-layer` | `app/data` | Xử lý tìm kiếm dữ liệu, metadata, context, prompt và gọi model |
-| 4 | Nguyễn Chính Nghĩa | `docs-and-tests` | `README.md`, `tests`, `.gitignore`, `.env.example` | Viết tài liệu hướng dẫn, test API và kiểm tra workflow GitHub |
+| STT | Thành viên         | Branch phụ trách      | Folder/File chính                                                      | Nhiệm vụ                                                                                            |
+| --- | ------------------ | --------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 1   | Nguyễn Thị Hải Yến | `feature/routers`     | `app/routers`                                                          | Tạo các API endpoint, nhận request từ người dùng và gọi sang controller                             |
+| 2   | Nguyễn Văn Vinh    | `feature/controllers` | `app/controller`                                                       | Điều phối logic chatbot, xử lý luồng nghiệp vụ chính                                                |
+| 3   | Phương Thảo        | `feature/data-layer`  | `app/data`                                                             | Xử lý tìm kiếm dữ liệu, metadata, context, prompt và gọi model                                      |
+| 4   | Nguyễn Chính Nghĩa | `docs-and-tests`      | `README.md`, `tests`, `.gitignore`, `.env.example`, `requirements.txt` | Viết tài liệu hướng dẫn, test API, kiểm tra workflow GitHub và đảm bảo project có thể chạy lại được |
+
 ### 2.1. Chi tiết công việc từng thành viên
 
 #### Thành viên 1: Routers
 
 Phụ trách các file:
 
-- `app/routers/chat_router.py`
-- `app/routers/document_router.py`
-- `app/routers/health_router.py`
+* `app/routers/chat_router.py`
+* `app/routers/document_router.py`
+* `app/routers/health_router.py`
+* `app/routers/page_router.py`
 
 Nhiệm vụ:
 
-- Tạo endpoint `POST /chat/`.
-- Tạo endpoint kiểm tra server `GET /health/`.
-- Tạo endpoint upload tài liệu `POST /documents/upload`.
-- Router chỉ nên nhận request, gọi controller và trả response.
-- Không viết logic xử lý dài trong router.
+* Tạo endpoint nhận câu hỏi chatbot.
+* Tạo endpoint kiểm tra server.
+* Tạo endpoint upload tài liệu.
+* Tạo route giao diện web chatbot tại `/`.
+* Router chỉ nên nhận request, gọi controller và trả response.
+* Không viết logic xử lý dài trong router.
 
 ---
 
@@ -48,16 +53,17 @@ Nhiệm vụ:
 
 Phụ trách các file:
 
-- `app/controller/chatbot_controller.py`
-- `app/controller/document_controller.py`
+* `app/controller/chatbot_controller.py`
+* `app/controller/document_controller.py`
 
 Nhiệm vụ:
 
-- Điều phối luồng xử lý chatbot.
-- Nhận dữ liệu từ router.
-- Gọi data layer để tìm kiếm tài liệu.
-- Gọi prompt builder để tạo prompt.
-- Trả response đúng định dạng cho router.
+* Điều phối luồng xử lý chatbot.
+* Nhận dữ liệu từ router.
+* Gọi data layer để tìm kiếm tài liệu.
+* Gọi prompt builder để tạo prompt.
+* Gọi Gemini hoặc hàm xử lý model.
+* Trả response đúng định dạng cho router.
 
 ---
 
@@ -65,17 +71,21 @@ Nhiệm vụ:
 
 Phụ trách các file:
 
-- `app/data/elasticsearch_client.py`
-- `app/data/prompt_builder.py`
-- `app/data/gemini_client.py`
+* `app/data/elasticsearch_client.py`
+* `app/data/embedding_client.py`
+* `app/data/vector_store.py`
+* `app/data/prompt_builder.py`
+* `app/data/gemini_client.py`
 
 Nhiệm vụ:
 
-- Tạo hàm tìm kiếm tài liệu liên quan.
-- Xây dựng context từ tài liệu tìm được.
-- Xây dựng prompt cho chatbot.
-- Tạo hàm gọi mô hình AI hoặc bản giả lập để test.
-- Đảm bảo câu trả lời có kèm nguồn tài liệu.
+* Tạo hàm tìm kiếm tài liệu liên quan.
+* Tạo embedding cho câu hỏi và nội dung tài liệu.
+* Lưu và tìm kiếm vector bằng ChromaDB.
+* Xây dựng context từ tài liệu tìm được.
+* Xây dựng prompt cho chatbot.
+* Tạo hàm gọi mô hình Gemini.
+* Đảm bảo câu trả lời có kèm nguồn tài liệu.
 
 ---
 
@@ -83,29 +93,32 @@ Nhiệm vụ:
 
 Phụ trách các file:
 
-- `README.md`
-- `tests/`
-- `.gitignore`
-- `.env.example`
+* `README.md`
+* `tests/`
+* `.gitignore`
+* `.env.example`
+* `requirements.txt`
 
 Nhiệm vụ:
 
-- Viết hướng dẫn cài đặt và chạy project.
-- Viết hướng dẫn Git workflow cho nhóm.
-- Kiểm tra API trên Swagger.
-- Viết test cơ bản nếu cần.
-- Đảm bảo không đẩy file nhạy cảm như `.env`, API key hoặc credential lên GitHub.
+* Viết hướng dẫn cài đặt và chạy project.
+* Viết hướng dẫn Git workflow cho nhóm.
+* Kiểm tra API trên Swagger.
+* Viết test cơ bản cho web chatbot và API.
+* Cập nhật danh sách thư viện cần cài trong `requirements.txt`.
+* Đảm bảo không đẩy file nhạy cảm như `.env`, API key, credential, thư mục `venv`, file upload thật hoặc database local lên GitHub.
 
 ---
 
 ## 3. Cấu trúc thư mục dự án
 
 ```text
-fastapi-chatbot/
+fastapi_chatbot/
 ├── app/
 │   ├── main.py
 │   │
 │   ├── routers/
+│   │   ├── page_router.py
 │   │   ├── chat_router.py
 │   │   ├── document_router.py
 │   │   └── health_router.py
@@ -116,6 +129,8 @@ fastapi-chatbot/
 │   │
 │   ├── data/
 │   │   ├── elasticsearch_client.py
+│   │   ├── embedding_client.py
+│   │   ├── vector_store.py
 │   │   ├── prompt_builder.py
 │   │   └── gemini_client.py
 │   │
@@ -123,11 +138,23 @@ fastapi-chatbot/
 │   │   ├── chat_schema.py
 │   │   └── document_schema.py
 │   │
-│   └── core/
-│       ├── config.py
-│       └── constants.py
+│   ├── core/
+│   │   ├── config.py
+│   │   └── constants.py
+│   │
+│   └── templates/
+│       └── chat_ui.html
 │
+├── scripts/
+│   └── reindex_documents.py
+│
+├── storage/
+│   └── chroma_db/
+│
+├── uploads/
 ├── tests/
+│   └── test_app.py
+│
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt
@@ -138,14 +165,18 @@ fastapi-chatbot/
 
 ## 4. Vai trò từng thư mục
 
-| Thư mục | Vai trò |
-|---|---|
-| `app/routers` | Nhận request từ client, gọi controller và trả response |
-| `app/controller` | Điều phối luồng xử lý nghiệp vụ |
-| `app/data` | Xử lý dữ liệu, search tài liệu, build context, build prompt và gọi model |
-| `app/schemas` | Định nghĩa request/response bằng Pydantic |
-| `app/core` | Chứa cấu hình chung, biến môi trường và hằng số |
-| `tests` | Chứa các file kiểm thử API |
+| Thư mục          | Vai trò                                                                            |
+| ---------------- | ---------------------------------------------------------------------------------- |
+| `app/routers`    | Nhận request từ web hoặc Swagger, gọi controller và trả response                   |
+| `app/controller` | Điều phối luồng xử lý nghiệp vụ                                                    |
+| `app/data`       | Xử lý dữ liệu, embedding, vector search, build context, build prompt và gọi Gemini |
+| `app/schemas`    | Định nghĩa request/response bằng Pydantic                                          |
+| `app/core`       | Chứa cấu hình chung, biến môi trường và hằng số                                    |
+| `app/templates`  | Chứa giao diện web chatbot                                                         |
+| `scripts`        | Chứa script hỗ trợ, ví dụ reindex tài liệu                                         |
+| `storage`        | Chứa dữ liệu sinh ra khi chạy vector database local                                |
+| `uploads`        | Chứa tài liệu upload khi chạy project                                              |
+| `tests`          | Chứa các file kiểm thử API                                                         |
 
 ---
 
@@ -170,59 +201,33 @@ git branch -a
 
 Nếu thấy có `main` và `develop` là đúng.
 
----
-
 ### Bước 3: Chuyển sang nhánh `develop`
 
 Không code trực tiếp trên `main`.
 
-Chạy:
-
 ```bash
 git checkout develop
-```
-
-Sau đó cập nhật code mới nhất:
-
-```bash
 git pull origin develop
 ```
+
+Nếu repository chưa có nhánh `develop`, có thể làm tạm trên nhánh riêng được tạo từ `main`.
 
 ### Bước 4: Tạo branch riêng để làm việc
 
 Mỗi thành viên tạo một branch riêng từ `develop`.
 
-Cú pháp chung:
-
 ```bash
 git checkout -b ten-branch
 ```
 
-Ví dụ nếu làm phần router:
+Ví dụ:
 
 ```bash
 git checkout -b feature/routers
-```
-
-Nếu làm phần controller:
-
-```bash
 git checkout -b feature/controllers
-```
-
-Nếu làm phần data layer:
-
-```bash
 git checkout -b feature/data-layer
-```
-
-Nếu làm tài liệu và test:
-
-```bash
 git checkout -b docs-and-tests
 ```
-
----
 
 ### Bước 5: Kiểm tra đang ở branch nào
 
@@ -236,7 +241,7 @@ Ví dụ:
 
 ```text
   develop
-* feature/routers
+* docs-and-tests
   main
 ```
 
@@ -244,12 +249,13 @@ Ví dụ:
 
 ## 6. Quy tắc đặt tên branch
 
-| Loại công việc | Cách đặt tên | Ví dụ |
-|---|---|---|
-| Thêm chức năng mới | `feature/ten-chuc-nang` | `feature/chat-api` |
-| Sửa lỗi | `fix/ten-loi` | `fix/search-empty-result` |
-| Viết tài liệu | `docs/noi-dung` | `docs/update-readme` |
-| Viết test | `test/noi-dung` | `test/chat-api` |
+| Loại công việc                    | Cách đặt tên            | Ví dụ                     |
+| --------------------------------- | ----------------------- | ------------------------- |
+| Thêm chức năng mới                | `feature/ten-chuc-nang` | `feature/chat-api`        |
+| Sửa lỗi                           | `fix/ten-loi`           | `fix/search-empty-result` |
+| Viết tài liệu                     | `docs/noi-dung`         | `docs/update-readme`      |
+| Viết test                         | `test/noi-dung`         | `test/chat-api`           |
+| Tài liệu và test của thành viên 4 | `docs-and-tests`        | `docs-and-tests`          |
 
 ---
 
@@ -271,10 +277,8 @@ git checkout -b feature/ten-chuc-nang
 Ví dụ:
 
 ```bash
-git checkout -b feature/chat-api
+git checkout -b docs-and-tests
 ```
-
----
 
 ### Bước 2: Code phần việc của mình
 
@@ -282,12 +286,10 @@ Mỗi thành viên chỉ nên sửa các file thuộc phần mình phụ trách.
 
 Ví dụ:
 
-- Người làm routers sửa trong `app/routers`.
-- Người làm controllers sửa trong `app/controller`.
-- Người làm data layer sửa trong `app/data`.
-- Người làm docs/tests sửa `README.md`, `.gitignore`, `.env.example`, `tests`.
-
----
+* Người làm routers sửa trong `app/routers`.
+* Người làm controllers sửa trong `app/controller`.
+* Người làm data layer sửa trong `app/data`.
+* Người làm docs/tests sửa `README.md`, `.gitignore`, `.env.example`, `requirements.txt`, `tests`.
 
 ### Bước 3: Kiểm tra file đã thay đổi
 
@@ -297,21 +299,19 @@ git status
 
 Nếu có file màu đỏ hoặc xanh nghĩa là có thay đổi chưa commit.
 
----
-
 ### Bước 4: Thêm file vào Git
 
-```bash
-git add .
-```
-
-Hoặc chỉ add một file cụ thể:
+Nên add từng file cụ thể để tránh đẩy nhầm file không cần thiết:
 
 ```bash
 git add README.md
+git add .env.example
+git add .gitignore
+git add requirements.txt
+git add tests/test_app.py
 ```
 
----
+Không nên dùng `git add .` nếu chưa kiểm tra kỹ vì có thể add nhầm `.env`, `venv`, `storage` hoặc `uploads`.
 
 ### Bước 5: Commit code
 
@@ -324,7 +324,7 @@ git commit -m "loai: mo ta ngan gon noi dung da lam"
 Ví dụ:
 
 ```bash
-git commit -m "feat: add chat router"
+git commit -m "docs: update setup guide and add basic tests"
 ```
 
 Một số mẫu commit nên dùng:
@@ -339,16 +339,14 @@ git commit -m "test: add chat api test"
 
 Ý nghĩa một số loại commit:
 
-| Loại | Ý nghĩa |
-|---|---|
-| `feat` | Thêm chức năng mới |
-| `fix` | Sửa lỗi |
-| `docs` | Sửa tài liệu |
-| `test` | Thêm hoặc sửa test |
-| `refactor` | Sửa lại code nhưng không đổi chức năng |
-| `chore` | Công việc phụ như cấu hình, cài đặt, dọn dẹp |
-
----
+| Loại       | Ý nghĩa                                      |
+| ---------- | -------------------------------------------- |
+| `feat`     | Thêm chức năng mới                           |
+| `fix`      | Sửa lỗi                                      |
+| `docs`     | Sửa tài liệu                                 |
+| `test`     | Thêm hoặc sửa test                           |
+| `refactor` | Sửa lại code nhưng không đổi chức năng       |
+| `chore`    | Công việc phụ như cấu hình, cài đặt, dọn dẹp |
 
 ### Bước 6: Push branch lên GitHub
 
@@ -361,7 +359,7 @@ git push -u origin ten-branch
 Ví dụ:
 
 ```bash
-git push -u origin feature/routers
+git push -u origin docs-and-tests
 ```
 
 Những lần sau, nếu đang ở đúng branch, chỉ cần:
@@ -381,8 +379,9 @@ Các bước:
 1. Vào repository trên GitHub.
 2. Bấm nút **Compare & pull request**.
 3. Chọn:
-   - Base branch: `develop`
-   - Compare branch: branch của mình, ví dụ `feature/routers`
+
+   * Base branch: `develop`
+   * Compare branch: branch của mình, ví dụ `docs-and-tests`
 4. Ghi tiêu đề Pull Request.
 5. Ghi mô tả Pull Request.
 6. Bấm **Create pull request**.
@@ -391,9 +390,9 @@ Các bước:
 
 Lưu ý:
 
-- Không tự ý merge code khi chưa được review.
-- Không tạo Pull Request trực tiếp vào `main` khi đang phát triển.
-- Code ổn định ở `develop` rồi mới merge sang `main`.
+* Không tự ý merge code khi chưa được review.
+* Không tạo Pull Request trực tiếp vào `main` khi đang phát triển.
+* Code ổn định ở `develop` rồi mới merge sang `main`.
 
 ---
 
@@ -401,30 +400,37 @@ Lưu ý:
 
 Có thể copy mẫu này khi tạo Pull Request:
 
-```md
+````md
 ## Đã làm
 
-- Thêm API POST /chat
-- Gọi sang chatbot_controller
-- Trả về question, answer và source
+- Cập nhật README hướng dẫn cài đặt, cấu hình `.env`, chạy server và mở web chatbot.
+- Bổ sung `.env.example` để người mới biết cần cấu hình `GEMINI_API_KEY`.
+- Cập nhật `.gitignore` để tránh đẩy `.env`, `venv/`, `uploads/`, dữ liệu ChromaDB và cache Python.
+- Cập nhật `requirements.txt` để tránh thiếu thư viện khi clone project.
+- Thêm test cơ bản cho `/`, `/docs`, `/openapi.json` và `/api/chat/`.
 
 ## Cần review
 
-- Kiểm tra tên route
-- Kiểm tra format response
-- Kiểm tra xử lý khi không tìm thấy tài liệu
+- Kiểm tra lại danh sách thư viện trong `requirements.txt`.
+- Kiểm tra nội dung README đã đúng với luồng chạy thực tế chưa.
+- Kiểm tra test `/api/chat/` đã phù hợp với schema hiện tại chưa.
 
 ## Cách test
 
-- Chạy server bằng lệnh:
-  uvicorn app.main:app --reload
+```bash
+pip install -r requirements.txt
+python -m pytest -q
+python -m uvicorn app.main:app --reload
+````
 
-- Mở Swagger:
-  http://127.0.0.1:8000/docs
+Mở:
 
-- Test endpoint:
-  POST /chat/
+```text
+http://127.0.0.1:8000/
+http://127.0.0.1:8000/docs
 ```
+
+````
 
 ---
 
@@ -434,9 +440,7 @@ Có thể copy mẫu này khi tạo Pull Request:
 
 ```bash
 python -m venv venv
-```
-
----
+````
 
 ### Bước 2: Kích hoạt môi trường ảo
 
@@ -458,7 +462,11 @@ Trên macOS/Linux:
 source venv/bin/activate
 ```
 
----
+Khi kích hoạt thành công, terminal sẽ có dạng:
+
+```text
+(venv) PS ...\fastapi_chatbot>
+```
 
 ### Bước 3: Cài thư viện
 
@@ -466,17 +474,61 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Nếu chưa có `requirements.txt`, có thể cài tạm các thư viện chính:
+Nếu thiếu thư viện trong quá trình chạy, có thể cài lại các thư viện chính:
 
 ```bash
-pip install fastapi uvicorn pydantic python-dotenv
+pip install fastapi uvicorn pydantic python-dotenv jinja2 chromadb google-generativeai python-multipart pypdf pytest httpx
 ```
 
 ---
 
-## 11. Chạy project
+## 11. Cấu hình biến môi trường
+
+Project cần file `.env` để lưu cấu hình chạy local, đặc biệt là `GEMINI_API_KEY`.
+
+### Bước 1: Copy file mẫu
+
+Trên Windows PowerShell:
+
+```bash
+copy .env.example .env
+```
+
+Trên macOS/Linux:
+
+```bash
+cp .env.example .env
+```
+
+### Bước 2: Điền API key thật vào file `.env`
+
+Mở file `.env` và cấu hình theo mẫu:
+
+```env
+GEMINI_API_KEY=your_real_gemini_api_key
+GEMINI_MODEL=gemini-2.5-flash
+VECTOR_STORE_PATH=storage/chroma_db
+RETRIEVAL_TOP_K=5
+SIMILARITY_THRESHOLD=0.3
+```
+
+Lưu ý:
+
+* Không commit file `.env` lên GitHub.
+* Không ghi API key thật vào `.env.example`.
+* Nếu lỡ đẩy API key lên GitHub, cần đổi key ngay.
+
+---
+
+## 12. Chạy project
 
 Chạy server FastAPI:
+
+```bash
+python -m uvicorn app.main:app --reload
+```
+
+Hoặc:
 
 ```bash
 uvicorn app.main:app --reload
@@ -486,44 +538,153 @@ Nếu chạy thành công, terminal sẽ hiện dạng:
 
 ```text
 Uvicorn running on http://127.0.0.1:8000
+Application startup complete.
 ```
 
-Mở Swagger UI tại:
+---
+
+## 13. Mở giao diện web chatbot
+
+Sau khi server chạy thành công, mở trình duyệt tại:
+
+```text
+http://127.0.0.1:8000/
+```
+
+Đây là giao diện chatbot được load từ file:
+
+```text
+app/templates/chat_ui.html
+```
+
+Giao diện này sẽ gửi câu hỏi đến API:
+
+```text
+POST /api/chat/
+```
+
+Nếu vào `/` bị lỗi `404 Not Found`, cần kiểm tra lại:
+
+* `app/routers/page_router.py` có route `@router.get("/")` chưa.
+* `app/main.py` đã include `page_router` chưa.
+* File `app/templates/chat_ui.html` có tồn tại đúng vị trí không.
+
+---
+
+## 14. Mở Swagger UI
+
+Swagger UI dùng để kiểm tra API trực tiếp trên trình duyệt.
+
+Mở:
 
 ```text
 http://127.0.0.1:8000/docs
 ```
 
+OpenAPI JSON:
 
-## 14. Luồng xử lý chatbot
+```text
+http://127.0.0.1:8000/openapi.json
+```
+
+Một số endpoint thường dùng:
+
+| Endpoint                                       | Phương thức | Mục đích                                        |
+| ---------------------------------------------- | ----------- | ----------------------------------------------- |
+| `/`                                            | GET         | Mở giao diện web chatbot                        |
+| `/api/chat/`                                   | POST        | Gửi câu hỏi cho chatbot                         |
+| `/api/documents/` hoặc `/api/documents/upload` | POST        | Upload hoặc xử lý tài liệu nếu router có hỗ trợ |
+| `/docs`                                        | GET         | Mở Swagger UI                                   |
+| `/openapi.json`                                | GET         | Xem OpenAPI schema                              |
+
+Lưu ý: Tên endpoint tài liệu có thể thay đổi tùy theo nội dung trong `document_router.py`. Nên kiểm tra chính xác trong Swagger tại `/docs`.
+
+---
+
+## 15. Test API chatbot
+
+Endpoint chính:
+
+```text
+POST /api/chat/
+```
+
+Body mẫu:
+
+```json
+{
+  "question": "Phòng Tổ hợp STUDIO ở đâu?"
+}
+```
+
+Response mẫu:
+
+```json
+{
+  "question": "Phòng Tổ hợp STUDIO ở đâu?",
+  "answer": "Nội dung câu trả lời từ chatbot",
+  "source": "Tên tài liệu nguồn"
+}
+```
+
+Nếu API trả lời được và terminal hiện:
+
+```text
+POST /api/chat/ HTTP/1.1" 200 OK
+```
+
+nghĩa là endpoint chatbot đã hoạt động.
+
+---
+
+## 16. Luồng xử lý chatbot
 
 Luồng xử lý chính của chatbot:
 
 ```text
-Người dùng đặt câu hỏi
-→ API /chat nhận request
-→ Router gọi sang controller
-→ Controller gọi data layer để tìm tài liệu
-→ Data layer trả về tài liệu liên quan
-→ Build context từ tài liệu
-→ Build prompt
-→ Gọi model AI hoặc bản giả lập
-→ Trả về câu trả lời kèm nguồn
+Người dùng nhập câu hỏi trên giao diện web
+→ Frontend gọi API POST /api/chat/
+→ chat_router nhận request
+→ chatbot_controller điều phối xử lý
+→ data layer tìm tài liệu hoặc chunk liên quan
+→ prompt_builder tạo prompt từ nội dung tìm được
+→ gemini_client gọi Gemini để sinh câu trả lời
+→ API trả answer và source về frontend
+→ Web hiển thị câu trả lời và nguồn tài liệu
 ```
+
+Giải thích ngắn gọn:
+
+| Thành phần                | Vai trò                                        |
+| ------------------------- | ---------------------------------------------- |
+| `app/main.py`             | Khởi tạo FastAPI và include các router         |
+| `page_router.py`          | Trả về giao diện web chatbot tại `/`           |
+| `chat_router.py`          | Nhận câu hỏi từ frontend hoặc Swagger          |
+| `chatbot_controller.py`   | Điều phối quá trình xử lý câu hỏi              |
+| `elasticsearch_client.py` | Lớp retrieval, tìm tài liệu liên quan          |
+| `embedding_client.py`     | Tạo vector embedding cho câu hỏi hoặc tài liệu |
+| `vector_store.py`         | Lưu và tìm kiếm vector bằng ChromaDB           |
+| `prompt_builder.py`       | Tạo context và prompt để gửi cho Gemini        |
+| `gemini_client.py`        | Gọi Gemini để sinh câu trả lời                 |
+| `chat_schema.py`          | Chuẩn hóa request/response                     |
+| `chat_ui.html`            | Giao diện web chatbot                          |
 
 ---
 
-## 15. Metadata cần lưu
+## 17. Metadata cần lưu
 
-| Trường | Kiểu dữ liệu | Ý nghĩa |
-|---|---|---|
-| `doc_name` | String | Tên tài liệu nguồn |
-| `title` | String | Tiêu đề, mục hoặc điều khoản trong tài liệu |
-| `content` | Text | Nội dung đoạn tài liệu |
-| `chunk_index` | Number | Thứ tự đoạn đã tách |
-| `file_path` | String | Đường dẫn file gốc |
-| `source_type` | String | Loại nguồn tài liệu |
-| `is_active` | Boolean | Trạng thái tài liệu còn hiệu lực hay không |
+| Trường        | Kiểu dữ liệu | Ý nghĩa                                     |
+| ------------- | ------------ | ------------------------------------------- |
+| `doc_name`    | String       | Tên tài liệu nguồn                          |
+| `title`       | String       | Tiêu đề, mục hoặc điều khoản trong tài liệu |
+| `content`     | Text         | Nội dung đoạn tài liệu                      |
+| `chunk_index` | Number       | Thứ tự đoạn đã tách                         |
+| `file_path`   | String       | Đường dẫn file gốc                          |
+| `source_type` | String       | Loại nguồn tài liệu                         |
+| `is_active`   | Boolean      | Trạng thái tài liệu còn hiệu lực hay không  |
+| `score`       | Float        | Điểm liên quan hoặc độ tương đồng của chunk |
+| `page_start`  | Number       | Trang bắt đầu nếu trích xuất từ PDF         |
+| `page_end`    | Number       | Trang kết thúc nếu trích xuất từ PDF        |
 
 Ví dụ metadata:
 
@@ -535,26 +696,167 @@ Ví dụ metadata:
   "content": "Sinh viên có thể xin hoãn thi nếu có lý do chính đáng.",
   "file_path": "uploads/ChatAI/quy-che-dao-tao.pdf",
   "source_type": "official_document",
-  "is_active": true
+  "is_active": true,
+  "score": 0.87,
+  "page_start": 3,
+  "page_end": 4
 }
 ```
-## 16. Quy tắc không được đẩy lên GitHub
 
-Không đẩy các file sau lên GitHub:
+---
 
-- `.env`
-- API key
-- Token
-- File credential
-- File service account
-- Thư mục môi trường ảo `venv/`
-- File upload thật trong `uploads/`
-- File cache Python `__pycache__/`
+## 18. Chạy test
 
+Cài thư viện test nếu chưa có:
 
-## 17. Một số lỗi Git thường gặp
+```bash
+pip install pytest httpx
+```
 
-### Lỗi 1: Không push được branch mới
+Chạy test:
+
+```bash
+python -m pytest -q
+```
+
+Kết quả mong đợi:
+
+```text
+4 passed
+```
+
+Các test cơ bản:
+
+| Test                          | Mục đích                                           |
+| ----------------------------- | -------------------------------------------------- |
+| `test_home_page_returns_html` | Kiểm tra web chatbot tại `/`                       |
+| `test_docs_page_available`    | Kiểm tra Swagger `/docs`                           |
+| `test_openapi_json_available` | Kiểm tra OpenAPI schema                            |
+| `test_chat_api_with_mock`     | Kiểm tra API `/api/chat/` mà không gọi Gemini thật |
+
+---
+
+## 19. Quy tắc không được đẩy lên GitHub
+
+Không đẩy các file hoặc thư mục sau lên GitHub:
+
+* `.env`
+* API key
+* Token
+* File credential
+* File service account
+* Thư mục môi trường ảo `venv/`
+* Thư mục upload thật `uploads/`
+* Dữ liệu vector database local `storage/chroma_db/`
+* File cache Python `__pycache__/`
+* File cache test `.pytest_cache/`
+* File log `*.log`
+
+Nếu lỡ add nhầm file `.env`, cần gỡ khỏi Git:
+
+```bash
+git restore --staged .env
+```
+
+Nếu file `.env` đã từng bị commit, cần xóa khỏi Git tracking:
+
+```bash
+git rm --cached .env
+git add .gitignore
+git commit -m "fix: remove env file from repository"
+git push
+```
+
+Nếu đã đẩy API key thật lên GitHub, cần đổi API key ngay.
+
+---
+
+## 20. Một số lỗi thường gặp và cách xử lý
+
+### Lỗi 1: Thiếu `GEMINI_API_KEY`
+
+Thông báo lỗi có dạng:
+
+```text
+ValueError: Thiếu GEMINI_API_KEY trong file .env
+```
+
+Cách xử lý:
+
+* Kiểm tra đã có file `.env` chưa.
+* Kiểm tra `.env` có nằm ngang hàng với `app/` không.
+* Kiểm tra đã có dòng `GEMINI_API_KEY=...` chưa.
+* Không đặt tên nhầm thành `.env.txt`.
+
+---
+
+### Lỗi 2: Thiếu thư viện `chromadb`
+
+Thông báo lỗi có dạng:
+
+```text
+ModuleNotFoundError: No module named 'chromadb'
+```
+
+Cách xử lý:
+
+```bash
+pip install chromadb
+```
+
+Sau đó cập nhật lại `requirements.txt` nếu cần.
+
+---
+
+### Lỗi 3: Vào `/` bị `404 Not Found`
+
+Nguyên nhân thường gặp:
+
+* Chưa có route `GET /`.
+* Chưa include `page_router` trong `app/main.py`.
+* File `chat_ui.html` đặt sai vị trí.
+
+Cách kiểm tra:
+
+```text
+app/templates/chat_ui.html
+app/routers/page_router.py
+app/main.py
+```
+
+Route web cần trả về giao diện chatbot tại:
+
+```text
+http://127.0.0.1:8000/
+```
+
+---
+
+### Lỗi 4: Gõ sai đường dẫn `/docs`
+
+Đường dẫn đúng:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Nếu gõ nhầm `/dosc` thì sẽ bị `404 Not Found`.
+
+---
+
+### Lỗi 5: API chat không kết nối từ giao diện web
+
+Cần kiểm tra trong file `chat_ui.html` có đúng API URL:
+
+```javascript
+const API_URL = "/api/chat/";
+```
+
+Nếu backend dùng endpoint khác, cần sửa URL cho khớp với router thực tế.
+
+---
+
+### Lỗi 6: Không push được branch mới
 
 Nếu gặp lỗi vì branch chưa tồn tại trên GitHub, chạy:
 
@@ -565,12 +867,12 @@ git push -u origin ten-branch
 Ví dụ:
 
 ```bash
-git push -u origin feature/routers
+git push -u origin docs-and-tests
 ```
 
 ---
 
-### Lỗi 2: Đang ở nhầm branch
+### Lỗi 7: Đang ở nhầm branch
 
 Kiểm tra branch hiện tại:
 
@@ -581,18 +883,12 @@ git branch
 Chuyển về branch đúng:
 
 ```bash
-git checkout ten-branch
-```
-
-Ví dụ:
-
-```bash
-git checkout develop
+git checkout docs-and-tests
 ```
 
 ---
 
-### Lỗi 3: Bị conflict khi merge Pull Request
+### Lỗi 8: Bị conflict khi merge Pull Request
 
 Cách xử lý cơ bản:
 
@@ -613,42 +909,36 @@ git push
 
 ---
 
-### Lỗi 4: Lỡ commit nhầm file `.env`
+## 21. Checklist trước khi nộp bài
 
-Cần xóa file khỏi Git và thêm vào `.gitignore`:
+* [ ] Có repository GitHub chung cho nhóm.
+* [ ] Có nhánh `main`.
+* [ ] Có nhánh `develop` nếu nhóm sử dụng quy trình develop.
+* [ ] Mỗi thành viên có branch riêng.
+* [ ] Không code trực tiếp trên `main`.
+* [ ] Không code trực tiếp trên `develop`.
+* [ ] Có Pull Request trước khi merge.
+* [ ] Có review trước khi merge.
+* [ ] Project chạy được bằng lệnh `python -m uvicorn app.main:app --reload`.
+* [ ] Mở được web chatbot tại `/`.
+* [ ] Mở được Swagger UI tại `/docs`.
+* [ ] Test được API `/api/chat/`.
+* [ ] Có đủ folder `app/routers`, `app/controller`, `app/data`, `app/schemas`, `app/core`.
+* [ ] Có file giao diện `app/templates/chat_ui.html`.
+* [ ] Router không chứa logic nghiệp vụ quá dài.
+* [ ] Controller điều phối luồng xử lý rõ ràng.
+* [ ] Data layer có xử lý metadata hoặc vector search.
+* [ ] Câu trả lời chatbot có kèm nguồn.
+* [ ] Có file `.gitignore`.
+* [ ] Có file `.env.example`.
+* [ ] Có file `README.md` hướng dẫn rõ ràng.
+* [ ] Có file `requirements.txt` cập nhật đủ thư viện.
+* [ ] Có test cơ bản trong thư mục `tests/`.
+* [ ] Chạy được `python -m pytest -q`.
+* [ ] Không đẩy `.env`, API key hoặc credential lên GitHub.
+* [ ] Không đẩy `venv/`, `uploads/`, `storage/chroma_db/`, `__pycache__/` lên GitHub.
 
-```bash
-git rm --cached .env
-git add .gitignore
-git commit -m "fix: remove env file from repository"
-git push
-```
-
-Nếu đã đẩy API key lên GitHub, cần đổi API key ngay.
-
-
-## 18. Checklist trước khi nộp bài
-
-- [ ] Có repository GitHub chung cho nhóm.
-- [ ] Có nhánh `main`.
-- [ ] Có nhánh `develop`.
-- [ ] Mỗi thành viên có branch riêng.
-- [ ] Không code trực tiếp trên `main`.
-- [ ] Không code trực tiếp trên `develop`.
-- [ ] Có Pull Request trước khi merge.
-- [ ] Có review trước khi merge.
-- [ ] Project chạy được bằng lệnh `uvicorn app.main:app --reload`.
-- [ ] Mở được Swagger UI tại `/docs`.
-- [ ] Test được API `/chat/`.
-- [ ] Có đủ folder `app/routers`, `app/controller`, `app/data`, `app/schemas`, `app/core`.
-- [ ] Router không chứa logic nghiệp vụ quá dài.
-- [ ] Controller điều phối luồng xử lý rõ ràng.
-- [ ] Data layer có xử lý metadata hoặc bản giả lập để test.
-- [ ] Câu trả lời chatbot có kèm nguồn.
-- [ ] Có file `.gitignore`.
-- [ ] Có file `.env.example`.
-- [ ] Có file `README.md` hướng dẫn rõ ràng.
-- [ ] Không đẩy `.env`, API key hoặc credential lên GitHub.
+---
 
 
 
