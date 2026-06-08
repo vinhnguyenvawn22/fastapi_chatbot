@@ -9,17 +9,55 @@ from app.core.config import (
 )
 from app.data.elasticsearch_client import get_keywords, search_documents
 from app.data.gemini_client import ask_gemini
-from app.data.prompt_builder import build_context, build_prompt
+from app.data.prompt_builder import build_context, build_prompt, build_website_prompt
 from app.data.query_analyzer import QueryIntent, classify_query
 from app.data.trace_logger import RagTrace, load_trace
 from app.data.website_search_client import index_uneti_website
 
 
 SOURCE_PREVIEW_CHARS = 240
+NO_WEBSITE_EVIDENCE_ANSWER = "Không tìm thấy thông tin phù hợp trên website UNETI."
 NO_EVIDENCE_ANSWER = "Không tìm thấy căn cứ đủ rõ trong tài liệu đã cung cấp."
 OUT_OF_SCOPE_ANSWER = "Câu hỏi này nằm ngoài phạm vi tài liệu nội bộ hiện có."
 GENERAL_ADVICE_ANSWER = "Câu hỏi này không cần tra cứu tài liệu nội bộ. Vui lòng hỏi về quy định, quy trình, văn bản hoặc nội dung trong tài liệu đã cung cấp."
 SHORT_QUERY_KEYWORD_COUNT = 3
+
+
+def _clean_answer_text(answer: str | None) -> str:
+    return str(answer or "").replace("**", "")
+
+
+def _confidence_from_source(doc: dict) -> tuple[float | None, str | None]:
+    if doc.get("metadata_matched"):
+        confidence = 1.0
+    else:
+        confidence_values = []
+
+        vector_score = doc.get("vector_score")
+        if vector_score is None and doc.get("distance") is not None:
+            vector_score = 1 - float(doc["distance"])
+
+        if vector_score is not None:
+            confidence_values.append(max(0.0, min(float(vector_score), 1.0)))
+
+        keyword_score = doc.get("keyword_score")
+        if keyword_score is not None:
+            keyword_confidence = float(keyword_score) / max(MIN_SEARCH_SCORE * 4, 1)
+            confidence_values.append(max(0.0, min(keyword_confidence, 1.0)))
+
+        if not confidence_values:
+            return None, None
+
+        confidence = max(confidence_values)
+
+    if confidence >= 0.75:
+        label = "Cao"
+    elif confidence >= 0.55:
+        label = "Trung bình"
+    else:
+        label = "Thấp"
+
+    return round(confidence, 4), label
 
 
 def _source_preview(content: str) -> str:
@@ -35,6 +73,7 @@ def _build_sources(docs):
     sources = []
 
     for doc in docs:
+        confidence, confidence_label = _confidence_from_source(doc)
         scores = {}
 
         for field_name in ("score", "vector_score", "keyword_score", "distance"):
@@ -71,6 +110,9 @@ def _build_sources(docs):
             "vector_score": scores["vector_score"],
             "keyword_score": scores["keyword_score"],
             "distance": scores["distance"],
+            "confidence": confidence,
+            "confidence_percent": round(confidence * 100) if confidence is not None else None,
+            "confidence_label": confidence_label,
             "preview": _source_preview(doc.get("content", "")),
         })
 
@@ -109,6 +151,9 @@ def _has_confident_evidence(question: str, docs) -> tuple[bool, str]:
 
 
 def _finalize(trace: RagTrace, response: dict) -> dict:
+    if "answer" in response:
+        response["answer"] = _clean_answer_text(response["answer"])
+
     response["trace_id"] = trace.trace_id
     trace.set_response(response)
     trace.save()
@@ -117,7 +162,24 @@ def _finalize(trace: RagTrace, response: dict) -> dict:
 
 async def _search_website_and_finalize(trace: RagTrace, question: str, intent: str, reason: str):
     website_debug = {}
-    index_result = await run_in_threadpool(index_uneti_website, question, website_debug)
+    try:
+        index_result = await run_in_threadpool(index_uneti_website, question, website_debug)
+    except Exception as exc:
+        trace.add_step("website_search", {
+            "status": "index_error",
+            "error": str(exc),
+        }, {
+            "question": question,
+            "reason": reason,
+        })
+        return _finalize(trace, {
+            "question": question,
+            "answer": NO_WEBSITE_EVIDENCE_ANSWER,
+            "source": None,
+            "sources": [],
+            "intent": intent,
+        })
+
     trace.add_step("website_search", website_debug, {
         "question": question,
         "reason": reason,
@@ -131,7 +193,7 @@ async def _search_website_and_finalize(trace: RagTrace, question: str, intent: s
         })
         return _finalize(trace, {
             "question": question,
-            "answer": NO_EVIDENCE_ANSWER,
+            "answer": NO_WEBSITE_EVIDENCE_ANSWER,
             "source": None,
             "sources": [],
             "intent": intent,
@@ -164,14 +226,14 @@ async def _search_website_and_finalize(trace: RagTrace, question: str, intent: s
     if not website_docs or not has_evidence:
         return _finalize(trace, {
             "question": question,
-            "answer": NO_EVIDENCE_ANSWER,
+            "answer": NO_WEBSITE_EVIDENCE_ANSWER,
             "source": None,
             "sources": _build_sources(website_docs),
             "intent": intent,
         })
 
     context = build_context(website_docs)
-    prompt = build_prompt(question, context)
+    prompt = build_website_prompt(question, context)
     trace.add_step("context_builder", {
         "context_chars": len(context),
         "prompt_chars": len(prompt),
