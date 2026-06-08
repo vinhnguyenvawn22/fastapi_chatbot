@@ -2,12 +2,13 @@ from collections.abc import Mapping
 from datetime import datetime
 from html import unescape
 from io import BytesIO
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote_plus, urljoin, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 from xml.etree import ElementTree
 import zipfile
 import hashlib
+import json
 import math
 import re
 import ssl
@@ -42,6 +43,10 @@ NO_WEBSITE_RESULTS_ANSWER = "Chua tim thay thong tin phu hop tren website UNETI.
 USER_AGENT = "UNETI-RAG-Assistant/1.0"
 ATTACHMENT_EXTENSIONS = (".pdf", ".docx", ".doc")
 WEBSITE_SOURCE_ROOT = "UNETI website"
+FALLBACK_SITEMAP_LIMIT = 200
+FALLBACK_CATEGORY_PATHS = (
+    "/category/dao-tao/thong-bao-ke-hoach-dao-tao/",
+)
 
 
 def _validate_config():
@@ -171,6 +176,31 @@ def _score_source(question: str, source: dict) -> float:
     return round(score, 4)
 
 
+def _fallback_source_matches_query(question: str, source: dict) -> bool:
+    query_terms = set(get_keywords(question))
+    searchable = normalize_text(
+        " ".join([
+            source.get("title", ""),
+            source.get("snippet", ""),
+            source.get("url", ""),
+        ])
+    )
+    source_terms = set(get_keywords(searchable))
+    query_years = set(re.findall(r"\b20\d{2}\b", question))
+    source_years = set(re.findall(r"\b20\d{2}\b", searchable))
+
+    if query_years and not (query_years & source_years):
+        return False
+
+    non_year_terms = {term for term in query_terms if not re.fullmatch(r"20\d{2}", term)}
+    overlap = non_year_terms & source_terms
+
+    if len(non_year_terms) >= 4:
+        return len(overlap) >= 2
+
+    return bool(overlap)
+
+
 def _dedupe_and_rerank(question: str, raw_sources: list[dict]) -> list[dict]:
     by_url = {}
 
@@ -190,6 +220,31 @@ def _dedupe_and_rerank(question: str, raw_sources: list[dict]) -> list[dict]:
         source
         for source in ranked
         if source["score"] >= WEBSITE_MIN_SOURCE_SCORE
+    ][:WEBSITE_RERANK_TOP_K]
+
+
+def _dedupe_and_rerank_fallback(question: str, raw_sources: list[dict]) -> list[dict]:
+    by_url = {}
+
+    for source in raw_sources:
+        url = source.get("url") or ""
+        if not url or not _is_uneti_url(url):
+            continue
+
+        if not _fallback_source_matches_query(question, source):
+            continue
+
+        key = url.split("#", 1)[0].rstrip("/")
+        source["score"] = _score_source(question, source)
+
+        if key not in by_url or source["score"] > by_url[key]["score"]:
+            by_url[key] = source
+
+    ranked = sorted(by_url.values(), key=lambda item: item["score"], reverse=True)
+    return [
+        source
+        for source in ranked
+        if source["score"] > 0
     ][:WEBSITE_RERANK_TOP_K]
 
 
@@ -230,6 +285,205 @@ def _fetch_url(url: str) -> tuple[str, bytes]:
     insecure_context = ssl._create_unverified_context()
     with urlopen(request, timeout=WEBSITE_FETCH_TIMEOUT, context=insecure_context) as response:
         return _read_response(response)
+
+
+def _title_from_url(url: str) -> str:
+    path = urlparse(url or "").path.strip("/")
+    if not path:
+        return UNETI_WEBSITE_DOMAIN
+
+    slug = path.rsplit("/", 1)[-1]
+    title = re.sub(r"[-_]+", " ", unescape(slug)).strip()
+    return title or path
+
+
+def _search_wordpress_rest(question: str) -> list[dict]:
+    search_url = (
+        f"https://{UNETI_WEBSITE_DOMAIN}/wp-json/wp/v2/search"
+        f"?search={quote_plus(question)}&per_page={WEBSITE_SEARCH_TOP_K}"
+    )
+    content_type, data = _fetch_url(search_url)
+    if "json" not in content_type:
+        return []
+
+    try:
+        payload = json.loads(data.decode("utf-8"))
+    except Exception:
+        return []
+
+    sources = []
+    for item in payload if isinstance(payload, list) else []:
+        url = item.get("url") or item.get("link") or ""
+        if not _is_uneti_url(url):
+            continue
+
+        title = _first_text(item.get("title")) or _title_from_url(url)
+        subtype = item.get("subtype") or item.get("type") or ""
+        sources.append({
+            "title": title,
+            "url": url,
+            "snippet": subtype,
+        })
+
+    return sources
+
+
+def _search_site_html(question: str) -> list[dict]:
+    search_url = f"https://{UNETI_WEBSITE_DOMAIN}/?s={quote_plus(question)}"
+    content_type, data = _fetch_url(search_url)
+    html_text = _decode_html(data, content_type)
+    link_pattern = re.compile(
+        r"""<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>(.*?)</a>""",
+        re.IGNORECASE | re.DOTALL,
+    )
+    sources = []
+    seen = set()
+
+    for href, raw_title in link_pattern.findall(html_text):
+        url = urljoin(search_url, unescape(href).strip())
+        if not _is_uneti_url(url):
+            continue
+
+        parsed = urlparse(url)
+        if parsed.fragment or parsed.scheme not in {"http", "https"}:
+            continue
+
+        path = parsed.path.strip("/")
+        if not path or any(part in path for part in ("wp-content", "wp-json", "xmlrpc.php")):
+            continue
+
+        key = url.split("#", 1)[0].rstrip("/")
+        if key in seen:
+            continue
+        seen.add(key)
+
+        title = re.sub(r"(?is)<[^>]+>", " ", raw_title)
+        title = " ".join(unescape(title).split()) or _title_from_url(url)
+        sources.append({
+            "title": title,
+            "url": key,
+            "snippet": title,
+        })
+
+    return sources
+
+
+def _search_category_pages(question: str) -> list[dict]:
+    sources = []
+    seen = set()
+
+    for path in FALLBACK_CATEGORY_PATHS:
+        for page_index in range(1, 4):
+            category_url = f"https://{UNETI_WEBSITE_DOMAIN}{path}"
+            if page_index > 1:
+                category_url = urljoin(category_url, f"page/{page_index}/")
+
+            try:
+                content_type, data = _fetch_url(category_url)
+            except Exception:
+                continue
+
+            html_text = _decode_html(data, content_type)
+            link_pattern = re.compile(
+                r"""<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>(.*?)</a>""",
+                re.IGNORECASE | re.DOTALL,
+            )
+
+            for href, raw_title in link_pattern.findall(html_text):
+                url = urljoin(category_url, unescape(href).strip())
+                if not _is_uneti_url(url):
+                    continue
+
+                parsed = urlparse(url)
+                if parsed.fragment or parsed.scheme not in {"http", "https"}:
+                    continue
+
+                path = parsed.path.strip("/")
+                if not path or any(part in path for part in ("category/", "wp-content", "wp-json")):
+                    continue
+
+                key = url.split("#", 1)[0].rstrip("/")
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                title = re.sub(r"(?is)<[^>]+>", " ", raw_title)
+                title = " ".join(unescape(title).split()) or _title_from_url(url)
+                sources.append({
+                    "title": title,
+                    "url": key,
+                    "snippet": title,
+                })
+
+    return sources
+
+
+def _extract_sitemap_locations(data: bytes, content_type: str = "") -> tuple[list[str], list[str]]:
+    xml_text = _decode_html(data, content_type)
+
+    try:
+        root = ElementTree.fromstring(xml_text)
+    except ElementTree.ParseError:
+        return [], []
+
+    tag_name = root.tag.rsplit("}", 1)[-1].lower()
+    locations = [
+        (node.text or "").strip()
+        for node in root.iter()
+        if node.tag.rsplit("}", 1)[-1].lower() == "loc" and (node.text or "").strip()
+    ]
+
+    if tag_name == "sitemapindex":
+        return [], locations
+
+    return locations, []
+
+
+def _search_sitemap(question: str) -> list[dict]:
+    sitemap_queue = [
+        f"https://{UNETI_WEBSITE_DOMAIN}/sitemap.xml",
+        f"https://{UNETI_WEBSITE_DOMAIN}/post-sitemap.xml",
+        f"https://{UNETI_WEBSITE_DOMAIN}/page-sitemap.xml",
+    ]
+    seen_sitemaps = set()
+    page_urls = []
+
+    while sitemap_queue and len(page_urls) < FALLBACK_SITEMAP_LIMIT:
+        sitemap_url = sitemap_queue.pop(0)
+        if sitemap_url in seen_sitemaps or not _is_uneti_url(sitemap_url):
+            continue
+
+        seen_sitemaps.add(sitemap_url)
+
+        try:
+            content_type, data = _fetch_url(sitemap_url)
+            urls, child_sitemaps = _extract_sitemap_locations(data, content_type)
+        except Exception:
+            continue
+
+        page_urls.extend(url for url in urls if _is_uneti_url(url))
+
+        for child_url in child_sitemaps:
+            if len(seen_sitemaps) + len(sitemap_queue) >= 8:
+                break
+            if _is_uneti_url(child_url):
+                sitemap_queue.append(child_url)
+
+    query_terms = set(get_keywords(question))
+    sources = []
+    for url in page_urls[:FALLBACK_SITEMAP_LIMIT]:
+        title = _title_from_url(url)
+        searchable = set(get_keywords(f"{title} {url}"))
+        if query_terms and not (query_terms & searchable):
+            continue
+
+        sources.append({
+            "title": title,
+            "url": url,
+            "snippet": title,
+        })
+
+    return sources
 
 
 def _decode_html(data: bytes, content_type: str = "") -> str:
@@ -422,9 +676,19 @@ def _enrich_source_content(source: dict) -> dict:
                 fetch_debug.setdefault("scan_skipped_attachments", []).append(attachment_url)
 
         if attachment_links:
-            enriched["content"] = ""
+            skipped_attachment_url = None
+            skipped_attachments = fetch_debug.get("scan_skipped_attachments") or []
+            if skipped_attachments:
+                skipped_attachment_url = skipped_attachments[0]
+
+            combined_text = "\n\n".join(
+                part for part in (source.get("snippet", ""), page_text) if str(part).strip()
+            )
+            enriched["attachment_url"] = skipped_attachment_url
+            enriched["content"] = combined_text[:WEBSITE_EXTRACT_MAX_CHARS]
             enriched["scan_skipped"] = bool(fetch_debug.get("scan_skipped_attachments"))
-            fetch_debug["content_chars"] = 0
+            fetch_debug["attachment_url"] = skipped_attachment_url
+            fetch_debug["content_chars"] = len(enriched["content"])
             enriched["fetch_debug"] = fetch_debug
             return enriched
 
@@ -440,6 +704,86 @@ def _enrich_source_content(source: dict) -> dict:
 
     enriched["fetch_debug"] = fetch_debug
     return enriched
+
+
+def _answerable_sources_from_selected(selected_sources: list[dict]) -> tuple[list[dict], list[dict], bool]:
+    enriched_sources = [_enrich_source_content(source) for source in selected_sources]
+    top_source_scan_skipped = bool(
+        enriched_sources
+        and enriched_sources[0].get("scan_skipped")
+        and not (enriched_sources[0].get("content") or "").strip()
+    )
+    answerable_sources = [] if top_source_scan_skipped else [
+        source
+        for source in enriched_sources
+        if (source.get("content") or "").strip()
+    ]
+
+    return answerable_sources, enriched_sources, top_source_scan_skipped
+
+
+def _fallback_search_and_extract_website_sources(
+    question: str,
+    debug: dict | None = None,
+    reason: str = "primary_search_unavailable",
+) -> dict:
+    raw_sources = []
+    fallback_errors = []
+
+    try:
+        raw_sources.extend(_search_wordpress_rest(question))
+    except Exception as exc:
+        fallback_errors.append({"mode": "wordpress_rest", "error": str(exc)})
+
+    if not raw_sources:
+        try:
+            raw_sources.extend(_search_category_pages(question))
+        except Exception as exc:
+            fallback_errors.append({"mode": "category_pages", "error": str(exc)})
+
+    if not raw_sources:
+        try:
+            raw_sources.extend(_search_site_html(question))
+        except Exception as exc:
+            fallback_errors.append({"mode": "site_html_search", "error": str(exc)})
+
+    if not raw_sources:
+        try:
+            raw_sources.extend(_search_sitemap(question))
+        except Exception as exc:
+            fallback_errors.append({"mode": "sitemap", "error": str(exc)})
+
+    selected_sources = _dedupe_and_rerank_fallback(question, raw_sources)
+    answerable_sources, enriched_sources, top_source_scan_skipped = _answerable_sources_from_selected(
+        selected_sources
+    )
+
+    if debug is not None:
+        debug.update({
+            "status": "fallback_success" if answerable_sources else "fallback_no_answerable_sources",
+            "fallback_reason": reason,
+            "fallback_errors": fallback_errors,
+            "raw_results_count": len(raw_sources),
+            "selected_sources_count": len(selected_sources),
+            "answerable_sources_count": len(answerable_sources),
+            "mode": "wordpress_rest_or_category_or_site_html_or_sitemap",
+            "top_source_scan_skipped": top_source_scan_skipped,
+            "selected_sources": [
+                {
+                    "title": source.get("title"),
+                    "url": source.get("url"),
+                    "attachment_url": source.get("attachment_url"),
+                    "score": source.get("score"),
+                    "snippet_chars": len(source.get("snippet") or ""),
+                    "content_chars": len(source.get("content") or ""),
+                    "scan_skipped": bool(source.get("scan_skipped")),
+                    "fetch_debug": source.get("fetch_debug"),
+                }
+                for source in enriched_sources
+            ],
+        })
+
+    return {"sources": answerable_sources}
 
 
 def _build_website_prompt(question: str, sources: list[dict]) -> str:
@@ -507,8 +851,8 @@ def _build_website_chunks(source: dict) -> list[dict]:
         {
             "doc_name": doc_name,
             "relative_path": relative_path,
-            "phong_ban": "Website UNETI",
-            "source_root": WEBSITE_SOURCE_ROOT,
+            "phong_ban": source.get("phong_ban") or source.get("source_root") or "Website",
+            "source_root": source.get("source_root") or WEBSITE_SOURCE_ROOT,
             "title": source.get("title") or doc_name,
             "dieu": None,
             "muc": None,
@@ -559,21 +903,20 @@ def index_uneti_website(question: str, debug: dict | None = None) -> dict:
 def _search_and_extract_website_sources(question: str, debug: dict | None = None) -> dict:
     missing_config = _validate_config()
     if missing_config:
-        if debug is not None:
-            debug.update({
-                "status": "missing_config",
-                "missing_config": missing_config,
-                "raw_results_count": 0,
-                "selected_sources_count": 0,
-            })
-        return {"sources": []}
+        return _fallback_search_and_extract_website_sources(
+            question,
+            debug,
+            reason=f"missing_config: {', '.join(missing_config)}",
+        )
 
     try:
         from google.cloud.discoveryengine_v1beta import SearchServiceClient
     except Exception as exc:
-        if debug is not None:
-            debug.update({"status": "dependency_error", "error": str(exc)})
-        return {"sources": []}
+        return _fallback_search_and_extract_website_sources(
+            question,
+            debug,
+            reason=f"dependency_error: {exc}",
+        )
 
     api_endpoint = (
         "discoveryengine.googleapis.com"
@@ -601,22 +944,23 @@ def _search_and_extract_website_sources(question: str, debug: dict | None = None
             if source:
                 raw_sources.append(source)
     except Exception as exc:
-        if debug is not None:
-            debug.update({"status": "search_error", "error": str(exc)})
-        return {"sources": []}
+        return _fallback_search_and_extract_website_sources(
+            question,
+            debug,
+            reason=f"search_error: {exc}",
+        )
 
     selected_sources = _dedupe_and_rerank(question, raw_sources)
-    enriched_sources = [_enrich_source_content(source) for source in selected_sources]
-    top_source_scan_skipped = bool(
-        enriched_sources
-        and enriched_sources[0].get("scan_skipped")
-        and not (enriched_sources[0].get("content") or "").strip()
+    if not selected_sources:
+        return _fallback_search_and_extract_website_sources(
+            question,
+            debug,
+            reason="discovery_no_selected_sources",
+        )
+
+    answerable_sources, enriched_sources, top_source_scan_skipped = _answerable_sources_from_selected(
+        selected_sources
     )
-    answerable_sources = [] if top_source_scan_skipped else [
-        source
-        for source in enriched_sources
-        if (source.get("content") or "").strip()
-    ]
 
     if debug is not None:
         debug.update({
@@ -640,6 +984,13 @@ def _search_and_extract_website_sources(question: str, debug: dict | None = None
                 for source in enriched_sources
             ],
         })
+
+    if not answerable_sources:
+        return _fallback_search_and_extract_website_sources(
+            question,
+            debug,
+            reason="discovery_no_answerable_sources",
+        )
 
     return {"sources": answerable_sources}
 

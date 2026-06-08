@@ -31,6 +31,9 @@ class ChatSource(BaseModel):
     vector_score: Optional[float] = None
     keyword_score: Optional[float] = None
     distance: Optional[float] = None
+    confidence: Optional[float] = None
+    confidence_percent: Optional[int] = None
+    confidence_label: Optional[str] = None
     preview: Optional[str] = None
 
 
