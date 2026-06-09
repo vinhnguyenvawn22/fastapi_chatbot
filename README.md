@@ -420,14 +420,14 @@ Có thể copy mẫu này khi tạo Pull Request:
 ```bash
 pip install -r requirements.txt
 python -m pytest -q
-python -m uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8501
 ````
 
 Mở:
 
 ```text
-http://127.0.0.1:8000/
-http://127.0.0.1:8000/docs
+http://127.0.0.1:8501/
+http://127.0.0.1:8501/docs
 ```
 
 ````
@@ -525,19 +525,19 @@ Lưu ý:
 Chạy server FastAPI:
 
 ```bash
-python -m uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8501
 ```
 
 Hoặc:
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8501
 ```
 
 Nếu chạy thành công, terminal sẽ hiện dạng:
 
 ```text
-Uvicorn running on http://127.0.0.1:8000
+Uvicorn running on http://0.0.0.0:8501
 Application startup complete.
 ```
 
@@ -548,7 +548,7 @@ Application startup complete.
 Sau khi server chạy thành công, mở trình duyệt tại:
 
 ```text
-http://127.0.0.1:8000/
+http://127.0.0.1:8501/
 ```
 
 Đây là giao diện chatbot được load từ file:
@@ -578,13 +578,13 @@ Swagger UI dùng để kiểm tra API trực tiếp trên trình duyệt.
 Mở:
 
 ```text
-http://127.0.0.1:8000/docs
+http://127.0.0.1:8501/docs
 ```
 
 OpenAPI JSON:
 
 ```text
-http://127.0.0.1:8000/openapi.json
+http://127.0.0.1:8501/openapi.json
 ```
 
 Một số endpoint thường dùng:
@@ -827,7 +827,7 @@ app/main.py
 Route web cần trả về giao diện chatbot tại:
 
 ```text
-http://127.0.0.1:8000/
+http://127.0.0.1:8501/
 ```
 
 ---
@@ -837,7 +837,7 @@ http://127.0.0.1:8000/
 Đường dẫn đúng:
 
 ```text
-http://127.0.0.1:8000/docs
+http://127.0.0.1:8501/docs
 ```
 
 Nếu gõ nhầm `/dosc` thì sẽ bị `404 Not Found`.
@@ -919,7 +919,7 @@ git push
 * [ ] Không code trực tiếp trên `develop`.
 * [ ] Có Pull Request trước khi merge.
 * [ ] Có review trước khi merge.
-* [ ] Project chạy được bằng lệnh `python -m uvicorn app.main:app --reload`.
+* [ ] Project chạy được bằng lệnh `python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8501`.
 * [ ] Mở được web chatbot tại `/`.
 * [ ] Mở được Swagger UI tại `/docs`.
 * [ ] Test được API `/api/chat/`.
