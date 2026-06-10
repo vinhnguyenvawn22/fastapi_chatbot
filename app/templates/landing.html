@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UNETI P.CNTT Chatbot</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    :root {
+      --ink: #13202f;
+      --muted: #5f6d7f;
+      --line: #d8e0ea;
+      --blue: #2563eb;
+      --teal: #0f766e;
+      --amber: #f59e0b;
+      --green: #16a34a;
+      --paper: #ffffff;
+      --soft: #f5f7fb;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--soft);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .page {
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .hero {
+      position: relative;
+      min-height: 92vh;
+      display: grid;
+      align-items: center;
+      background:
+        linear-gradient(rgba(247, 250, 252, 0.90), rgba(247, 250, 252, 0.88)),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000' viewBox='0 0 1600 1000'%3E%3Crect width='1600' height='1000' fill='%23edf3f8'/%3E%3Cg opacity='0.55'%3E%3Crect x='88' y='95' width='410' height='250' rx='16' fill='%23ffffff' stroke='%23cbd6e2'/%3E%3Crect x='125' y='135' width='210' height='18' rx='9' fill='%232563eb'/%3E%3Crect x='125' y='178' width='315' height='12' rx='6' fill='%2398a8ba'/%3E%3Crect x='125' y='205' width='260' height='12' rx='6' fill='%23b7c4d4'/%3E%3Crect x='1040' y='122' width='390' height='230' rx='16' fill='%23ffffff' stroke='%23cbd6e2'/%3E%3Crect x='1080' y='165' width='145' height='14' rx='7' fill='%230f766e'/%3E%3Crect x='1080' y='205' width='280' height='11' rx='6' fill='%2398a8ba'/%3E%3Crect x='1080' y='232' width='230' height='11' rx='6' fill='%23b7c4d4'/%3E%3Crect x='180' y='660' width='370' height='200' rx='16' fill='%23ffffff' stroke='%23cbd6e2'/%3E%3Crect x='222' y='708' width='180' height='15' rx='8' fill='%23f59e0b'/%3E%3Crect x='222' y='748' width='268' height='11' rx='6' fill='%2398a8ba'/%3E%3Crect x='950' y='610' width='430' height='250' rx='16' fill='%23ffffff' stroke='%23cbd6e2'/%3E%3Crect x='992' y='657' width='215' height='16' rx='8' fill='%2316a34a'/%3E%3Crect x='992' y='700' width='320' height='12' rx='6' fill='%2398a8ba'/%3E%3Crect x='992' y='728' width='250' height='12' rx='6' fill='%23b7c4d4'/%3E%3Cpath d='M515 295 C 690 210, 840 208, 1040 250' fill='none' stroke='%232563eb' stroke-width='4' stroke-dasharray='10 14'/%3E%3Cpath d='M550 730 C 715 610, 790 595, 950 705' fill='none' stroke='%230f766e' stroke-width='4' stroke-dasharray='10 14'/%3E%3C/g%3E%3C/svg%3E");
+      background-size: cover;
+      background-position: center;
+    }
+
+    .nav {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 22px 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      font-weight: 900;
+    }
+
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--blue);
+      color: #fff;
+      flex: 0 0 auto;
+      letter-spacing: 0;
+    }
+
+    .brand-text {
+      overflow-wrap: anywhere;
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+
+    .nav-link {
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 700;
+      padding: 10px 12px;
+    }
+
+    .hero-inner {
+      width: min(1180px, calc(100% - 48px));
+      margin: 0 auto;
+      padding-top: 78px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.03fr) minmax(360px, 0.97fr);
+      gap: 46px;
+      align-items: center;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      color: #0f5f58;
+      font-weight: 900;
+      background: rgba(15, 118, 110, 0.10);
+      border: 1px solid rgba(15, 118, 110, 0.20);
+      padding: 9px 12px;
+      border-radius: 8px;
+      margin-bottom: 18px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--green);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(42px, 6vw, 74px);
+      line-height: 0.98;
+      letter-spacing: 0;
+      max-width: 760px;
+    }
+
+    .lead {
+      margin: 22px 0 0;
+      max-width: 640px;
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1.65;
+    }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 34px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 48px;
+      border-radius: 8px;
+      padding: 0 18px;
+      font-weight: 900;
+      border: 1px solid transparent;
+      transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .btn-primary {
+      color: #fff;
+      background: var(--blue);
+      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.22);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.78);
+      border-color: var(--line);
+      color: #243244;
+    }
+
+    .preview {
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid rgba(151, 164, 181, 0.42);
+      border-radius: 8px;
+      box-shadow: 0 24px 70px rgba(38, 52, 70, 0.16);
+      overflow: hidden;
+    }
+
+    .preview-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #ffffff;
+    }
+
+    .window-dots {
+      display: flex;
+      gap: 7px;
+    }
+
+    .window-dots span {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #cbd5e1;
+    }
+
+    .status {
+      color: #0f766e;
+      font-size: 13px;
+      font-weight: 900;
+      background: #e7f7f3;
+      padding: 6px 9px;
+      border-radius: 8px;
+    }
+
+    .preview-body {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .question {
+      background: #f6f8fb;
+      border: 1px solid #e1e7ef;
+      border-radius: 8px;
+      padding: 15px;
+      color: #29364a;
+      line-height: 1.55;
+    }
+
+    .answer-panel {
+      display: grid;
+      gap: 12px;
+      border: 1px solid #dce5ef;
+      border-radius: 8px;
+      padding: 15px;
+      background: #fff;
+    }
+
+    .answer-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-weight: 900;
+    }
+
+    .source-pill {
+      color: #915d00;
+      background: #fff4d6;
+      border-radius: 8px;
+      padding: 6px 9px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .line {
+      height: 10px;
+      border-radius: 8px;
+      background: #d8e2ee;
+    }
+
+    .line.short {
+      width: 66%;
+      background: #aebdd0;
+    }
+
+    .source-list {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .source-item {
+      min-height: 82px;
+      border: 1px solid #e0e7f0;
+      border-radius: 8px;
+      padding: 12px;
+      background: #fbfcfe;
+    }
+
+    .source-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: #eaf1ff;
+      color: var(--blue);
+      display: grid;
+      place-items: center;
+      font-weight: 900;
+      margin-bottom: 10px;
+      font-size: 12px;
+    }
+
+    .source-label {
+      color: #526173;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .features {
+      background: #ffffff;
+      border-top: 1px solid #e3e9f1;
+      padding: 50px 24px 64px;
+    }
+
+    .features-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 22px;
+    }
+
+    .section-title h2 {
+      margin: 0;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+
+    .section-title p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+      max-width: 520px;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    .feature {
+      border: 1px solid #e0e7f0;
+      border-radius: 8px;
+      padding: 20px;
+      background: #ffffff;
+      min-height: 180px;
+    }
+
+    .feature-mark {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      color: #fff;
+      font-weight: 900;
+      margin-bottom: 16px;
+    }
+
+    .feature:nth-child(1) .feature-mark {
+      background: var(--blue);
+    }
+
+    .feature:nth-child(2) .feature-mark {
+      background: var(--teal);
+    }
+
+    .feature:nth-child(3) .feature-mark {
+      background: var(--amber);
+    }
+
+    .feature:nth-child(4) .feature-mark {
+      background: #7c3aed;
+    }
+
+    .feature h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .feature p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 15px;
+    }
+
+    @media (max-width: 980px) {
+      .hero {
+        min-height: auto;
+        padding-bottom: 42px;
+      }
+
+      .hero-inner {
+        grid-template-columns: 1fr;
+        padding-top: 104px;
+      }
+
+      .preview {
+        max-width: 680px;
+      }
+
+      .feature-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 640px) {
+      .nav {
+        padding: 16px;
+      }
+
+      .brand-mark {
+        width: 38px;
+        height: 38px;
+      }
+
+      .brand-text {
+        font-size: 14px;
+      }
+
+      .nav-link {
+        display: none;
+      }
+
+      .hero-inner {
+        width: calc(100% - 32px);
+        gap: 28px;
+      }
+
+      h1 {
+        font-size: 42px;
+      }
+
+      .lead {
+        font-size: 17px;
+      }
+
+      .cta-row {
+        flex-direction: column;
+      }
+
+      .btn {
+        width: 100%;
+      }
+
+      .source-list {
+        grid-template-columns: 1fr;
+      }
+
+      .section-title {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .feature-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .features {
+        padding: 38px 16px 46px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page">
+    <section class="hero" aria-label="Gioi thieu chatbot">
+      <header class="nav">
+        <a class="brand" href="/" aria-label="Trang chu UNETI Chatbot">
+          <span class="brand-mark">AI</span>
+          <span class="brand-text">UNETI P.CNTT Chatbot</span>
+        </a>
+
+        <nav class="nav-actions" aria-label="Lien ket nhanh">
+          <a class="nav-link" href="/docs">API Docs</a>
+          <a class="btn btn-primary" href="/chat-ui">Bắt đầu chat</a>
+        </nav>
+      </header>
+
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <div class="eyebrow"><span class="dot"></span> FastAPI RAG Assistant</div>
+          <h1>UNETI P.CNTT Chatbot</h1>
+          <p class="lead">
+            Trợ lý AI hỗ trợ tra cứu tài liệu, quy trình và hướng dẫn nghiệp vụ của Phòng Công nghệ thông tin,
+            giúp người dùng nhận câu trả lời nhanh kèm nguồn tham khảo rõ ràng.
+          </p>
+
+          <div class="cta-row">
+            <a class="btn btn-primary" href="/chat-ui">Bắt đầu chat</a>
+            <a class="btn btn-secondary" href="/docs">Xem API</a>
+          </div>
+        </div>
+
+        <div class="preview" aria-label="Xem truoc giao dien chatbot">
+          <div class="preview-top">
+            <div class="window-dots" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <div class="status">Đang sẵn sàng</div>
+          </div>
+
+          <div class="preview-body">
+            <div class="question">
+              Phòng Tổ hợp STUDIO ở đâu và cần chuẩn bị hồ sơ gì khi đề nghị sử dụng?
+            </div>
+
+            <div class="answer-panel">
+              <div class="answer-head">
+                <span>Câu trả lời từ chatbot</span>
+                <span class="source-pill">3 nguồn</span>
+              </div>
+              <div class="line"></div>
+              <div class="line"></div>
+              <div class="line short"></div>
+            </div>
+
+            <div class="source-list">
+              <div class="source-item">
+                <div class="source-icon">PDF</div>
+                <div class="source-label">Tài liệu nội bộ</div>
+              </div>
+              <div class="source-item">
+                <div class="source-icon">API</div>
+                <div class="source-label">FastAPI endpoint</div>
+              </div>
+              <div class="source-item">
+                <div class="source-icon">RAG</div>
+                <div class="source-label">Nguồn truy xuất</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="features" aria-label="Diem noi bat">
+      <div class="features-inner">
+        <div class="section-title">
+          <h2>Điểm nổi bật</h2>
+          <p>Landing page giới thiệu ngắn gọn, còn chức năng chat và API hiện có vẫn được giữ nguyên.</p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature">
+            <div class="feature-mark">01</div>
+            <h3>Tra cứu nhanh</h3>
+            <p>Gửi câu hỏi trực tiếp tới chatbot để tìm thông tin trong tài liệu đã lập chỉ mục.</p>
+          </article>
+
+          <article class="feature">
+            <div class="feature-mark">02</div>
+            <h3>Có nguồn tham khảo</h3>
+            <p>Hiển thị tài liệu hoặc chunk liên quan để người test kiểm tra lại kết quả.</p>
+          </article>
+
+          <article class="feature">
+            <div class="feature-mark">03</div>
+            <h3>Responsive</h3>
+            <p>Giao diện tự co giãn tốt trên màn hình máy tính, tablet và điện thoại.</p>
+          </article>
+
+          <article class="feature">
+            <div class="feature-mark">04</div>
+            <h3>Sẵn sàng test</h3>
+            <p>Nút bắt đầu dẫn thẳng tới trang chat đang dùng endpoint backend hiện tại.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

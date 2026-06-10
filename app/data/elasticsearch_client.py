@@ -1,10 +1,20 @@
-from collections import Counter
+from collections import Counter, OrderedDict
+from copy import deepcopy
 import math
 import re
+import time
 import unicodedata
 
 from app.controller.document_controller import build_document_chunks, list_documents
-from app.core.config import MIN_SEARCH_SCORE, SEARCH_TOP_K
+from app.core.config import (
+    MIN_SEARCH_SCORE,
+    RERANK_AMBIGUOUS_QUERY_KEYWORDS,
+    RETRIEVAL_CACHE_MAX_ITEMS,
+    RETRIEVAL_CACHE_TTL_SECONDS,
+    SEARCH_TOP_K,
+    VECTOR_FAST_PATH_CONFIDENCE,
+    VECTOR_FAST_PATH_SCORE_GAP,
+)
 from app.data.query_analyzer import extract_metadata_constraints, normalize_date
 from app.data.vector_store import search_similar_chunks
 
@@ -173,6 +183,7 @@ _INDEX_CACHE = {
     "doc_freq": Counter(),
     "total_docs": 0,
 }
+_SEARCH_CACHE = OrderedDict()
 RRF_K = 60
 HYBRID_CANDIDATE_MULTIPLIER = 4
 METADATA_EXACT_SCORE = 100.0
@@ -196,6 +207,7 @@ def clear_document_index_cache():
     _INDEX_CACHE["chunks"] = []
     _INDEX_CACHE["doc_freq"] = Counter()
     _INDEX_CACHE["total_docs"] = 0
+    _SEARCH_CACHE.clear()
 
 
 def apply_uneti_query_expansion(query: str) -> str:
@@ -228,9 +240,44 @@ def get_keywords(text: str):
 def _document_signature(files):
     """Tạo chữ ký từ danh sách file để biết cache keyword index còn hợp lệ hay không."""
     return tuple(
-        (file["file_name"], file["file_size_kb"], file.get("updated_at"))
+        (file.get("relative_path") or file["file_name"], file["file_size_kb"], file.get("updated_at"))
         for file in files
     )
+
+
+def _current_document_signature():
+    return _document_signature(list_documents())
+
+
+def _search_cache_key(question: str, source_type_filter: str | None, signature):
+    return (
+        normalize_text(question),
+        source_type_filter or "",
+        signature,
+        SEARCH_TOP_K,
+    )
+
+
+def _get_search_cache(key):
+    cached = _SEARCH_CACHE.get(key)
+    if not cached:
+        return None
+
+    created_at, results = cached
+    if time.monotonic() - created_at > RETRIEVAL_CACHE_TTL_SECONDS:
+        _SEARCH_CACHE.pop(key, None)
+        return None
+
+    _SEARCH_CACHE.move_to_end(key)
+    return deepcopy(results)
+
+
+def _set_search_cache(key, results):
+    _SEARCH_CACHE[key] = (time.monotonic(), deepcopy(results))
+    _SEARCH_CACHE.move_to_end(key)
+
+    while len(_SEARCH_CACHE) > RETRIEVAL_CACHE_MAX_ITEMS:
+        _SEARCH_CACHE.popitem(last=False)
 
 
 def _load_document_index():
@@ -245,7 +292,7 @@ def _load_document_index():
     doc_freq = Counter()
 
     for file in files:
-        file_chunks = build_document_chunks(file["file_name"])
+        file_chunks = build_document_chunks(file.get("relative_path") or file["file_name"])
 
         for chunk in file_chunks:
             title = chunk.get("title", "")
@@ -264,8 +311,11 @@ def _load_document_index():
     return chunks, doc_freq, len(chunks)
 
 
-def _metadata_filter_from_constraints(constraints: dict) -> dict:
+def _metadata_filter_from_constraints(constraints: dict, source_type_filter: str | None = None) -> dict:
     metadata_filter = {}
+
+    if source_type_filter:
+        metadata_filter["source_type"] = source_type_filter
 
     if constraints.get("so_van_ban"):
         metadata_filter["so_van_ban_ngan"] = str(constraints["so_van_ban"])
@@ -424,7 +474,7 @@ def _chunk_key(chunk: dict):
     )
 
 
-def _search_keyword_documents(question: str, limit: int):
+def _search_keyword_documents(question: str, limit: int, source_type_filter: str | None = None):
     """Tìm các chunk liên quan bằng keyword/IDF, bổ sung tốt cho vector search."""
     # Keyword/IDF search giữ vai trò bắt đúng tên riêng, mã văn bản, điều khoản.
     results = []
@@ -432,6 +482,9 @@ def _search_keyword_documents(question: str, limit: int):
     chunks, doc_freq, total_docs = _load_document_index()
 
     for chunk in chunks:
+        if source_type_filter and chunk.get("source_type") != source_type_filter:
+            continue
+
         score = score_chunk(
             expanded_question,
             chunk.get("title", ""),
@@ -490,28 +543,133 @@ def _merge_with_rrf(result_sets: list[list[dict]], limit: int):
     return results
 
 
-async def search_documents(question: str):
+def _compact_debug_sources(results: list[dict], limit: int = 5) -> list[dict]:
+    return [
+        {
+            "title": item.get("title"),
+            "doc_name": item.get("doc_name"),
+            "relative_path": item.get("relative_path"),
+            "phong_ban": item.get("phong_ban"),
+            "score": item.get("score"),
+            "vector_score": item.get("vector_score"),
+            "keyword_score": item.get("keyword_score"),
+            "distance": item.get("distance"),
+            "metadata_matched": item.get("metadata_matched"),
+        }
+        for item in results[:limit]
+    ]
+
+
+def _result_confidence(result: dict) -> float:
+    score = result.get("vector_score")
+    if score is None:
+        score = result.get("score")
+
+    try:
+        return float(score or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _should_use_hybrid_rerank(question: str, vector_results: list[dict]) -> tuple[bool, str]:
+    if not vector_results:
+        return True, "no_vector_results"
+
+    if len(get_keywords(question)) <= RERANK_AMBIGUOUS_QUERY_KEYWORDS:
+        return True, "ambiguous_or_short_query"
+
+    top_score = _result_confidence(vector_results[0])
+    second_score = _result_confidence(vector_results[1]) if len(vector_results) > 1 else 0.0
+    score_gap = top_score - second_score
+
+    if top_score >= VECTOR_FAST_PATH_CONFIDENCE and score_gap >= VECTOR_FAST_PATH_SCORE_GAP:
+        return False, "top_vector_result_confident"
+
+    return True, "close_or_low_confidence_results"
+
+
+async def search_documents(
+    question: str,
+    debug: dict | None = None,
+    source_type_filter: str | None = None,
+):
     """Truy xuất tài liệu theo hybrid search: vector semantic + keyword/IDF + RRF."""
     # Hybrid search: vector bắt ngữ nghĩa, keyword/IDF bắt chính xác thuật ngữ.
+    signature = _current_document_signature()
+    cache_key = _search_cache_key(question, source_type_filter, signature)
+    cached_results = _get_search_cache(cache_key)
+    if cached_results is not None:
+        if debug is not None:
+            debug.update({
+                "cache_hit": True,
+                "source_type_filter": source_type_filter,
+                "final_results_count": len(cached_results),
+                "final_sources": _compact_debug_sources(cached_results),
+            })
+        return cached_results
+
     candidate_limit = max(SEARCH_TOP_K * HYBRID_CANDIDATE_MULTIPLIER, SEARCH_TOP_K)
     metadata_results, metadata_constraints = _search_metadata_documents(question, candidate_limit)
-    metadata_filter = _metadata_filter_from_constraints(metadata_constraints)
+    metadata_filter = _metadata_filter_from_constraints(metadata_constraints, source_type_filter)
     if metadata_constraints and not metadata_results:
+        _set_search_cache(cache_key, [])
+        if debug is not None:
+            debug.update({
+                "cache_hit": False,
+                "metadata_constraints": metadata_constraints,
+                "source_type_filter": source_type_filter,
+                "metadata_results_count": 0,
+                "vector_results_count": 0,
+                "keyword_results_count": 0,
+                "vector_error": None,
+                "hybrid_rerank_used": False,
+                "rerank_reason": "metadata_constraints_without_match",
+                "final_results_count": 0,
+                "final_sources": [],
+            })
         return []
 
     vector_results = []
+    vector_error = None
 
     try:
         vector_results = search_similar_chunks(
             question,
             top_k=candidate_limit,
-            metadata_filter=metadata_filter if metadata_results else None,
+            metadata_filter=metadata_filter if metadata_filter else None,
         )
-    except Exception:
+    except Exception as exc:
         # Nếu embedding/vector store lỗi, keyword search vẫn giữ hệ thống trả lời được.
-        pass
+        vector_error = str(exc)
 
-    keyword_results = _search_keyword_documents(question, candidate_limit)
+    use_hybrid_rerank, rerank_reason = _should_use_hybrid_rerank(question, vector_results)
+    if metadata_results:
+        use_hybrid_rerank = True
+        rerank_reason = "metadata_results_need_keyword_merge"
+
+    if not use_hybrid_rerank:
+        final_results = vector_results[:SEARCH_TOP_K]
+        _set_search_cache(cache_key, final_results)
+        if debug is not None:
+            debug.update({
+                "cache_hit": False,
+                "metadata_constraints": metadata_constraints,
+                "source_type_filter": source_type_filter,
+                "metadata_results_count": len(metadata_results),
+                "vector_results_count": len(vector_results),
+                "keyword_results_count": 0,
+                "vector_error": vector_error,
+                "hybrid_rerank_used": False,
+                "rerank_reason": rerank_reason,
+                "metadata_sources": _compact_debug_sources(metadata_results),
+                "vector_sources": _compact_debug_sources(vector_results),
+                "keyword_sources": [],
+                "final_results_count": len(final_results),
+                "final_sources": _compact_debug_sources(final_results),
+            })
+        return final_results
+
+    keyword_results = _search_keyword_documents(question, candidate_limit, source_type_filter)
     result_sets = [
         result_set
         for result_set in (metadata_results, vector_results, keyword_results)
@@ -519,6 +677,24 @@ async def search_documents(question: str):
     ]
 
     if not result_sets:
+        _set_search_cache(cache_key, [])
+        if debug is not None:
+            debug.update({
+                "cache_hit": False,
+                "metadata_constraints": metadata_constraints,
+                "source_type_filter": source_type_filter,
+                "metadata_results_count": len(metadata_results),
+                "vector_results_count": len(vector_results),
+                "keyword_results_count": len(keyword_results),
+                "vector_error": vector_error,
+                "hybrid_rerank_used": use_hybrid_rerank,
+                "rerank_reason": rerank_reason,
+                "metadata_sources": _compact_debug_sources(metadata_results),
+                "vector_sources": _compact_debug_sources(vector_results),
+                "keyword_sources": _compact_debug_sources(keyword_results),
+                "final_results_count": 0,
+                "final_sources": [],
+            })
         return []
 
     results = _merge_with_rrf(result_sets, SEARCH_TOP_K)
@@ -535,4 +711,25 @@ async def search_documents(question: str):
             reverse=True,
         )
 
-    return results[:SEARCH_TOP_K]
+    final_results = results[:SEARCH_TOP_K]
+    _set_search_cache(cache_key, final_results)
+
+    if debug is not None:
+        debug.update({
+            "cache_hit": False,
+            "metadata_constraints": metadata_constraints,
+            "source_type_filter": source_type_filter,
+            "metadata_results_count": len(metadata_results),
+            "vector_results_count": len(vector_results),
+            "keyword_results_count": len(keyword_results),
+            "vector_error": vector_error,
+            "hybrid_rerank_used": use_hybrid_rerank,
+            "rerank_reason": rerank_reason,
+            "metadata_sources": _compact_debug_sources(metadata_results),
+            "vector_sources": _compact_debug_sources(vector_results),
+            "keyword_sources": _compact_debug_sources(keyword_results),
+            "final_results_count": len(final_results),
+            "final_sources": _compact_debug_sources(final_results),
+        })
+
+    return final_results

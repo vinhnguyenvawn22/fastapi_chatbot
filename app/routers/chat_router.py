@@ -1,6 +1,6 @@
 from fastapi import APIRouter
-from app.schemas.chat_schema import ChatRequest, ChatResponse
-from app.controller.chatbot_controller import handle_chat
+from app.schemas.chat_schema import ChatRequest, ChatResponse, TraceResponse
+from app.controller.chatbot_controller import get_chat_trace, handle_chat
 
 router = APIRouter()
 
@@ -10,3 +10,9 @@ async def chat(request: ChatRequest):
     """API nhận câu hỏi người dùng và trả về câu trả lời chatbot theo schema chuẩn."""
     result = await handle_chat(request)
     return ChatResponse(**result)
+
+
+@router.get("/traces/{trace_id}", response_model=TraceResponse)
+async def trace_detail(trace_id: str):
+    """Tra cuu debug trace cua mot cau hoi theo trace_id."""
+    return TraceResponse(**get_chat_trace(trace_id))

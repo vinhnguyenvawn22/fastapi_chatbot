@@ -420,14 +420,14 @@ Có thể copy mẫu này khi tạo Pull Request:
 ```bash
 pip install -r requirements.txt
 python -m pytest -q
-python -m uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8501
 ````
 
 Mở:
 
 ```text
-http://127.0.0.1:8000/
-http://127.0.0.1:8000/docs
+http://127.0.0.1:8501/
+http://127.0.0.1:8501/docs
 ```
 
 ````
@@ -525,19 +525,19 @@ Lưu ý:
 Chạy server FastAPI:
 
 ```bash
-python -m uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8501
 ```
 
 Hoặc:
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8501
 ```
 
 Nếu chạy thành công, terminal sẽ hiện dạng:
 
 ```text
-Uvicorn running on http://127.0.0.1:8000
+Uvicorn running on http://0.0.0.0:8501
 Application startup complete.
 ```
 
@@ -548,7 +548,7 @@ Application startup complete.
 Sau khi server chạy thành công, mở trình duyệt tại:
 
 ```text
-http://127.0.0.1:8000/
+http://127.0.0.1:8501/
 ```
 
 Đây là giao diện chatbot được load từ file:
@@ -578,13 +578,13 @@ Swagger UI dùng để kiểm tra API trực tiếp trên trình duyệt.
 Mở:
 
 ```text
-http://127.0.0.1:8000/docs
+http://127.0.0.1:8501/docs
 ```
 
 OpenAPI JSON:
 
 ```text
-http://127.0.0.1:8000/openapi.json
+http://127.0.0.1:8501/openapi.json
 ```
 
 Một số endpoint thường dùng:
@@ -827,7 +827,7 @@ app/main.py
 Route web cần trả về giao diện chatbot tại:
 
 ```text
-http://127.0.0.1:8000/
+http://127.0.0.1:8501/
 ```
 
 ---
@@ -837,7 +837,7 @@ http://127.0.0.1:8000/
 Đường dẫn đúng:
 
 ```text
-http://127.0.0.1:8000/docs
+http://127.0.0.1:8501/docs
 ```
 
 Nếu gõ nhầm `/dosc` thì sẽ bị `404 Not Found`.
@@ -919,7 +919,7 @@ git push
 * [ ] Không code trực tiếp trên `develop`.
 * [ ] Có Pull Request trước khi merge.
 * [ ] Có review trước khi merge.
-* [ ] Project chạy được bằng lệnh `python -m uvicorn app.main:app --reload`.
+* [ ] Project chạy được bằng lệnh `python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8501`.
 * [ ] Mở được web chatbot tại `/`.
 * [ ] Mở được Swagger UI tại `/docs`.
 * [ ] Test được API `/api/chat/`.
@@ -940,3 +940,66 @@ git push
 
 ---
 
+
+
+## Reindex tai lieu RAG
+
+Pipeline tai lieu doc recursive cac file PDF trong `DOCUMENTS_DIR`. Cau hinh khuyen nghi:
+
+```env
+DOCUMENTS_DIR=uploads/Tổng hợp văn bản AI
+```
+
+Cac file `.doc`, `.docx`, `.xlsx`, `.json`, `.png`, `.rar` duoc bo qua o giai doan nay; he thong chi index `.pdf`.
+
+Cai dependency va reindex:
+
+```bash
+pip install -r requirements.txt
+python scripts/reindex_documents.py
+```
+
+Ket qua reindex bao so PDF phat hien, so file index thanh cong, tong so chunk, `vector_count` trong ChromaDB va danh sach file loi neu co. Moi chunk co metadata `phong_ban`, `relative_path`, `source_root` de giam lay nham nguon khi hoi theo phong ban hoac chu de rong.
+
+
+## Tra cuu website UNETI bang Vertex AI Search
+
+Luồng website không crawl HTML trực tiếp. Hệ thống gọi Google Vertex AI Search/Discovery Engine, lọc domain `uneti.edu.vn`, loại trùng URL, rerank kết quả và chỉ đưa 1-2 nguồn tốt nhất sang Gemini.
+
+Cấu hình `.env` cần có:
+
+```env
+GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
+DISCOVERY_PROJECT_NUMBER=your_google_cloud_project_number
+DISCOVERY_LOCATION=global
+DISCOVERY_COLLECTION_ID=default_collection
+DISCOVERY_ENGINE_ID=your_discovery_engine_id
+DISCOVERY_SERVING_CONFIG_ID=default_search
+UNETI_WEBSITE_DOMAIN=uneti.edu.vn
+WEBSITE_SEARCH_TOP_K=10
+WEBSITE_RERANK_TOP_K=2
+```
+
+Các câu hỏi có dấu hiệu như `website`, `trang web`, `uneti.edu.vn`, `tin tức`, `bài viết`, `link` sẽ được route sang intent `website_uneti`. Các câu hỏi về quy định, quyết định, điều khoản trong tài liệu nội bộ vẫn dùng pipeline RAG PDF.
+
+## Debug pipeline bang trace_id
+
+Moi cau hoi gui vao API chat se tra ve `trace_id` trong response:
+
+```bash
+POST /api/chat/
+```
+
+Dung `trace_id` do de tra cuu chi tiet cac buoc xu ly:
+
+```bash
+GET /api/chat/traces/{trace_id}
+```
+
+Endpoint trace tra ve cac thong tin chinh:
+
+- `trace_id`, `question`, `created_at`, `updated_at`
+- `steps`: cac buoc nhu `classify_query`, `retrieval`, `website_search`, `context_builder`, `llm_call`
+- `response`: cau tra loi cuoi cung va nguon da tra ve cho nguoi dung
+
+Endpoint nay chi nhan `trace_id` dang UUID hop le va chi doc file trong `storage/traces/{trace_id}.json`; neu trace khong ton tai se tra ve HTTP 404.

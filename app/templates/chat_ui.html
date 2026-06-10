@@ -572,6 +572,10 @@
     const previewButton = document.getElementById("previewButton");
     const loading = document.getElementById("loading");
     const errorBox = document.getElementById("errorBox");
+    const confidenceMetric = document.getElementById("bestScore");
+
+    confidenceMetric.previousElementSibling.textContent = "\u0110\u1ed9 tin c\u1eady cao nh\u1ea5t";
+    confidenceMetric.nextElementSibling.textContent = "M\u1ee9c tin c\u1eady c\u1ee7a ngu\u1ed3n li\u00ean quan nh\u1ea5t do backend t\u00ednh";
 
     document.getElementById("timeBox").textContent =
       new Date().toLocaleString("vi-VN");
@@ -658,12 +662,12 @@
     }
 
     function renderMetrics(sources) {
-      const bestScoreValue = sources.length > 0 && sources[0].score !== undefined
-        ? Number(sources[0].score).toFixed(4)
+      const bestConfidenceValue = sources.length > 0 && sources[0].confidence_percent !== undefined && sources[0].confidence_percent !== null
+        ? `${sources[0].confidence_percent}%`
         : "N/A";
 
       document.getElementById("sourceCount").textContent = String(sources.length);
-      document.getElementById("bestScore").textContent = bestScoreValue;
+      document.getElementById("bestScore").textContent = bestConfidenceValue;
     }
 
     function appendTextElement(parent, className, text) {
