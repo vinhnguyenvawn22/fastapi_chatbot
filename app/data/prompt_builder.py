@@ -1,4 +1,4 @@
-from app.core.config import MAX_CONTEXT_CHARS
+from app.core.config import MAX_CONTEXT_CHARS, MAX_CONTEXT_CHUNKS
 
 
 def _reorder_for_generation(docs):
@@ -21,7 +21,7 @@ def build_context(docs):
     context_parts = []
     current_length = 0
 
-    for index, doc in enumerate(_reorder_for_generation(docs), start=1):
+    for index, doc in enumerate(_reorder_for_generation(docs[:MAX_CONTEXT_CHUNKS]), start=1):
         file_name = doc.get("doc_name", "unknown")
         section_name = doc.get("title", "Khong ro muc")
         chunk_index = doc.get("chunk_index", "unknown")

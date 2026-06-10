@@ -15,7 +15,6 @@ from app.data.trace_logger import RagTrace, load_trace
 from app.data.website_search_client import index_uneti_website
 
 
-SOURCE_PREVIEW_CHARS = 240
 NO_WEBSITE_EVIDENCE_ANSWER = "Không tìm thấy thông tin phù hợp trên website UNETI."
 NO_EVIDENCE_ANSWER = "Không tìm thấy căn cứ đủ rõ trong tài liệu đã cung cấp."
 OUT_OF_SCOPE_ANSWER = "Câu hỏi này nằm ngoài phạm vi tài liệu nội bộ hiện có."
@@ -61,12 +60,7 @@ def _confidence_from_source(doc: dict) -> tuple[float | None, str | None]:
 
 
 def _source_preview(content: str) -> str:
-    preview = " ".join(str(content or "").split())
-
-    if len(preview) <= SOURCE_PREVIEW_CHARS:
-        return preview
-
-    return f"{preview[:SOURCE_PREVIEW_CHARS].rstrip()}..."
+    return " ".join(str(content or "").split())
 
 
 def _build_sources(docs):

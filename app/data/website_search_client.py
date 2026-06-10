@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from collections.abc import Mapping
 from datetime import datetime
 from html import unescape
@@ -12,6 +13,7 @@ import json
 import math
 import re
 import ssl
+import time
 
 from google.protobuf.json_format import MessageToDict
 from pypdf import PdfReader
@@ -22,6 +24,8 @@ from app.core.config import (
     DISCOVERY_LOCATION,
     DISCOVERY_PROJECT_NUMBER,
     DISCOVERY_SERVING_CONFIG_ID,
+    RETRIEVAL_CACHE_MAX_ITEMS,
+    RETRIEVAL_CACHE_TTL_SECONDS,
     UNETI_WEBSITE_DOMAIN,
     WEBSITE_EXTRACT_MAX_CHARS,
     WEBSITE_FETCH_MAX_BYTES,
@@ -47,6 +51,7 @@ FALLBACK_SITEMAP_LIMIT = 200
 FALLBACK_CATEGORY_PATHS = (
     "/category/dao-tao/thong-bao-ke-hoach-dao-tao/",
 )
+_WEBSITE_INDEX_CACHE = OrderedDict()
 
 
 def _validate_config():
@@ -874,8 +879,43 @@ def _build_website_chunks(source: dict) -> list[dict]:
     ]
 
 
+def _get_website_index_cache(question: str):
+    key = normalize_text(question)
+    cached = _WEBSITE_INDEX_CACHE.get(key)
+    if not cached:
+        return None
+
+    created_at, result = cached
+    if time.monotonic() - created_at > RETRIEVAL_CACHE_TTL_SECONDS:
+        _WEBSITE_INDEX_CACHE.pop(key, None)
+        return None
+
+    _WEBSITE_INDEX_CACHE.move_to_end(key)
+    return dict(result)
+
+
+def _set_website_index_cache(question: str, result: dict):
+    key = normalize_text(question)
+    _WEBSITE_INDEX_CACHE[key] = (time.monotonic(), dict(result))
+    _WEBSITE_INDEX_CACHE.move_to_end(key)
+
+    while len(_WEBSITE_INDEX_CACHE) > RETRIEVAL_CACHE_MAX_ITEMS:
+        _WEBSITE_INDEX_CACHE.popitem(last=False)
+
+
 def index_uneti_website(question: str, debug: dict | None = None) -> dict:
     """Fetch selected UNETI web sources, chunk them, and upsert into the shared vector store."""
+    cached = _get_website_index_cache(question)
+    if cached is not None:
+        if debug is not None:
+            debug.update({
+                "cache_hit": True,
+                "indexed_chunks": 0,
+                "indexed_sources_count": cached.get("indexed_sources_count", 0),
+                "pipeline_mode": "website_to_shared_rag_cache",
+            })
+        return cached
+
     result = _search_and_extract_website_sources(question, debug)
     sources = result.get("sources", [])
 
@@ -894,10 +934,13 @@ def index_uneti_website(question: str, debug: dict | None = None) -> dict:
             "pipeline_mode": "website_to_shared_rag",
         })
 
-    return {
+    response = {
         "sources": sources,
         "indexed_chunks": indexed_chunks,
+        "indexed_sources_count": len(sources),
     }
+    _set_website_index_cache(question, response)
+    return response
 
 
 def _search_and_extract_website_sources(question: str, debug: dict | None = None) -> dict:

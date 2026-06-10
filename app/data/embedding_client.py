@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from app.core.config import EMBEDDING_MODEL
+from app.core.config import EMBEDDING_CACHE_MAX_ITEMS, EMBEDDING_MODEL
 
 
 @lru_cache(maxsize=1)
@@ -15,9 +15,14 @@ def get_embedding_model():
 def embed_query(text: str) -> list[float]:
     """Tạo vector embedding đã normalize cho một câu hỏi người dùng."""
     # Tạo embedding cho câu hỏi để dùng trong vector search.
+    return list(_embed_query_cached(" ".join(str(text or "").split())))
+
+
+@lru_cache(maxsize=EMBEDDING_CACHE_MAX_ITEMS)
+def _embed_query_cached(text: str) -> tuple[float, ...]:
     model = get_embedding_model()
     vector = model.encode(text or "", normalize_embeddings=True)
-    return vector.tolist()
+    return tuple(float(value) for value in vector.tolist())
 
 
 def embed_documents(texts: list[str]) -> list[list[float]]:
