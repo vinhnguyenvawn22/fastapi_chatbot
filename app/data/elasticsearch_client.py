@@ -733,3 +733,116 @@ async def search_documents(
         })
 
     return final_results
+
+
+async def search_documents(
+    question: str,
+    debug: dict | None = None,
+    source_type_filter: str | None = None,
+):
+    """Optimized retrieval: route query, cache results, and run vector/rerank only when useful."""
+    _load_document_index()
+    cached = _get_cached_results(question, source_type_filter)
+    if cached is not None:
+        cached_debug = cached.get("debug", {})
+        cached_debug["cache_hit"] = True
+        if debug is not None:
+            debug.update(cached_debug)
+        return cached.get("results", [])
+
+    candidate_limit = max(SEARCH_TOP_K * HYBRID_CANDIDATE_MULTIPLIER, SEARCH_TOP_K)
+    metadata_results, metadata_constraints = _search_metadata_documents(question, candidate_limit)
+    metadata_filter = _metadata_filter_from_constraints(metadata_constraints, source_type_filter)
+
+    if metadata_constraints and not metadata_results:
+        debug_data = {
+            "cache_hit": False,
+            "metadata_constraints": metadata_constraints,
+            "source_type_filter": source_type_filter,
+            "metadata_results_count": 0,
+            "vector_results_count": 0,
+            "keyword_results_count": 0,
+            "vector_error": None,
+            "vector_skipped": True,
+            "vector_skip_reason": "metadata_constraints_without_match",
+            "rerank_needed": False,
+            "rerank_reason": "no_results",
+            "final_results_count": 0,
+            "final_sources": [],
+        }
+        _set_cached_results(question, source_type_filter, [], debug_data)
+        if debug is not None:
+            debug.update(debug_data)
+        return []
+
+    keyword_results = _search_keyword_documents(question, candidate_limit, source_type_filter)
+    run_vector, vector_reason = _should_run_vector(question, metadata_results, keyword_results)
+    vector_results = []
+    vector_error = None
+
+    if run_vector:
+        try:
+            vector_results = search_similar_chunks(
+                question,
+                top_k=candidate_limit,
+                metadata_filter=metadata_filter if metadata_filter else None,
+            )
+        except Exception as exc:
+            vector_error = str(exc)
+
+    result_sets = [
+        result_set
+        for result_set in (metadata_results, vector_results, keyword_results)
+        if result_set
+    ]
+    rerank_needed, rerank_reason = _should_rerank(
+        question,
+        result_sets,
+        keyword_results,
+        vector_results,
+    )
+
+    if not result_sets:
+        final_results = []
+    elif rerank_needed:
+        final_results = _merge_with_rrf(result_sets, SEARCH_TOP_K)
+    else:
+        final_results = result_sets[0][:SEARCH_TOP_K]
+
+    if metadata_results and final_results:
+        metadata_keys = {_chunk_key(chunk) for chunk in metadata_results}
+        final_results.sort(
+            key=lambda item: (
+                _chunk_key(item) in metadata_keys,
+                item.get("metadata_score", 0),
+                item.get("keyword_score", 0) or 0,
+                item.get("score", 0) or 0,
+            ),
+            reverse=True,
+        )
+        final_results = final_results[:SEARCH_TOP_K]
+
+    debug_data = {
+        "cache_hit": False,
+        "metadata_constraints": metadata_constraints,
+        "source_type_filter": source_type_filter,
+        "metadata_results_count": len(metadata_results),
+        "vector_results_count": len(vector_results),
+        "keyword_results_count": len(keyword_results),
+        "vector_error": vector_error,
+        "vector_skipped": not run_vector,
+        "vector_skip_reason": vector_reason,
+        "rerank_needed": rerank_needed,
+        "rerank_reason": rerank_reason,
+        "metadata_sources": _compact_debug_sources(metadata_results),
+        "vector_sources": _compact_debug_sources(vector_results),
+        "keyword_sources": _compact_debug_sources(keyword_results),
+        "final_results_count": len(final_results),
+        "final_sources": _compact_debug_sources(final_results),
+    }
+    _set_cached_results(question, source_type_filter, final_results, debug_data)
+
+    if debug is not None:
+        debug.update(debug_data)
+
+    return final_results
