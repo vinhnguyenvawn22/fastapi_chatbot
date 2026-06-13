@@ -21,11 +21,39 @@ _BUSINESS_INDEX_CACHE = {
     "total_docs": 0,
 }
 _BUSINESS_SEARCH_CACHE = {}
+FAQ_MAPPING_DOC_NAME = "PCNTT_MAPPING_FILE.docx"
+BUSINESS_FAQ_SOURCE_TYPE = "business_faq_mapping"
+BUSINESS_FAQ_MIN_SCORE = max(MIN_SEARCH_SCORE, 14.0)
 
 _XLSX_NS = {
     "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
     "rel": "http://schemas.openxmlformats.org/package/2006/relationships",
     "office_rel": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+}
+_DOCX_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+_BUSINESS_FAQ_QUERY_EXPANSION = {
+    "web support": ["support uneti", "support.uneti.edu.vn"],
+    "support": ["web support", "support uneti", "support.uneti.edu.vn"],
+    "xem diem": ["ket qua hoc tap", "diem hoc ky", "diem thanh phan"],
+    "diem": ["ket qua hoc tap", "diem hoc ky", "diem thanh phan"],
+    "thoi khoa bieu": ["lich hoc", "lich thi"],
+    "lich hoc": ["hoc tap", "lich hoc lich thi"],
+    "lich thi": ["hoc tap", "lich hoc lich thi"],
+    "bao hong": ["bao hong thiet bi", "su co thiet bi", "phong hoc", "giang duong"],
+    "hong": ["bao hong", "su co", "thiet bi"],
+    "may chieu": ["thiet bi", "bao hong thiet bi", "phong hoc", "giang duong"],
+    "may tinh": ["thiet bi", "bao hong thiet bi", "phong hoc", "giang duong"],
+    "quen mat khau": ["email google workspace", "lms", "tu khac phuc"],
+    "email truong": ["email google workspace", "lms"],
+    "khoi luong": ["cong tac giang vien", "khoi luong giang day", "coi thi", "cham thi"],
+    "coi thi": ["khoi luong coi cham thi", "cong tac giang vien"],
+    "cham thi": ["khoi luong coi cham thi", "cong tac giang vien"],
+    "khao sat": ["khao sat noi bo", "khao sat bat buoc", "phieu khao sat"],
+    "bi chan": ["khao sat noi bo bat buoc", "hoan thanh khao sat"],
+    "khong su dung duoc": ["khao sat noi bo bat buoc", "hoan thanh khao sat"],
+    "mot cua": ["thu tuc hanh chinh", "danh gia thu tuc", "thong ke mot cua"],
+    "danh gia thu tuc": ["muc do hai long", "thu tuc hanh chinh mot cua"],
+    "tin tuc thong bao": ["module tin tuc thong bao", "thong bao tren support"],
 }
 
 
@@ -84,6 +112,188 @@ def _clean_text(text: str) -> str:
     return text.strip()
 
 
+def _docx_cell_text(cell: ET.Element) -> str:
+    texts = [node.text or "" for node in cell.findall(".//w:t", _DOCX_NS)]
+    return _clean_text("".join(texts))
+
+
+def _extract_docx_tables(file_path: Path) -> list[list[list[str]]]:
+    tables = []
+
+    with zipfile.ZipFile(file_path) as archive:
+        if "word/document.xml" not in archive.namelist():
+            return []
+
+        root = ET.fromstring(archive.read("word/document.xml"))
+        for table in root.findall(".//w:tbl", _DOCX_NS):
+            rows = []
+            for row in table.findall("./w:tr", _DOCX_NS):
+                cells = [
+                    _docx_cell_text(cell)
+                    for cell in row.findall("./w:tc", _DOCX_NS)
+                ]
+                if any(cells):
+                    rows.append(cells)
+            if rows:
+                tables.append(rows)
+
+    return tables
+
+
+def _doc_name_with_extension(source_file_name: str) -> str:
+    source_file_name = _clean_text(source_file_name)
+    if not source_file_name:
+        return ""
+    if Path(source_file_name).suffix.lower() in {".docx", ".pdf", ".xlsx"}:
+        return source_file_name
+    return f"{source_file_name}.docx"
+
+
+def _resolve_relative_path(root: Path, source_file_name: str, fallback: str) -> str:
+    doc_name = _doc_name_with_extension(source_file_name)
+    if doc_name:
+        candidate = root / doc_name
+        if candidate.exists():
+            return candidate.relative_to(root).as_posix()
+    return fallback
+
+
+def _parse_file_mapping(table: list[list[str]]) -> dict[str, dict]:
+    file_map = {}
+    rows = table[1:] if table else []
+
+    for row in rows:
+        if len(row) < 2:
+            continue
+
+        file_id = _clean_text(row[0])
+        source_file_name = _clean_text(row[1])
+        if not file_id or not source_file_name:
+            continue
+
+        file_map[file_id] = {
+            "file_id": file_id,
+            "source_file_name": source_file_name,
+            "structure": _clean_text(row[3] if len(row) > 3 else ""),
+            "audience": _clean_text(row[4] if len(row) > 4 else ""),
+        }
+
+    if "PCNTT_FILE_02" not in file_map:
+        for row in rows:
+            source_file_name = _clean_text(row[1] if len(row) > 1 else "")
+            audience = _clean_text(row[4] if len(row) > 4 else "")
+            normalized_row = normalize_text(f"{source_file_name} {audience}")
+            if "support sv" in normalized_row:
+                file_map["PCNTT_FILE_02"] = {
+                    "file_id": "PCNTT_FILE_02",
+                    "source_file_name": source_file_name,
+                    "structure": _clean_text(row[3] if len(row) > 3 else ""),
+                    "audience": audience,
+                }
+                break
+
+    if "PCNTT_FILE_02" not in file_map:
+        for row in rows:
+            source_file_name = _clean_text(row[1] if len(row) > 1 else "")
+            audience = _clean_text(row[4] if len(row) > 4 else "")
+            normalized_row = normalize_text(f"{source_file_name} {audience}")
+            if "support" in normalized_row and "sinh vien" in normalized_row:
+                file_map["PCNTT_FILE_02"] = {
+                    "file_id": "PCNTT_FILE_02",
+                    "source_file_name": source_file_name,
+                    "structure": _clean_text(row[3] if len(row) > 3 else ""),
+                    "audience": audience,
+                }
+                break
+
+    return file_map
+
+
+def _expanded_business_faq_query(query: str) -> str:
+    normalized_query = normalize_text(query)
+    expanded_terms = [query]
+
+    for key, terms in _BUSINESS_FAQ_QUERY_EXPANSION.items():
+        if key in normalized_query:
+            expanded_terms.extend(terms)
+
+    return " ".join(dict.fromkeys(expanded_terms))
+
+
+def _faq_keyword_phrases(keywords: str) -> list[str]:
+    return [
+        normalize_text(part)
+        for part in re.split(r"[,;|]", keywords or "")
+        if normalize_text(part)
+    ]
+
+
+def _build_business_faq_rows(file_path: Path, root: Path) -> list[dict]:
+    try:
+        tables = _extract_docx_tables(file_path)
+    except Exception:
+        return []
+
+    if len(tables) < 2:
+        return []
+
+    file_map = _parse_file_mapping(tables[0])
+    fallback_relative_path = file_path.relative_to(root).as_posix()
+    rows = []
+
+    for table_index, table in enumerate(tables[1:], start=2):
+        for row_index, row in enumerate(table[1:], start=1):
+            if len(row) < 6:
+                continue
+
+            stt = _clean_text(row[0])
+            file_id = _clean_text(row[1])
+            question = _clean_text(row[2])
+            answer = _clean_text(row[3])
+            location = _clean_text(row[4])
+            keywords = _clean_text(row[5])
+
+            if not file_id or not question or not answer:
+                continue
+
+            source_info = file_map.get(file_id, {})
+            source_file_name = source_info.get("source_file_name") or file_id
+            doc_name = _doc_name_with_extension(source_file_name) or file_path.name
+            relative_path = _resolve_relative_path(root, source_file_name, fallback_relative_path)
+            audience = source_info.get("audience") or ""
+            title = question
+            content = "\n".join([
+                f"Cau hoi thuong gap: {question}",
+                f"Cau tra loi chuan: {answer}",
+                f"Vi tri chinh xac trong file goc: {location}",
+                f"Tu khoa tim kiem: {keywords}",
+                f"Doi tuong: {audience}",
+            ]).strip()
+
+            rows.append({
+                "doc_name": doc_name,
+                "relative_path": relative_path,
+                "mapping_relative_path": fallback_relative_path,
+                "source_root": root.name,
+                "title": title,
+                "content": content,
+                "chunk_index": int(stt) if stt.isdigit() else row_index,
+                "source_type": BUSINESS_FAQ_SOURCE_TYPE,
+                "file_path": str(root / relative_path),
+                "updated_at": datetime.fromtimestamp(file_path.stat().st_mtime, timezone.utc).isoformat(),
+                "file_id": file_id,
+                "faq_question": question,
+                "faq_answer": answer,
+                "faq_location": location,
+                "faq_keywords": keywords,
+                "audience": audience,
+                "mapping_table_index": table_index,
+                "ten_van_ban": source_file_name,
+            })
+
+    return rows
+
+
 def _extract_pdf_text(file_path: Path) -> str:
     reader = PdfReader(str(file_path))
     parts = []
@@ -95,7 +305,6 @@ def _extract_pdf_text(file_path: Path) -> str:
 
 
 def _extract_docx_text(file_path: Path) -> str:
-    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
     parts = []
 
     with zipfile.ZipFile(file_path) as archive:
@@ -103,8 +312,8 @@ def _extract_docx_text(file_path: Path) -> str:
             return ""
 
         root = ET.fromstring(archive.read("word/document.xml"))
-        for paragraph in root.findall(".//w:p", namespace):
-            texts = [node.text or "" for node in paragraph.findall(".//w:t", namespace)]
+        for paragraph in root.findall(".//w:p", _DOCX_NS):
+            texts = [node.text or "" for node in paragraph.findall(".//w:t", _DOCX_NS)]
             text = _clean_text("".join(texts))
             if text:
                 parts.append(text)
@@ -187,7 +396,119 @@ def _extract_text(file_path: Path) -> str:
     return ""
 
 
+def _score_business_faq(query: str, chunk: dict) -> float:
+    expanded_query = _expanded_business_faq_query(query)
+    query_tokens = set(get_keywords(expanded_query))
+    original_tokens = set(get_keywords(query))
+    if not query_tokens:
+        return 0.0
+
+    question = chunk.get("faq_question") or chunk.get("title") or ""
+    answer = chunk.get("faq_answer") or ""
+    keywords = chunk.get("faq_keywords") or ""
+    audience = chunk.get("audience") or ""
+    location = chunk.get("faq_location") or ""
+
+    question_tokens = set(get_keywords(question))
+    answer_tokens = set(get_keywords(answer))
+    keyword_tokens = set(get_keywords(keywords))
+    audience_tokens = set(get_keywords(audience))
+    location_tokens = set(get_keywords(location))
+
+    score = 0.0
+    score += len(query_tokens & question_tokens) * 9.0
+    score += len(query_tokens & keyword_tokens) * 11.0
+    score += len(query_tokens & answer_tokens) * 3.0
+    score += len(query_tokens & audience_tokens) * 4.0
+    score += len(query_tokens & location_tokens) * 1.0
+
+    original_overlap = len(original_tokens & (question_tokens | keyword_tokens | answer_tokens))
+    if original_overlap >= 2:
+        score += original_overlap * 4.0
+
+    normalized_query = normalize_text(query)
+    normalized_question = normalize_text(question)
+    normalized_keywords = normalize_text(keywords)
+    normalized_answer = normalize_text(answer)
+
+    if normalized_query and normalized_query in normalized_question:
+        score += 100.0
+    elif normalized_question and normalized_question in normalized_query:
+        score += 80.0
+
+    for phrase in _faq_keyword_phrases(keywords):
+        if phrase and phrase in normalized_query:
+            score += 30.0
+        elif phrase and all(token in query_tokens for token in get_keywords(phrase)):
+            score += 12.0
+
+    if any(term in normalized_query for term in ("lam the nao", "lam sao", "cach", "nhu the nao", "o dau")):
+        if any(term in normalized_question for term in ("lam the nao", "cach", "o dau", "truy cap")):
+            score += 20.0
+        if any(term in normalized_answer for term in ("buoc 1", "dang nhap", "chon", "truy cap")):
+            score += 12.0
+        if any(term in normalized_question for term in ("muc dich", "dung de lam gi", "giup")):
+            score -= 45.0
+
+    if "o dau" in normalized_query and "o dau" in normalized_question:
+        score += 70.0
+
+    if "nhu the nao" in normalized_query and "nhu the nao" in normalized_question:
+        score += 70.0
+
+    if "lam the nao" in normalized_query and "lam the nao" in normalized_question:
+        score += 70.0
+
+    combined_normalized = normalize_text(f"{question} {answer} {keywords}")
+
+    if "diem" in original_tokens:
+        if "diem" in combined_normalized:
+            score += 35.0
+        else:
+            score -= 25.0
+
+    if any(term in normalized_query for term in ("bao hong", "hong", "may chieu", "may tinh")):
+        if any(term in combined_normalized for term in ("bao hong", "thiet bi", "su co")):
+            score += 25.0
+        if any(term in normalized_query for term in ("phong hoc", "giang duong")) and any(
+            term in combined_normalized for term in ("phong", "toa nha", "giang duong")
+        ):
+            score += 15.0
+
+    if any(term in normalized_query for term in ("coi thi", "cham thi")):
+        if "coi thi" in combined_normalized:
+            score += 35.0
+        if "cham thi" in combined_normalized:
+            score += 35.0
+
+    if "khoi luong" in normalized_query:
+        if chunk.get("file_id") == "PCNTT_FILE_03":
+            score += 15.0
+        if "khoi luong" not in combined_normalized:
+            score -= 15.0
+
+    if any(term in normalized_query for term in ("sinh vien", "sv")):
+        if "sinh vien" in normalize_text(audience) or "sinh vien" in normalized_question:
+            score += 18.0
+        if "giang vien" in normalize_text(audience) and "sinh vien" not in normalized_question:
+            score -= 18.0
+
+    if any(term in normalized_query for term in ("giang vien", "can bo", "cbgv")):
+        if any(term in normalize_text(audience) for term in ("giang vien", "can bo")):
+            score += 18.0
+        if "sinh vien" in normalize_text(audience) and not any(term in normalized_question for term in ("sinh vien", "sv")):
+            score -= 18.0
+
+    if any(term in normalized_query for term in ("support", "web support", "support uneti")):
+        score += 8.0
+
+    return round(max(score, 0.0), 4)
+
+
 def _score_chunk(query: str, chunk: dict, doc_freq: Counter, total_docs: int) -> float:
+    if chunk.get("source_type") == BUSINESS_FAQ_SOURCE_TYPE:
+        return _score_business_faq(query, chunk)
+
     query_tokens = get_keywords(query)
     if not query_tokens:
         return 0.0
@@ -232,6 +553,64 @@ def _score_chunk(query: str, chunk: dict, doc_freq: Counter, total_docs: int) ->
     return round(max(score, 0.0), 4)
 
 
+def build_business_faq_answer(docs: list[dict], max_items: int = 1) -> str | None:
+    faq_docs = [
+        doc for doc in docs or []
+        if doc.get("source_type") == BUSINESS_FAQ_SOURCE_TYPE and doc.get("faq_answer")
+    ]
+    if not faq_docs:
+        return None
+
+    try:
+        top_score = float(faq_docs[0].get("score") or 0)
+    except (TypeError, ValueError):
+        top_score = 0.0
+
+    selected = []
+    seen_answers = set()
+    for doc in faq_docs:
+        try:
+            score = float(doc.get("score") or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+
+        if selected and top_score and score < max(BUSINESS_FAQ_MIN_SCORE, top_score * 0.72):
+            continue
+
+        normalized_answer = normalize_text(doc.get("faq_answer", ""))
+        if normalized_answer in seen_answers:
+            continue
+
+        selected.append(doc)
+        seen_answers.add(normalized_answer)
+
+        if len(selected) >= max_items:
+            break
+
+    if not selected:
+        return None
+
+    if len(selected) == 1:
+        doc = selected[0]
+        source = doc.get("faq_location") or doc.get("title") or "Khong ro vi tri"
+        doc_name = doc.get("doc_name") or doc.get("ten_van_ban") or "Khong ro tai lieu"
+        return f'{doc.get("faq_answer")}\n(Nguồn: {source} - {doc_name})'
+
+    answer_lines = [
+        f'- {doc.get("faq_answer")}'
+        for doc in selected
+    ]
+    source_parts = []
+    for doc in selected:
+        source = doc.get("faq_location") or doc.get("title") or "Khong ro vi tri"
+        doc_name = doc.get("doc_name") or doc.get("ten_van_ban") or "Khong ro tai lieu"
+        source_text = f"{source} - {doc_name}"
+        if source_text not in source_parts:
+            source_parts.append(source_text)
+
+    return "\n".join(answer_lines) + f"\n(Nguồn: {'; '.join(source_parts)})"
+
+
 def _load_business_index():
     files = _supported_files()
     official_files = list_documents()
@@ -250,6 +629,24 @@ def _load_business_index():
 
     for file_path in files:
         try:
+            if file_path.name == FAQ_MAPPING_DOC_NAME:
+                faq_rows = _build_business_faq_rows(file_path, root)
+                if faq_rows:
+                    for faq_row in faq_rows:
+                        tokens = get_keywords(
+                            " ".join([
+                                faq_row.get("title", ""),
+                                faq_row.get("content", ""),
+                                faq_row.get("faq_keywords", ""),
+                                faq_row.get("audience", ""),
+                            ])
+                        )
+                        faq_row["_token_counts"] = Counter(tokens)
+                        faq_row["_token_set"] = set(tokens)
+                        chunks.append(faq_row)
+                        doc_freq.update(faq_row["_token_set"])
+                    continue
+
             text = _extract_text(file_path)
         except Exception:
             continue
@@ -316,7 +713,12 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
 
     for chunk in chunks:
         score = _score_chunk(query, chunk, doc_freq, total_docs)
-        if score < MIN_SEARCH_SCORE:
+        min_score = (
+            BUSINESS_FAQ_MIN_SCORE
+            if chunk.get("source_type") == BUSINESS_FAQ_SOURCE_TYPE
+            else MIN_SEARCH_SCORE
+        )
+        if score < min_score:
             continue
 
         clean_chunk = {
@@ -336,11 +738,19 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
         "indexed_chunk_count": total_docs,
         "candidate_count": len(results),
         "final_results_count": len(final_results),
+        "faq_candidate_count": sum(
+            1 for item in results if item.get("source_type") == BUSINESS_FAQ_SOURCE_TYPE
+        ),
+        "faq_final_count": sum(
+            1 for item in final_results if item.get("source_type") == BUSINESS_FAQ_SOURCE_TYPE
+        ),
         "final_sources": [
             {
                 "title": item.get("title"),
                 "doc_name": item.get("doc_name"),
                 "relative_path": item.get("relative_path"),
+                "source_type": item.get("source_type"),
+                "file_id": item.get("file_id"),
                 "score": item.get("score"),
             }
             for item in final_results

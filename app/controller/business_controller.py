@@ -1,7 +1,7 @@
 import re
 
 from app.controller.chatbot_controller import _build_sources, _has_confident_evidence
-from app.data.business_knowledge import search_business_sources
+from app.data.business_knowledge import build_business_faq_answer, search_business_sources
 from app.data.elasticsearch_client import get_keywords, normalize_text
 from app.data.query_analyzer import QueryIntent, classify_query
 
@@ -60,6 +60,10 @@ def _extract_business_answer(docs: list[dict], query: str) -> str:
     """Tao cau tra loi ngan tu nguon nghiep vu, khong goi LLM."""
     if not docs:
         return "Khong tim thay thong tin phu hop trong bo tai lieu nghiep vu."
+
+    faq_answer = build_business_faq_answer(docs)
+    if faq_answer:
+        return faq_answer
 
     normalized_query = normalize_text(query)
     source_name = docs[0].get("title") or docs[0].get("doc_name")

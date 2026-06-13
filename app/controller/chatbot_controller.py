@@ -9,7 +9,11 @@ from app.core.config import (
     SHORT_QUERY_MIN_SEARCH_SCORE,
     SHORT_QUERY_MIN_VECTOR_CONFIDENCE,
 )
-from app.data.business_knowledge import search_business_sources
+from app.data.business_knowledge import (
+    BUSINESS_FAQ_SOURCE_TYPE,
+    build_business_faq_answer,
+    search_business_sources,
+)
 from app.data.elasticsearch_client import get_keywords, normalize_text, search_documents
 from app.data.gemini_client import ask_gemini
 from app.data.prompt_builder import build_context, build_prompt, build_website_prompt
@@ -194,6 +198,10 @@ def _build_sources(docs, question: str | None = None):
             "muc": doc.get("muc"),
             "dieu": doc.get("dieu"),
             "chunk_index": doc.get("chunk_index"),
+            "file_id": doc.get("file_id"),
+            "faq_location": doc.get("faq_location"),
+            "audience": doc.get("audience"),
+            "mapping_relative_path": doc.get("mapping_relative_path"),
             "score": scores["score"],
             "vector_score": scores["vector_score"],
             "keyword_score": scores["keyword_score"],
@@ -401,12 +409,33 @@ async def handle_chat(request):
     trace.add_step("business_retrieval", business_debug, {"question": question})
 
     has_business_evidence, business_evidence_reason = _has_confident_evidence(question, business_docs)
+    faq_direct_answer = build_business_faq_answer(business_docs)
     trace.add_step("business_evidence_check", {
         "has_confident_evidence": has_business_evidence,
         "reason": business_evidence_reason,
         "query_keyword_count": len(get_keywords(question)),
-        "llm_called": bool(business_docs and has_business_evidence),
+        "faq_direct_answer": bool(faq_direct_answer),
+        "llm_called": bool(business_docs and has_business_evidence and not faq_direct_answer),
     })
+
+    if business_docs and has_business_evidence and faq_direct_answer:
+        best_doc = business_docs[0]
+        trace.add_step("faq_direct_answer", {
+            "answer_chars": len(faq_direct_answer),
+            "source_count": len(business_docs),
+            "source_type": BUSINESS_FAQ_SOURCE_TYPE,
+            "top_source": best_doc.get("title"),
+            "file_id": best_doc.get("file_id"),
+        })
+
+        source = f'{best_doc.get("faq_location") or best_doc.get("title")} - {best_doc.get("doc_name")}'
+        return _finalize(trace, {
+            "question": question,
+            "answer": faq_direct_answer,
+            "source": source,
+            "sources": _build_sources(business_docs, question),
+            "intent": analysis.intent.value,
+        })
 
     if business_docs and has_business_evidence:
         context = build_context(business_docs)
