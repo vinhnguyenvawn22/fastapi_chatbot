@@ -1,5 +1,6 @@
 from app.controller.chatbot_controller import _build_sources, _has_confident_evidence
 from app.data.elasticsearch_client import search_documents
+from app.data.business_mapping_store import search_business_mapping
 from app.data.query_analyzer import QueryIntent, classify_query
 
 
@@ -40,6 +41,11 @@ def _select_representative_docs(docs, limit: int):
             break
 
     return selected
+
+
+async def ask_business_mapping(request):
+    """Hoi dap nghiep vu dua tren FAQ mapping, khong goi LLM."""
+    return search_business_mapping(request.query, top_k=request.top_k)
 
 
 async def search_business_knowledge(request):
