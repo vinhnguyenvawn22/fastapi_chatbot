@@ -26,5 +26,6 @@ class BusinessSearchResponse(BaseModel):
     selected_count: int = 0
     has_confident_evidence: bool = False
     evidence_reason: str | None = None
+    answer: str | None = None
     sources: list[ChatSource] = Field(default_factory=list)
     trace: list[dict[str, Any]] = Field(default_factory=list)

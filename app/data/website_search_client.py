@@ -50,8 +50,77 @@ WEBSITE_SOURCE_ROOT = "UNETI website"
 FALLBACK_SITEMAP_LIMIT = 200
 FALLBACK_CATEGORY_PATHS = (
     "/category/dao-tao/thong-bao-ke-hoach-dao-tao/",
+    "/category/tuyen-sinh/",
+    "/category/thong-tin-tuyen-sinh/",
+    "/category/tin-tuc/",
 )
 _WEBSITE_INDEX_CACHE = OrderedDict()
+
+
+def _repair_mojibake(text: str) -> str:
+    """Sua nhanh chuoi tieng Viet bi decode sai kieu tuyá»ƒn -> tuyển neu gap."""
+    text = str(text or "")
+    if not any(marker in text for marker in ("á»", "áº", "Ã", "Ä")):
+        return text
+
+    try:
+        repaired = text.encode("cp1252").decode("utf-8")
+    except Exception:
+        return text
+
+    return repaired if repaired else text
+
+
+def _prepare_query(question: str) -> str:
+    return _repair_mojibake(question).strip()
+
+
+def _clean_website_text(text: str) -> str:
+    text = _repair_mojibake(text)
+    text = re.sub(r"Warning:\s+Undefined array key.*?(?=\s+[A-ZÀ-ỴĐ]|\s+Posted|\s*$)", " ", text)
+    text = re.sub(r"Reload document\s*\|\s*Open in new tab\s*Download File", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _sanitize_source(source: dict) -> dict:
+    cleaned = dict(source)
+    for field_name in ("title", "snippet", "content"):
+        if field_name in cleaned:
+            cleaned[field_name] = _clean_website_text(cleaned.get(field_name, ""))
+    return cleaned
+
+
+def _requires_precise_website_match(question: str) -> bool:
+    normalized_question = normalize_text(_prepare_query(question))
+    return any(
+        phrase in normalized_question
+        for phrase in (
+            "hoc phi",
+            "lich nghi",
+            "diem chuan",
+            "thong bao hoc phi",
+        )
+    )
+
+
+def _has_precise_website_match(question: str, source: dict) -> bool:
+    normalized_question = normalize_text(_prepare_query(question))
+    searchable = normalize_text(
+        " ".join([
+            source.get("title", ""),
+            source.get("snippet", ""),
+            source.get("url", ""),
+        ])
+    )
+
+    if "hoc phi" in normalized_question:
+        return "hoc phi" in searchable
+    if "lich nghi" in normalized_question:
+        return "lich nghi" in searchable or "nghi le" in searchable
+    if "diem chuan" in normalized_question:
+        return "diem chuan" in searchable
+    return True
 
 
 def _validate_config():
@@ -128,13 +197,15 @@ def _extract_document(result) -> dict:
     )
 
     return {
-        "title": title,
+        "title": _clean_website_text(title),
         "url": url,
-        "snippet": snippet,
+        "snippet": _clean_website_text(snippet),
     }
 
 
 def _score_source(question: str, source: dict) -> float:
+    question = _prepare_query(question)
+    source = _sanitize_source(source)
     query_terms = set(get_keywords(question))
     searchable = normalize_text(
         " ".join([
@@ -170,6 +241,21 @@ def _score_source(question: str, source: dict) -> float:
             if phrase in searchable:
                 score += 15.0
 
+    normalized_question = normalize_text(question)
+    if "tuyen sinh" in normalized_question:
+        if "thong bao" in title:
+            score += 25.0
+        if "chuong trinh dao tao tu xa" in searchable:
+            score += 20.0
+
+    if "moi nhat" in normalized_question or "gan nhat" in normalized_question:
+        source_years = [int(year) for year in re.findall(r"\b20\d{2}\b", searchable)]
+        if source_years:
+            newest_year = max(source_years)
+            score += max(0, newest_year - 2023) * 18.0
+            if newest_year < 2026:
+                score -= 20.0
+
     url = source.get("url", "")
     if _is_uneti_url(url):
         score += 20.0
@@ -182,6 +268,11 @@ def _score_source(question: str, source: dict) -> float:
 
 
 def _fallback_source_matches_query(question: str, source: dict) -> bool:
+    question = _prepare_query(question)
+    source = _sanitize_source(source)
+    if _requires_precise_website_match(question) and not _has_precise_website_match(question, source):
+        return False
+
     query_terms = set(get_keywords(question))
     searchable = normalize_text(
         " ".join([
@@ -210,6 +301,7 @@ def _dedupe_and_rerank(question: str, raw_sources: list[dict]) -> list[dict]:
     by_url = {}
 
     for source in raw_sources:
+        source = _sanitize_source(source)
         url = source.get("url") or ""
         if not url or not _is_uneti_url(url):
             continue
@@ -230,25 +322,42 @@ def _dedupe_and_rerank(question: str, raw_sources: list[dict]) -> list[dict]:
 
 def _dedupe_and_rerank_fallback(question: str, raw_sources: list[dict]) -> list[dict]:
     by_url = {}
+    relaxed_by_url = {}
+    requires_precise_match = _requires_precise_website_match(question)
 
     for source in raw_sources:
+        source = _sanitize_source(source)
         url = source.get("url") or ""
         if not url or not _is_uneti_url(url):
-            continue
-
-        if not _fallback_source_matches_query(question, source):
             continue
 
         key = url.split("#", 1)[0].rstrip("/")
         source["score"] = _score_source(question, source)
 
-        if key not in by_url or source["score"] > by_url[key]["score"]:
-            by_url[key] = source
+        if key not in relaxed_by_url or source["score"] > relaxed_by_url[key]["score"]:
+            relaxed_by_url[key] = source
+
+        if _fallback_source_matches_query(question, source):
+            if key not in by_url or source["score"] > by_url[key]["score"]:
+                by_url[key] = source
 
     ranked = sorted(by_url.values(), key=lambda item: item["score"], reverse=True)
-    return [
+    selected = [
         source
         for source in ranked
+        if source["score"] > 0
+    ][:WEBSITE_RERANK_TOP_K]
+
+    if selected:
+        return selected
+
+    if requires_precise_match:
+        return []
+
+    relaxed_ranked = sorted(relaxed_by_url.values(), key=lambda item: item["score"], reverse=True)
+    return [
+        source
+        for source in relaxed_ranked
         if source["score"] > 0
     ][:WEBSITE_RERANK_TOP_K]
 
@@ -303,6 +412,7 @@ def _title_from_url(url: str) -> str:
 
 
 def _search_wordpress_rest(question: str) -> list[dict]:
+    question = _prepare_query(question)
     search_url = (
         f"https://{UNETI_WEBSITE_DOMAIN}/wp-json/wp/v2/search"
         f"?search={quote_plus(question)}&per_page={WEBSITE_SEARCH_TOP_K}"
@@ -324,16 +434,17 @@ def _search_wordpress_rest(question: str) -> list[dict]:
 
         title = _first_text(item.get("title")) or _title_from_url(url)
         subtype = item.get("subtype") or item.get("type") or ""
-        sources.append({
+        sources.append(_sanitize_source({
             "title": title,
             "url": url,
             "snippet": subtype,
-        })
+        }))
 
     return sources
 
 
 def _search_site_html(question: str) -> list[dict]:
+    question = _prepare_query(question)
     search_url = f"https://{UNETI_WEBSITE_DOMAIN}/?s={quote_plus(question)}"
     content_type, data = _fetch_url(search_url)
     html_text = _decode_html(data, content_type)
@@ -364,16 +475,17 @@ def _search_site_html(question: str) -> list[dict]:
 
         title = re.sub(r"(?is)<[^>]+>", " ", raw_title)
         title = " ".join(unescape(title).split()) or _title_from_url(url)
-        sources.append({
+        sources.append(_sanitize_source({
             "title": title,
             "url": key,
             "snippet": title,
-        })
+        }))
 
     return sources
 
 
 def _search_category_pages(question: str) -> list[dict]:
+    question = _prepare_query(question)
     sources = []
     seen = set()
 
@@ -414,11 +526,11 @@ def _search_category_pages(question: str) -> list[dict]:
 
                 title = re.sub(r"(?is)<[^>]+>", " ", raw_title)
                 title = " ".join(unescape(title).split()) or _title_from_url(url)
-                sources.append({
+                sources.append(_sanitize_source({
                     "title": title,
                     "url": key,
                     "snippet": title,
-                })
+                }))
 
     return sources
 
@@ -445,6 +557,7 @@ def _extract_sitemap_locations(data: bytes, content_type: str = "") -> tuple[lis
 
 
 def _search_sitemap(question: str) -> list[dict]:
+    question = _prepare_query(question)
     sitemap_queue = [
         f"https://{UNETI_WEBSITE_DOMAIN}/sitemap.xml",
         f"https://{UNETI_WEBSITE_DOMAIN}/post-sitemap.xml",
@@ -482,11 +595,11 @@ def _search_sitemap(question: str) -> list[dict]:
         if query_terms and not (query_terms & searchable):
             continue
 
-        sources.append({
+        sources.append(_sanitize_source({
             "title": title,
             "url": url,
             "snippet": title,
-        })
+        }))
 
     return sources
 
@@ -498,10 +611,10 @@ def _decode_html(data: bytes, content_type: str = "") -> str:
 
     for encoding in encodings:
         try:
-            return data.decode(encoding)
+            return _repair_mojibake(data.decode(encoding))
         except (LookupError, UnicodeDecodeError):
             continue
-    return data.decode("utf-8", errors="ignore")
+    return _repair_mojibake(data.decode("utf-8", errors="ignore"))
 
 
 def _html_to_text(html_text: str) -> str:
@@ -511,7 +624,7 @@ def _html_to_text(html_text: str) -> str:
     text = re.sub(r"(?is)<[^>]+>", " ", text)
     text = unescape(text)
     lines = [" ".join(line.split()) for line in text.splitlines()]
-    return "\n".join(line for line in lines if line)
+    return _clean_website_text("\n".join(line for line in lines if line))
 
 
 def _looks_like_attachment(url: str) -> bool:
@@ -629,7 +742,7 @@ def _extract_attachment_text(url: str) -> str:
 
 
 def _enrich_source_content(source: dict) -> dict:
-    enriched = dict(source)
+    enriched = _sanitize_source(source)
     url = source.get("url") or ""
     fetch_debug = {
         "url": url,
@@ -905,6 +1018,7 @@ def _set_website_index_cache(question: str, result: dict):
 
 def index_uneti_website(question: str, debug: dict | None = None) -> dict:
     """Fetch selected UNETI web sources, chunk them, and upsert into the shared vector store."""
+    question = _prepare_query(question)
     cached = _get_website_index_cache(question)
     if cached is not None:
         if debug is not None:
@@ -944,6 +1058,7 @@ def index_uneti_website(question: str, debug: dict | None = None) -> dict:
 
 
 def _search_and_extract_website_sources(question: str, debug: dict | None = None) -> dict:
+    question = _prepare_query(question)
     missing_config = _validate_config()
     if missing_config:
         return _fallback_search_and_extract_website_sources(
@@ -1039,6 +1154,7 @@ def _search_and_extract_website_sources(question: str, debug: dict | None = None
 
 
 def search_uneti_website(question: str, debug: dict | None = None) -> dict:
+    question = _prepare_query(question)
     answerable_sources = _search_and_extract_website_sources(question, debug).get("sources", [])
     if not answerable_sources:
         return {
@@ -1047,17 +1163,17 @@ def search_uneti_website(question: str, debug: dict | None = None) -> dict:
         }
 
     prompt = _build_website_prompt(question, answerable_sources)
-    answer = ask_gemini(prompt)
+    answer = _clean_website_text(ask_gemini(prompt))
 
     sources = [
         {
-            "title": source["title"],
+            "title": _clean_website_text(source["title"]),
             "url": source["url"],
             "attachment_url": source.get("attachment_url"),
             "source_type": "website_uneti",
             "score": source["score"],
-            "content": source.get("content", ""),
-            "preview": source.get("content", ""),
+            "content": _clean_website_text(source.get("content", "")),
+            "preview": _clean_website_text(source.get("content", "")),
         }
         for source in answerable_sources
     ]

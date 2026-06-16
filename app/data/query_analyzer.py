@@ -30,6 +30,17 @@ WEBSITE_NEWS_TERMS = {
     "thong tin tuyen sinh", "xet tuyen", "nhap hoc",
 }
 
+BUSINESS_SUPPORT_TERMS = {
+    "web support", "support uneti", "support.uneti.edu.vn",
+    "module tin tuc thong bao", "tin tuc thong bao",
+    "ket qua hoc tap", "xem diem", "diem thanh phan",
+    "lich hoc lich thi", "thoi khoa bieu",
+    "bao hong", "bao hong thiet bi", "su co thiet bi",
+    "khoi luong cong tac", "cong tac giang vien", "khoi luong giang day",
+    "coi thi", "cham thi", "khao sat noi bo", "khao sat bat buoc",
+    "danh gia thu tuc", "thong ke mot cua", "email google workspace",
+}
+
 DOCUMENT_TERMS = {
     "quy dinh", "quy che", "quyet dinh", "thong bao", "van ban",
     "tai lieu", "noi bo", "dieu", "muc", "chuong", "ban hanh",
@@ -117,6 +128,9 @@ def classify_query(question: str) -> QueryAnalysis:
 
     if not normalized:
         return QueryAnalysis(QueryIntent.OUT_OF_SCOPE, reason="empty_question")
+
+    if any(term in normalized for term in BUSINESS_SUPPORT_TERMS):
+        return QueryAnalysis(QueryIntent.INTERNAL_DOCUMENT, metadata, "business_support_terms")
 
     if any(term in normalized for term in WEBSITE_TERMS):
         return QueryAnalysis(QueryIntent.WEBSITE_UNETI, metadata, "website_terms")

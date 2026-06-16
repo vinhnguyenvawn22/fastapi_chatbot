@@ -1,3 +1,5 @@
+import re
+
 from fastapi import HTTPException
 from starlette.concurrency import run_in_threadpool
 
@@ -7,7 +9,12 @@ from app.core.config import (
     SHORT_QUERY_MIN_SEARCH_SCORE,
     SHORT_QUERY_MIN_VECTOR_CONFIDENCE,
 )
-from app.data.elasticsearch_client import get_keywords, search_documents
+from app.data.business_knowledge import (
+    BUSINESS_FAQ_SOURCE_TYPE,
+    build_business_faq_answer,
+    search_business_sources,
+)
+from app.data.elasticsearch_client import get_keywords, normalize_text, search_documents
 from app.data.gemini_client import ask_gemini
 from app.data.prompt_builder import build_context, build_prompt, build_website_prompt
 from app.data.query_analyzer import QueryIntent, classify_query
@@ -15,6 +22,8 @@ from app.data.trace_logger import RagTrace, load_trace
 from app.data.website_search_client import index_uneti_website
 
 
+SOURCE_PREVIEW_CHARS = 1100
+SOURCE_PREVIEW_SENTENCES = 5
 NO_WEBSITE_EVIDENCE_ANSWER = "Không tìm thấy thông tin phù hợp trên website UNETI."
 NO_EVIDENCE_ANSWER = "Không tìm thấy căn cứ đủ rõ trong tài liệu đã cung cấp."
 OUT_OF_SCOPE_ANSWER = "Câu hỏi này nằm ngoài phạm vi tài liệu nội bộ hiện có."
@@ -59,11 +68,100 @@ def _confidence_from_source(doc: dict) -> tuple[float | None, str | None]:
     return round(confidence, 4), label
 
 
-def _source_preview(content: str) -> str:
-    return " ".join(str(content or "").split())
+def _clean_preview_text(text: str) -> str:
+    text = str(text or "")
+    text = re.sub(r"---\s*Trang\s+\d+\s*---", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
-def _build_sources(docs):
+def _split_preview_sentences(text: str) -> list[str]:
+    text = re.sub(r"\s+([,.!?;:])", r"\1", text)
+    text = re.sub(r"\b([a-zA-Z])\s+([a-zA-Z])\b", r"\1\2", text)
+    parts = re.split(r"(?<=[.!?])\s+|(?<=;)\s+|(?=\b[a-z]\)\s+)", text)
+    return [part.strip(" -") for part in parts if len(part.strip(" -")) >= 24]
+
+
+def _score_preview_sentence(sentence: str, question_keywords: list[str]) -> int:
+    normalized_sentence = normalize_text(sentence)
+    return sum(1 for keyword in set(question_keywords) if keyword in normalized_sentence)
+
+
+def _shorten_preview_sentence(sentence: str, limit: int = 260) -> str:
+    sentence = sentence.strip(" -")
+    if len(sentence) <= limit:
+        return sentence
+
+    cut_at = sentence.rfind(". ", 0, limit)
+    if cut_at < limit * 0.45:
+        cut_at = sentence.rfind("; ", 0, limit)
+    if cut_at < limit * 0.45:
+        cut_at = sentence.rfind(", ", 0, limit)
+    if cut_at < limit * 0.45:
+        cut_at = sentence.rfind(" ", 0, limit)
+    if cut_at < limit * 0.45:
+        cut_at = limit
+
+    return sentence[:cut_at].rstrip(" ,;:-") + "."
+
+
+def _fallback_preview(text: str) -> str:
+    if len(text) <= SOURCE_PREVIEW_CHARS:
+        return text
+
+    cut_at = text.rfind(". ", 0, SOURCE_PREVIEW_CHARS)
+    if cut_at < SOURCE_PREVIEW_CHARS * 0.55:
+        cut_at = text.rfind("; ", 0, SOURCE_PREVIEW_CHARS)
+    if cut_at < SOURCE_PREVIEW_CHARS * 0.55:
+        cut_at = text.rfind(" ", 0, SOURCE_PREVIEW_CHARS)
+    if cut_at < SOURCE_PREVIEW_CHARS * 0.55:
+        cut_at = SOURCE_PREVIEW_CHARS
+
+    return text[:cut_at].rstrip(" ,;:-") + "."
+
+
+def _source_preview(content: str, title: str | None = None, question: str | None = None) -> str:
+    title_text = _clean_preview_text(title or "")
+    content_text = _clean_preview_text(content)
+    question_keywords = get_keywords(question or "")
+    sentences = _split_preview_sentences(content_text)
+
+    if sentences:
+        ranked_sentences = sorted(
+            enumerate(sentences),
+            key=lambda item: (_score_preview_sentence(item[1], question_keywords), -item[0]),
+            reverse=True,
+        )
+        selected_indexes = [
+            index
+            for index, sentence in ranked_sentences
+            if _score_preview_sentence(sentence, question_keywords) > 0
+        ][:SOURCE_PREVIEW_SENTENCES]
+
+        if not selected_indexes:
+            selected_indexes = list(range(min(SOURCE_PREVIEW_SENTENCES, len(sentences))))
+
+        selected_indexes = sorted(selected_indexes)
+        summary_items = [
+            _shorten_preview_sentence(sentences[index])
+            for index in selected_indexes
+        ]
+        summary = "\n".join(f"- {item}" for item in summary_items)
+    else:
+        summary = content_text
+
+    if "\n- " not in summary:
+        summary = _fallback_preview(summary)
+
+    if title_text and title_text.lower() not in summary.lower():
+        preview = f"{title_text}\n{summary}"
+    else:
+        preview = summary
+
+    return f"Tóm tắt nguồn:\n{preview}"
+
+
+def _build_sources(docs, question: str | None = None):
     sources = []
 
     for doc in docs:
@@ -100,6 +198,10 @@ def _build_sources(docs):
             "muc": doc.get("muc"),
             "dieu": doc.get("dieu"),
             "chunk_index": doc.get("chunk_index"),
+            "file_id": doc.get("file_id"),
+            "faq_location": doc.get("faq_location"),
+            "audience": doc.get("audience"),
+            "mapping_relative_path": doc.get("mapping_relative_path"),
             "score": scores["score"],
             "vector_score": scores["vector_score"],
             "keyword_score": scores["keyword_score"],
@@ -107,7 +209,7 @@ def _build_sources(docs):
             "confidence": confidence,
             "confidence_percent": round(confidence * 100) if confidence is not None else None,
             "confidence_label": confidence_label,
-            "preview": _source_preview(doc.get("content", "")),
+            "preview": _source_preview(doc.get("content", ""), doc.get("title"), question),
         })
 
     return sources
@@ -222,7 +324,7 @@ async def _search_website_and_finalize(trace: RagTrace, question: str, intent: s
             "question": question,
             "answer": NO_WEBSITE_EVIDENCE_ANSWER,
             "source": None,
-            "sources": _build_sources(website_docs),
+            "sources": _build_sources(website_docs, question),
             "intent": intent,
         })
 
@@ -248,7 +350,7 @@ async def _search_website_and_finalize(trace: RagTrace, question: str, intent: s
         "question": question,
         "answer": answer,
         "source": source,
-        "sources": _build_sources(website_docs),
+        "sources": _build_sources(website_docs, question),
         "intent": intent,
     })
 
@@ -302,6 +404,66 @@ async def handle_chat(request):
             "explicit_website_intent",
         )
 
+    business_debug = {}
+    business_docs = search_business_sources(question, debug=business_debug)
+    trace.add_step("business_retrieval", business_debug, {"question": question})
+
+    has_business_evidence, business_evidence_reason = _has_confident_evidence(question, business_docs)
+    faq_direct_answer = build_business_faq_answer(business_docs)
+    trace.add_step("business_evidence_check", {
+        "has_confident_evidence": has_business_evidence,
+        "reason": business_evidence_reason,
+        "query_keyword_count": len(get_keywords(question)),
+        "faq_direct_answer": bool(faq_direct_answer),
+        "llm_called": bool(business_docs and has_business_evidence and not faq_direct_answer),
+    })
+
+    if business_docs and has_business_evidence and faq_direct_answer:
+        best_doc = business_docs[0]
+        trace.add_step("faq_direct_answer", {
+            "answer_chars": len(faq_direct_answer),
+            "source_count": len(business_docs),
+            "source_type": BUSINESS_FAQ_SOURCE_TYPE,
+            "top_source": best_doc.get("title"),
+            "file_id": best_doc.get("file_id"),
+        })
+
+        source = f'{best_doc.get("faq_location") or best_doc.get("title")} - {best_doc.get("doc_name")}'
+        return _finalize(trace, {
+            "question": question,
+            "answer": faq_direct_answer,
+            "source": source,
+            "sources": _build_sources(business_docs, question),
+            "intent": analysis.intent.value,
+        })
+
+    if business_docs and has_business_evidence:
+        context = build_context(business_docs)
+        prompt = build_prompt(question, context)
+        trace.add_step("context_builder", {
+            "context_chars": len(context),
+            "prompt_chars": len(prompt),
+            "source_count": len(business_docs),
+            "source_type": "business_document",
+        })
+
+        answer = await run_in_threadpool(ask_gemini, prompt)
+        trace.add_step("llm_call", {
+            "answer_chars": len(answer or ""),
+            "llm_called": True,
+        })
+
+        best_doc = business_docs[0]
+        source = f'{best_doc.get("title")} - {best_doc.get("doc_name")}'
+
+        return _finalize(trace, {
+            "question": question,
+            "answer": answer,
+            "source": source,
+            "sources": _build_sources(business_docs, question),
+            "intent": analysis.intent.value,
+        })
+
     retrieval_debug = {}
     docs = await search_documents(question, debug=retrieval_debug)
     trace.add_step("retrieval", retrieval_debug, {"question": question})
@@ -348,7 +510,7 @@ async def handle_chat(request):
         "question": question,
         "answer": answer,
         "source": source,
-        "sources": _build_sources(docs),
+        "sources": _build_sources(docs, question),
         "intent": analysis.intent.value,
     })
 

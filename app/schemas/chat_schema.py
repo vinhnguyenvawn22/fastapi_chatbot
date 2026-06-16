@@ -27,6 +27,10 @@ class ChatSource(BaseModel):
     muc: Optional[int] = None
     dieu: Optional[int] = None
     chunk_index: Optional[int] = None
+    file_id: Optional[str] = None
+    faq_location: Optional[str] = None
+    audience: Optional[str] = None
+    mapping_relative_path: Optional[str] = None
     score: Optional[float] = None
     vector_score: Optional[float] = None
     keyword_score: Optional[float] = None
