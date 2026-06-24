@@ -1,7 +1,7 @@
+import asyncio
 import re
 
 from fastapi import HTTPException
-from starlette.concurrency import run_in_threadpool
 
 from app.core.config import (
     MIN_SEARCH_SCORE,
@@ -9,14 +9,13 @@ from app.core.config import (
     SHORT_QUERY_MIN_SEARCH_SCORE,
     SHORT_QUERY_MIN_VECTOR_CONFIDENCE,
 )
-from app.data.business_knowledge import (
-    BUSINESS_FAQ_SOURCE_TYPE,
-    build_business_faq_answer,
-    search_business_sources,
-)
 from app.data.elasticsearch_client import get_keywords, normalize_text, search_documents
-from app.data.gemini_client import ask_gemini
-from app.data.prompt_builder import build_context, build_prompt, build_website_prompt
+from app.data.langchain_pipeline import (
+    generate_answer,
+    retrieve_business,
+    retrieve_internal,
+    retrieve_website,
+)
 from app.data.query_analyzer import QueryIntent, classify_query
 from app.data.trace_logger import RagTrace, load_trace
 from app.data.website_search_client import index_uneti_website
@@ -33,6 +32,15 @@ SHORT_QUERY_KEYWORD_COUNT = 3
 
 def _clean_answer_text(answer: str | None) -> str:
     return str(answer or "").replace("**", "")
+
+
+def _looks_like_document_number_query(question: str) -> bool:
+    normalized = normalize_text(question)
+    searchable = re.sub(r"[_\-.]+", " ", normalized)
+    return bool(re.search(
+        r"\b(?:so|van\s*ban|quyet\s*dinh|quy\s*dinh|quy\s*che|thong\s*bao|qd|qc|tb|vb)\s*\d{1,6}\b",
+        searchable,
+    ))
 
 
 def _confidence_from_source(doc: dict) -> tuple[float | None, str | None]:
@@ -256,10 +264,45 @@ def _finalize(trace: RagTrace, response: dict) -> dict:
     return response
 
 
+def _pipeline_state(
+    trace: RagTrace,
+    question: str,
+    reason: str,
+    prompt_type: str = "document",
+) -> dict:
+    return {
+        "question": question,
+        "reason": reason,
+        "prompt_type": prompt_type,
+        "trace_callback": trace.add_step,
+    }
+
+
+def _deduplicate_docs(*doc_groups: list[dict]) -> list[dict]:
+    docs = []
+    seen = set()
+
+    for group in doc_groups:
+        for doc in group:
+            key = (
+                doc.get("source_type"),
+                doc.get("relative_path") or doc.get("doc_name"),
+                doc.get("chunk_index"),
+                doc.get("title"),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            docs.append(doc)
+
+    return docs
+
+
 async def _search_website_and_finalize(trace: RagTrace, question: str, intent: str, reason: str):
-    website_debug = {}
     try:
-        index_result = await run_in_threadpool(index_uneti_website, question, website_debug)
+        state = await retrieve_website(
+            _pipeline_state(trace, question, reason, prompt_type="website")
+        )
     except Exception as exc:
         trace.add_step("website_search", {
             "status": "index_error",
@@ -276,38 +319,7 @@ async def _search_website_and_finalize(trace: RagTrace, question: str, intent: s
             "intent": intent,
         })
 
-    trace.add_step("website_search", website_debug, {
-        "question": question,
-        "reason": reason,
-    })
-
-    if not index_result.get("indexed_chunks"):
-        trace.add_step("website_index", {
-            "indexed_chunks": 0,
-            "llm_called": False,
-            "reason": "no_text_chunks_from_website",
-        })
-        return _finalize(trace, {
-            "question": question,
-            "answer": NO_WEBSITE_EVIDENCE_ANSWER,
-            "source": None,
-            "sources": [],
-            "intent": intent,
-        })
-
-    retrieval_debug = {}
-    docs = await search_documents(
-        question,
-        debug=retrieval_debug,
-        source_type_filter="website_uneti",
-    )
-    trace.add_step("retrieval_after_website_index", retrieval_debug, {"question": question})
-
-    website_docs = [
-        doc
-        for doc in docs
-        if doc.get("source_type") == "website_uneti"
-    ]
+    website_docs = state.get("docs") or []
 
     has_evidence = bool(website_docs)
     evidence_reason = "website_indexed_source" if has_evidence else "no_website_chunks_found"
@@ -328,20 +340,8 @@ async def _search_website_and_finalize(trace: RagTrace, question: str, intent: s
             "intent": intent,
         })
 
-    context = build_context(website_docs)
-    prompt = build_website_prompt(question, context)
-    trace.add_step("context_builder", {
-        "context_chars": len(context),
-        "prompt_chars": len(prompt),
-        "source_count": len(website_docs),
-        "source_type": "website_uneti",
-    })
-
-    answer = await run_in_threadpool(ask_gemini, prompt)
-    trace.add_step("llm_call", {
-        "answer_chars": len(answer or ""),
-        "llm_called": True,
-    })
+    state = await generate_answer({**state, "docs": website_docs})
+    answer = state["answer"]
 
     best_doc = website_docs[0]
     source = best_doc.get("attachment_url") or best_doc.get("url")
@@ -353,6 +353,204 @@ async def _search_website_and_finalize(trace: RagTrace, question: str, intent: s
         "sources": _build_sources(website_docs, question),
         "intent": intent,
     })
+
+
+async def _answer_with_internal_documents(trace: RagTrace, question: str, intent: str, reason: str):
+    state = await retrieve_internal(_pipeline_state(trace, question, reason))
+    docs = state.get("docs") or []
+
+    has_evidence, evidence_reason = _has_confident_evidence(question, docs)
+    trace.add_step("evidence_check", {
+        "has_confident_evidence": has_evidence,
+        "reason": evidence_reason,
+        "query_keyword_count": len(get_keywords(question)),
+        "llm_called": bool(docs and has_evidence),
+    })
+
+    if not docs or not has_evidence:
+        return _finalize(trace, {
+            "question": question,
+            "answer": NO_EVIDENCE_ANSWER,
+            "source": None,
+            "sources": _build_sources(docs, question),
+            "intent": intent,
+        })
+
+    state = await generate_answer({**state, "docs": docs})
+    answer = state["answer"]
+
+    best_doc = docs[0]
+    source = f'{best_doc.get("title")} - {best_doc.get("doc_name")}'
+
+    return _finalize(trace, {
+        "question": question,
+        "answer": answer,
+        "source": source,
+        "sources": _build_sources(docs, question),
+        "intent": intent,
+    })
+
+
+async def _answer_with_business_documents(trace: RagTrace, question: str, intent: str, reason: str):
+    state = await retrieve_business(_pipeline_state(trace, question, reason))
+    business_docs = state.get("docs") or []
+
+    has_business_evidence, business_evidence_reason = _has_confident_evidence(question, business_docs)
+    trace.add_step("business_evidence_check", {
+        "has_confident_evidence": has_business_evidence,
+        "reason": business_evidence_reason,
+        "query_keyword_count": len(get_keywords(question)),
+        "llm_called": bool(business_docs and has_business_evidence),
+    })
+
+    if not business_docs or not has_business_evidence:
+        return _finalize(trace, {
+            "question": question,
+            "answer": NO_EVIDENCE_ANSWER,
+            "source": None,
+            "sources": _build_sources(business_docs, question),
+            "intent": intent,
+        })
+
+    state = await generate_answer({**state, "docs": business_docs})
+    answer = state["answer"]
+
+    best_doc = business_docs[0]
+    source = f'{best_doc.get("title")} - {best_doc.get("doc_name")}'
+
+    return _finalize(trace, {
+        "question": question,
+        "answer": answer,
+        "source": source,
+        "sources": _build_sources(business_docs, question),
+        "intent": intent,
+    })
+
+
+async def _answer_with_aggregate_documents(
+    trace: RagTrace,
+    question: str,
+    intent: str,
+    reason: str,
+):
+    base_state = _pipeline_state(trace, question, reason)
+    business_state, internal_state = await asyncio.gather(
+        retrieve_business(dict(base_state)),
+        retrieve_internal(dict(base_state)),
+    )
+    business_docs = business_state.get("docs") or []
+    internal_docs = internal_state.get("docs") or []
+
+    business_has_evidence, business_reason = _has_confident_evidence(question, business_docs)
+    internal_has_evidence, internal_reason = _has_confident_evidence(question, internal_docs)
+    trace.add_step("lcel_aggregate_evidence", {
+        "business_has_evidence": business_has_evidence,
+        "business_reason": business_reason,
+        "internal_has_evidence": internal_has_evidence,
+        "internal_reason": internal_reason,
+    })
+
+    selected_business = business_docs if business_has_evidence else []
+    selected_internal = internal_docs if internal_has_evidence else []
+    docs = _deduplicate_docs(selected_business, selected_internal)
+    trace.add_step("lcel_aggregate_merge", {
+        "business_source_count": len(selected_business),
+        "internal_source_count": len(selected_internal),
+        "deduplicated_source_count": len(docs),
+    })
+
+    if not docs:
+        trace.add_step("fallback_decision", {
+            "from": "aggregate_documents",
+            "to": "website_uneti",
+            "reason": f"business={business_reason}; internal={internal_reason}",
+        })
+        return await _search_website_and_finalize(
+            trace,
+            question,
+            "website_uneti_fallback",
+            "aggregate_no_confident_source",
+        )
+
+    generation_state = await generate_answer({**base_state, "docs": docs})
+    best_doc = docs[0]
+    return _finalize(trace, {
+        "question": question,
+        "answer": generation_state["answer"],
+        "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
+        "sources": _build_sources(docs, question),
+        "intent": intent,
+    })
+
+
+def _empty_question_response(trace: RagTrace, original_question: str):
+    return _finalize(trace, {
+        "question": original_question,
+        "answer": "Vui lÃ²ng nháº­p cÃ¢u há»i.",
+        "source": None,
+        "sources": [],
+        "intent": QueryIntent.OUT_OF_SCOPE.value,
+    })
+
+
+async def handle_internal_chat(request):
+    question = request.question.strip()
+    trace = RagTrace(question)
+    trace.add_step("request_received", {
+        "question": question,
+        "is_empty": not bool(question),
+        "forced_route": "internal_document",
+    })
+
+    if not question:
+        return _empty_question_response(trace, request.question)
+
+    return await _answer_with_internal_documents(
+        trace,
+        question,
+        QueryIntent.INTERNAL_DOCUMENT.value,
+        "explicit_internal_endpoint",
+    )
+
+
+async def handle_business_chat(request):
+    question = request.question.strip()
+    trace = RagTrace(question)
+    trace.add_step("request_received", {
+        "question": question,
+        "is_empty": not bool(question),
+        "forced_route": "business_document",
+    })
+
+    if not question:
+        return _empty_question_response(trace, request.question)
+
+    return await _answer_with_business_documents(
+        trace,
+        question,
+        QueryIntent.INTERNAL_DOCUMENT.value,
+        "explicit_business_endpoint",
+    )
+
+
+async def handle_website_chat(request):
+    question = request.question.strip()
+    trace = RagTrace(question)
+    trace.add_step("request_received", {
+        "question": question,
+        "is_empty": not bool(question),
+        "forced_route": "website_uneti",
+    })
+
+    if not question:
+        return _empty_question_response(trace, request.question)
+
+    return await _search_website_and_finalize(
+        trace,
+        question,
+        QueryIntent.WEBSITE_UNETI.value,
+        "explicit_website_endpoint",
+    )
 
 
 async def handle_chat(request):
@@ -404,115 +602,20 @@ async def handle_chat(request):
             "explicit_website_intent",
         )
 
-    business_debug = {}
-    business_docs = search_business_sources(question, debug=business_debug)
-    trace.add_step("business_retrieval", business_debug, {"question": question})
-
-    has_business_evidence, business_evidence_reason = _has_confident_evidence(question, business_docs)
-    faq_direct_answer = build_business_faq_answer(business_docs)
-    trace.add_step("business_evidence_check", {
-        "has_confident_evidence": has_business_evidence,
-        "reason": business_evidence_reason,
-        "query_keyword_count": len(get_keywords(question)),
-        "faq_direct_answer": bool(faq_direct_answer),
-        "llm_called": bool(business_docs and has_business_evidence and not faq_direct_answer),
-    })
-
-    if business_docs and has_business_evidence and faq_direct_answer:
-        best_doc = business_docs[0]
-        trace.add_step("faq_direct_answer", {
-            "answer_chars": len(faq_direct_answer),
-            "source_count": len(business_docs),
-            "source_type": BUSINESS_FAQ_SOURCE_TYPE,
-            "top_source": best_doc.get("title"),
-            "file_id": best_doc.get("file_id"),
-        })
-
-        source = f'{best_doc.get("faq_location") or best_doc.get("title")} - {best_doc.get("doc_name")}'
-        return _finalize(trace, {
-            "question": question,
-            "answer": faq_direct_answer,
-            "source": source,
-            "sources": _build_sources(business_docs, question),
-            "intent": analysis.intent.value,
-        })
-
-    if business_docs and has_business_evidence:
-        context = build_context(business_docs)
-        prompt = build_prompt(question, context)
-        trace.add_step("context_builder", {
-            "context_chars": len(context),
-            "prompt_chars": len(prompt),
-            "source_count": len(business_docs),
-            "source_type": "business_document",
-        })
-
-        answer = await run_in_threadpool(ask_gemini, prompt)
-        trace.add_step("llm_call", {
-            "answer_chars": len(answer or ""),
-            "llm_called": True,
-        })
-
-        best_doc = business_docs[0]
-        source = f'{best_doc.get("title")} - {best_doc.get("doc_name")}'
-
-        return _finalize(trace, {
-            "question": question,
-            "answer": answer,
-            "source": source,
-            "sources": _build_sources(business_docs, question),
-            "intent": analysis.intent.value,
-        })
-
-    retrieval_debug = {}
-    docs = await search_documents(question, debug=retrieval_debug)
-    trace.add_step("retrieval", retrieval_debug, {"question": question})
-
-    has_evidence, evidence_reason = _has_confident_evidence(question, docs)
-    trace.add_step("evidence_check", {
-        "has_confident_evidence": has_evidence,
-        "reason": evidence_reason,
-        "query_keyword_count": len(get_keywords(question)),
-        "llm_called": bool(docs and has_evidence),
-    })
-
-    if not docs or not has_evidence:
-        trace.add_step("fallback_decision", {
-            "from": "internal_document",
-            "to": "website_uneti",
-            "reason": evidence_reason,
-        })
-        return await _search_website_and_finalize(
+    if analysis.metadata.get("so_van_ban") or _looks_like_document_number_query(question):
+        return await _answer_with_internal_documents(
             trace,
             question,
-            "website_uneti_fallback",
-            evidence_reason,
+            analysis.intent.value,
+            "document_number_query",
         )
 
-    context = build_context(docs)
-    prompt = build_prompt(question, context)
-    trace.add_step("context_builder", {
-        "context_chars": len(context),
-        "prompt_chars": len(prompt),
-        "source_count": len(docs),
-    })
-
-    answer = await run_in_threadpool(ask_gemini, prompt)
-    trace.add_step("llm_call", {
-        "answer_chars": len(answer or ""),
-        "llm_called": True,
-    })
-
-    best_doc = docs[0]
-    source = f'{best_doc.get("title")} - {best_doc.get("doc_name")}'
-
-    return _finalize(trace, {
-        "question": question,
-        "answer": answer,
-        "source": source,
-        "sources": _build_sources(docs, question),
-        "intent": analysis.intent.value,
-    })
+    return await _answer_with_aggregate_documents(
+        trace,
+        question,
+        analysis.intent.value,
+        analysis.reason,
+    )
 
 
 def get_chat_trace(trace_id: str) -> dict:

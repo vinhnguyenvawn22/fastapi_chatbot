@@ -182,11 +182,24 @@ _INDEX_CACHE = {
     "chunks": [],
     "doc_freq": Counter(),
     "total_docs": 0,
+    "skipped_files": [],
 }
 _SEARCH_CACHE = OrderedDict()
 RRF_K = 60
 HYBRID_CANDIDATE_MULTIPLIER = 4
 METADATA_EXACT_SCORE = 100.0
+SEARCHABLE_METADATA_FIELDS = (
+    "so_van_ban",
+    "so_van_ban_ngan",
+    "ten_van_ban",
+    "doc_name",
+    "relative_path",
+    "loai_van_ban",
+    "don_vi_ban_hanh",
+    "ngay_ban_hanh",
+    "ngay_hieu_luc",
+    "phong_ban",
+)
 
 
 def normalize_text(text: str = ""):
@@ -207,6 +220,7 @@ def clear_document_index_cache():
     _INDEX_CACHE["chunks"] = []
     _INDEX_CACHE["doc_freq"] = Counter()
     _INDEX_CACHE["total_docs"] = 0
+    _INDEX_CACHE["skipped_files"] = []
     _SEARCH_CACHE.clear()
 
 
@@ -280,6 +294,36 @@ def _set_search_cache(key, results):
         _SEARCH_CACHE.popitem(last=False)
 
 
+def _extract_document_number_query(question: str) -> str | None:
+    normalized = normalize_text(question)
+    searchable = re.sub(r"[_\-.]+", " ", normalized)
+
+    match = re.search(
+        r"(?:so|van\s*ban|quyet\s*dinh|quy\s*dinh|quy\s*che|thong\s*bao|qd|qc|tb|vb)\s*[:\-]?\s*(\d{1,6})",
+        searchable,
+    )
+    if not match:
+        match = re.search(r"\b(\d{2,6})\s*/\s*(?:qd|vb|tb|qc)\b", searchable)
+
+    return match.group(1) if match else None
+
+
+def _metadata_search_text(chunk: dict) -> str:
+    return " ".join(
+        str(chunk.get(field, ""))
+        for field in SEARCHABLE_METADATA_FIELDS
+        if chunk.get(field) is not None
+    )
+
+
+def _chunk_search_text(chunk: dict) -> str:
+    return " ".join([
+        str(chunk.get("title", "")),
+        _metadata_search_text(chunk),
+        str(chunk.get("content", "")),
+    ])
+
+
 def _load_document_index():
     """Load và cache toàn bộ chunk tài liệu cho luồng keyword/IDF search."""
     files = list_documents()
@@ -290,14 +334,24 @@ def _load_document_index():
 
     chunks = []
     doc_freq = Counter()
+    skipped_files = []
 
     for file in files:
-        file_chunks = build_document_chunks(file.get("relative_path") or file["file_name"])
+        if file.get("parse_supported") is False:
+            continue
+
+        relative_path = file.get("relative_path") or file["file_name"]
+        try:
+            file_chunks = build_document_chunks(relative_path)
+        except Exception as exc:
+            skipped_files.append({
+                "relative_path": relative_path,
+                "error": str(exc),
+            })
+            continue
 
         for chunk in file_chunks:
-            title = chunk.get("title", "")
-            content = chunk.get("content", "")
-            tokens = get_keywords(f"{title} {content}")
+            tokens = get_keywords(_chunk_search_text(chunk))
             chunk["_token_counts"] = Counter(tokens)
             chunk["_token_set"] = set(tokens)
             chunks.append(chunk)
@@ -307,6 +361,7 @@ def _load_document_index():
     _INDEX_CACHE["chunks"] = chunks
     _INDEX_CACHE["doc_freq"] = doc_freq
     _INDEX_CACHE["total_docs"] = len(chunks)
+    _INDEX_CACHE["skipped_files"] = skipped_files
 
     return chunks, doc_freq, len(chunks)
 
@@ -359,10 +414,10 @@ def _metadata_value_matches(chunk: dict, key: str, expected) -> bool:
                 str(chunk.get("so_van_ban", "")),
                 str(chunk.get("ten_van_ban", "")),
                 str(chunk.get("doc_name", "")),
-                str(chunk.get("title", "")),
-                str(chunk.get("content", "")),
+                str(chunk.get("relative_path", "")),
             ])
         )
+        searchable_text = re.sub(r"[_\-.]+", " ", searchable_text)
         return any(
             re_pattern.search(searchable_text)
             for re_pattern in (
@@ -375,6 +430,38 @@ def _metadata_value_matches(chunk: dict, key: str, expected) -> bool:
     return str(chunk.get(key, "")).lower() == str(expected).lower()
 
 
+def _document_number_match_strength(chunk: dict, expected) -> int:
+    expected_number = str(expected or "")
+    if not expected_number:
+        return 0
+
+    if expected_number == str(chunk.get("so_van_ban_ngan", "")):
+        return 4
+
+    normalized_identity = normalize_text(
+        " ".join([
+            str(chunk.get("doc_name", "")),
+            str(chunk.get("relative_path", "")),
+            str(chunk.get("ten_van_ban", "")),
+        ])
+    )
+    normalized_identity = re.sub(r"[_\-.]+", " ", normalized_identity)
+    if re.search(
+        rf"\b(?:qd|qc|tb|vb|so|quyet\s*dinh|quy\s*che|thong\s*bao)\s*{re.escape(expected_number)}\b",
+        normalized_identity,
+    ):
+        return 3
+    if re.search(
+        rf"\b{re.escape(expected_number)}\s*(?:qd|qc|tb|vb|quyet\s*dinh|quy\s*che|thong\s*bao)\b",
+        normalized_identity,
+    ):
+        return 3
+    if re.search(rf"\b{re.escape(expected_number)}\b", normalized_identity):
+        return 2
+
+    return 1 if _metadata_value_matches(chunk, "so_van_ban", expected_number) else 0
+
+
 def _metadata_match_count(chunk: dict, constraints: dict) -> int:
     return sum(
         1
@@ -385,6 +472,9 @@ def _metadata_match_count(chunk: dict, constraints: dict) -> int:
 
 def _search_metadata_documents(question: str, limit: int):
     constraints = extract_metadata_constraints(question)
+    document_number = _extract_document_number_query(question)
+    if document_number and not constraints.get("so_van_ban"):
+        constraints["so_van_ban"] = document_number
     if not constraints:
         return [], {}
 
@@ -409,15 +499,20 @@ def _search_metadata_documents(question: str, limit: int):
         clean_chunk["score"] = METADATA_EXACT_SCORE + match_count
         clean_chunk["keyword_score"] = score_chunk(
             question,
-            chunk.get("title", ""),
+            f'{chunk.get("title", "")} {_metadata_search_text(chunk)}',
             chunk.get("content", ""),
         )
         clean_chunk["metadata_score"] = match_count
+        clean_chunk["document_number_match_strength"] = _document_number_match_strength(
+            chunk,
+            constraints.get("so_van_ban"),
+        )
         clean_chunk["metadata_matched"] = True
         results.append(clean_chunk)
 
     results.sort(
         key=lambda item: (
+            item.get("document_number_match_strength", 0),
             item.get("metadata_score", 0),
             item.get("keyword_score", 0),
             item.get("chunk_index", 0),
@@ -487,7 +582,7 @@ def _search_keyword_documents(question: str, limit: int, source_type_filter: str
 
         score = score_chunk(
             expanded_question,
-            chunk.get("title", ""),
+            f'{chunk.get("title", "")} {_metadata_search_text(chunk)}',
             chunk.get("content", ""),
             doc_freq=doc_freq,
             total_docs=total_docs,
@@ -605,29 +700,14 @@ async def search_documents(
                 "source_type_filter": source_type_filter,
                 "final_results_count": len(cached_results),
                 "final_sources": _compact_debug_sources(cached_results),
+                "skipped_files": deepcopy(_INDEX_CACHE.get("skipped_files", [])),
             })
         return cached_results
 
     candidate_limit = max(SEARCH_TOP_K * HYBRID_CANDIDATE_MULTIPLIER, SEARCH_TOP_K)
     metadata_results, metadata_constraints = _search_metadata_documents(question, candidate_limit)
-    metadata_filter = _metadata_filter_from_constraints(metadata_constraints, source_type_filter)
-    if metadata_constraints and not metadata_results:
-        _set_search_cache(cache_key, [])
-        if debug is not None:
-            debug.update({
-                "cache_hit": False,
-                "metadata_constraints": metadata_constraints,
-                "source_type_filter": source_type_filter,
-                "metadata_results_count": 0,
-                "vector_results_count": 0,
-                "keyword_results_count": 0,
-                "vector_error": None,
-                "hybrid_rerank_used": False,
-                "rerank_reason": "metadata_constraints_without_match",
-                "final_results_count": 0,
-                "final_sources": [],
-            })
-        return []
+    vector_constraints = metadata_constraints if metadata_results else {}
+    metadata_filter = _metadata_filter_from_constraints(vector_constraints, source_type_filter)
 
     vector_results = []
     vector_error = None
@@ -646,6 +726,9 @@ async def search_documents(
     if metadata_results:
         use_hybrid_rerank = True
         rerank_reason = "metadata_results_need_keyword_merge"
+    elif metadata_constraints:
+        use_hybrid_rerank = True
+        rerank_reason = "metadata_constraints_keyword_fallback"
 
     if not use_hybrid_rerank:
         final_results = vector_results[:SEARCH_TOP_K]
@@ -666,6 +749,7 @@ async def search_documents(
                 "keyword_sources": [],
                 "final_results_count": len(final_results),
                 "final_sources": _compact_debug_sources(final_results),
+                "skipped_files": deepcopy(_INDEX_CACHE.get("skipped_files", [])),
             })
         return final_results
 
@@ -694,6 +778,7 @@ async def search_documents(
                 "keyword_sources": _compact_debug_sources(keyword_results),
                 "final_results_count": 0,
                 "final_sources": [],
+                "skipped_files": deepcopy(_INDEX_CACHE.get("skipped_files", [])),
             })
         return []
 
@@ -704,6 +789,7 @@ async def search_documents(
         results.sort(
             key=lambda item: (
                 _chunk_key(item) in metadata_keys,
+                item.get("document_number_match_strength", 0),
                 item.get("metadata_score", 0),
                 item.get("keyword_score", 0) or 0,
                 item.get("score", 0) or 0,
@@ -730,6 +816,7 @@ async def search_documents(
             "keyword_sources": _compact_debug_sources(keyword_results),
             "final_results_count": len(final_results),
             "final_sources": _compact_debug_sources(final_results),
+            "skipped_files": deepcopy(_INDEX_CACHE.get("skipped_files", [])),
         })
 
     return final_results

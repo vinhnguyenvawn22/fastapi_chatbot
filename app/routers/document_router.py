@@ -2,7 +2,7 @@ from fastapi import APIRouter, UploadFile, File
 from app.controller.document_controller import (
     upload_document,
     list_documents,
-    extract_pdf_text,
+    extract_document_text,
 )
 
 router = APIRouter()
@@ -25,7 +25,7 @@ async def get_documents():
 @router.get("/{file_name}/text")
 async def get_document_text(file_name: str):
     """API đọc text đã trích xuất từ một file PDF cụ thể."""
-    text = extract_pdf_text(file_name)
+    text = extract_document_text(file_name)
 
     return {
         "file_name": file_name,

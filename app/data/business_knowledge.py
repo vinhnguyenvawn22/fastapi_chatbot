@@ -24,6 +24,8 @@ _BUSINESS_SEARCH_CACHE = {}
 FAQ_MAPPING_DOC_NAME = "PCNTT_MAPPING_FILE.docx"
 BUSINESS_FAQ_SOURCE_TYPE = "business_faq_mapping"
 BUSINESS_FAQ_MIN_SCORE = max(MIN_SEARCH_SCORE, 14.0)
+BUSINESS_SOURCE_TYPE = "business_document"
+BUSINESS_GUIDED_VECTOR_MIN_SCORE = 0.35
 
 _XLSX_NS = {
     "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
@@ -149,13 +151,13 @@ def _doc_name_with_extension(source_file_name: str) -> str:
     return f"{source_file_name}.docx"
 
 
-def _resolve_relative_path(root: Path, source_file_name: str, fallback: str) -> str:
+def _resolve_relative_path(root: Path, source_file_name: str) -> str | None:
     doc_name = _doc_name_with_extension(source_file_name)
     if doc_name:
         candidate = root / doc_name
         if candidate.exists():
             return candidate.relative_to(root).as_posix()
-    return fallback
+    return None
 
 
 def _parse_file_mapping(table: list[list[str]]) -> dict[str, dict]:
@@ -259,7 +261,8 @@ def _build_business_faq_rows(file_path: Path, root: Path) -> list[dict]:
             source_info = file_map.get(file_id, {})
             source_file_name = source_info.get("source_file_name") or file_id
             doc_name = _doc_name_with_extension(source_file_name) or file_path.name
-            relative_path = _resolve_relative_path(root, source_file_name, fallback_relative_path)
+            source_relative_path = _resolve_relative_path(root, source_file_name)
+            relative_path = source_relative_path or source_file_name
             audience = source_info.get("audience") or ""
             title = question
             content = "\n".join([
@@ -273,6 +276,8 @@ def _build_business_faq_rows(file_path: Path, root: Path) -> list[dict]:
             rows.append({
                 "doc_name": doc_name,
                 "relative_path": relative_path,
+                "source_relative_path": source_relative_path,
+                "source_file_found": bool(source_relative_path),
                 "mapping_relative_path": fallback_relative_path,
                 "source_root": root.name,
                 "title": title,
@@ -461,6 +466,15 @@ def _score_business_faq(query: str, chunk: dict) -> float:
 
     combined_normalized = normalize_text(f"{question} {answer} {keywords}")
 
+    if "lms" in original_tokens:
+        if "lms" in combined_normalized:
+            score += 65.0
+        else:
+            score -= 90.0
+        if any(term in normalized_query for term in ("khong dang nhap", "loi dang nhap", "quen mat khau")):
+            if any(term in combined_normalized for term in ("su co", "tu khac phuc", "email", "mat khau")):
+                score += 35.0
+
     if "diem" in original_tokens:
         if "diem" in combined_normalized:
             score += 35.0
@@ -554,6 +568,9 @@ def _score_chunk(query: str, chunk: dict, doc_freq: Counter, total_docs: int) ->
 
 
 def build_business_faq_answer(docs: list[dict], max_items: int = 1) -> str | None:
+    # Compatibility shim: mapping summaries must never become final answers.
+    return None
+
     faq_docs = [
         doc for doc in docs or []
         if doc.get("source_type") == BUSINESS_FAQ_SOURCE_TYPE and doc.get("faq_answer")
@@ -696,10 +713,378 @@ def _load_business_index():
     return chunks, doc_freq, len(chunks)
 
 
+def _clean_index_chunk(chunk: dict) -> dict:
+    return {
+        key: value
+        for key, value in chunk.items()
+        if not key.startswith("_") and key != "faq_answer"
+    }
+
+
+def _mapping_candidates(query: str, chunks: list[dict]) -> list[dict]:
+    candidates = []
+    for chunk in chunks:
+        if chunk.get("source_type") != BUSINESS_FAQ_SOURCE_TYPE:
+            continue
+
+        score = _score_business_faq(query, chunk)
+        if score < BUSINESS_FAQ_MIN_SCORE:
+            continue
+
+        candidate = _clean_index_chunk(chunk)
+        candidate["mapping_score"] = score
+        candidates.append(candidate)
+
+    candidates.sort(key=lambda item: item["mapping_score"], reverse=True)
+    return candidates
+
+
+def _source_chunks_for_mapping(mapping: dict, chunks: list[dict]) -> list[dict]:
+    source_relative_path = mapping.get("source_relative_path")
+    doc_name = mapping.get("doc_name")
+    if not mapping.get("source_file_found") or not source_relative_path:
+        return []
+
+    return [
+        chunk
+        for chunk in chunks
+        if chunk.get("source_type") != BUSINESS_FAQ_SOURCE_TYPE
+        and chunk.get("source_root") == mapping.get("source_root")
+        and (
+            chunk.get("relative_path") == source_relative_path
+            or chunk.get("doc_name") == doc_name
+        )
+    ]
+
+
+def _location_anchors(location: str) -> list[str]:
+    normalized = normalize_text(location)
+    normalized = normalized.replace("→", "->")
+    parts = [
+        part.strip(" .:-")
+        for part in re.split(r"\s*(?:->|>)\s*", normalized)
+        if part.strip(" .:-")
+    ]
+
+    anchors = []
+    for part in reversed(parts):
+        compact = re.sub(r"^(?:muc|chuong|dieu)\s+", "", part).strip()
+        if re.fullmatch(r"\d+(?:\.\d+)+", compact):
+            anchors.append(compact)
+        elif re.fullmatch(r"buoc\s+\d+", compact):
+            anchors.append(compact)
+        elif re.fullmatch(r"\d+", compact) and len(parts) <= 2:
+            anchors.append(compact)
+
+    return list(dict.fromkeys(anchors))
+
+
+def _location_score(chunk: dict, location: str) -> float:
+    content = normalize_text(chunk.get("content", ""))
+    anchors = _location_anchors(location)
+    score = 0.0
+
+    for index, anchor in enumerate(anchors):
+        pattern = rf"(?<![\d.]){re.escape(anchor)}(?:\.|\s|$)"
+        if re.search(pattern, content):
+            score += 120.0 if index == 0 else 45.0
+
+    return score
+
+
+def _location_windows(mapping: dict, source_chunks: list[dict]) -> list[dict]:
+    anchors = _location_anchors(mapping.get("faq_location", ""))
+    file_path = Path(str(mapping.get("file_path") or ""))
+    if not anchors or not file_path.is_file() or not source_chunks:
+        return []
+
+    try:
+        text = _extract_text(file_path)
+    except Exception:
+        return []
+
+    anchor = anchors[0]
+    pattern = re.compile(
+        rf"(?mi)^\s*{re.escape(anchor)}\s*[.)\-:]?\s+"
+    )
+    matches = list(pattern.finditer(text))
+    windows = []
+    base_chunk = source_chunks[0]
+
+    for index, match in enumerate(matches, start=1):
+        start = max(0, match.start() - 180)
+        end = min(len(text), match.start() + 3200)
+        content = text[start:end].strip()
+        if not content:
+            continue
+
+        window = _clean_index_chunk(base_chunk)
+        window["content"] = content
+        window["chunk_index"] = index
+        windows.append(window)
+
+    return windows
+
+
+def _guided_keyword_score(query: str, mapping: dict, chunk: dict) -> float:
+    searchable = normalize_text(
+        f'{chunk.get("title", "")} {chunk.get("content", "")}'
+    )
+    searchable_tokens = set(get_keywords(searchable))
+    query_tokens = set(get_keywords(query))
+    keyword_tokens = set(get_keywords(mapping.get("faq_keywords", "")))
+    summary_tokens = set(get_keywords(mapping.get("faq_answer", "")))
+
+    score = 0.0
+    score += len(query_tokens & searchable_tokens) * 9.0
+    score += len(keyword_tokens & searchable_tokens) * 6.0
+    score += len(summary_tokens & searchable_tokens) * 1.5
+
+    for phrase in _faq_keyword_phrases(mapping.get("faq_keywords", "")):
+        if len(get_keywords(phrase)) >= 2 and phrase in searchable:
+            score += 18.0
+
+    return round(score, 4)
+
+
+def _mapping_keyword_coverage(mapping: dict, chunk: dict) -> float:
+    keyword_tokens = set(get_keywords(mapping.get("faq_keywords", "")))
+    if not keyword_tokens:
+        return 1.0
+
+    searchable_tokens = set(get_keywords(
+        f'{chunk.get("title", "")} {chunk.get("content", "")}'
+    ))
+    return len(keyword_tokens & searchable_tokens) / len(keyword_tokens)
+
+
+def _has_specific_mapping_phrase(mapping: dict, chunk: dict) -> bool:
+    searchable = normalize_text(
+        f'{chunk.get("title", "")} {chunk.get("content", "")}'
+    )
+    generic_phrases = {
+        "xem chi tiet",
+        "cach truy cap",
+        "duong dan",
+        "thong tin ho tro",
+    }
+    return any(
+        phrase not in generic_phrases
+        and len(get_keywords(phrase)) >= 2
+        and phrase in searchable
+        for phrase in _faq_keyword_phrases(mapping.get("faq_keywords", ""))
+    )
+
+
+def _keyword_windows(
+    query: str,
+    mapping: dict,
+    source_chunks: list[dict],
+) -> list[dict]:
+    file_path = Path(str(mapping.get("file_path") or ""))
+    if not file_path.is_file() or not source_chunks:
+        return []
+
+    try:
+        text = _extract_text(file_path)
+    except Exception:
+        return []
+
+    lines = text.splitlines()
+    normalized_lines = [normalize_text(line) for line in lines]
+    phrases = _faq_keyword_phrases(mapping.get("faq_keywords", ""))
+    phrases.extend(
+        phrase
+        for phrase in _faq_keyword_phrases(query.replace(" va ", ","))
+        if len(get_keywords(phrase)) >= 2
+    )
+
+    windows = []
+    seen_starts = set()
+    base_chunk = source_chunks[0]
+    for phrase in phrases:
+        if len(get_keywords(phrase)) < 2:
+            continue
+
+        for line_index, normalized_line in enumerate(normalized_lines):
+            if phrase not in normalized_line:
+                continue
+            window_start = max(0, line_index - 3)
+            bucket = window_start // 4
+            if bucket in seen_starts:
+                continue
+            seen_starts.add(bucket)
+
+            window = _clean_index_chunk(base_chunk)
+            window["content"] = "\n".join(
+                lines[window_start:min(len(lines), line_index + 22)]
+            ).strip()
+            window["chunk_index"] = len(windows) + 1
+            windows.append(window)
+
+    return windows
+
+
+def _decorate_guided_chunk(
+    chunk: dict,
+    mapping: dict,
+    retrieval_method: str,
+    score: float,
+    keyword_score: float | None = None,
+    vector_score: float | None = None,
+) -> dict:
+    result = _clean_index_chunk(chunk)
+    result.update({
+        "source_type": BUSINESS_SOURCE_TYPE,
+        "file_id": mapping.get("file_id"),
+        "faq_location": (
+            mapping.get("faq_location")
+            if retrieval_method == "location"
+            else None
+        ),
+        "audience": mapping.get("audience"),
+        "mapping_relative_path": mapping.get("mapping_relative_path"),
+        "mapping_score": mapping.get("mapping_score"),
+        "retrieval_method": retrieval_method,
+        "matched_location": (
+            mapping.get("faq_location")
+            if retrieval_method == "location"
+            else None
+        ),
+        "score": round(float(score), 4),
+    })
+    if keyword_score is not None:
+        result["keyword_score"] = round(float(keyword_score), 4)
+    if vector_score is not None:
+        result["vector_score"] = round(float(vector_score), 4)
+    if retrieval_method == "location" and mapping.get("faq_location"):
+        result["title"] = mapping["faq_location"]
+    return result
+
+
+def _search_location_in_source(
+    query: str,
+    mapping: dict,
+    source_chunks: list[dict],
+    limit: int,
+) -> list[dict]:
+    ranked = []
+    location_chunks = _location_windows(mapping, source_chunks)
+    candidates = location_chunks or source_chunks
+
+    for chunk in candidates:
+        location_score = _location_score(chunk, mapping.get("faq_location", ""))
+        if location_score <= 0:
+            continue
+        keyword_score = _guided_keyword_score(query, mapping, chunk)
+        if keyword_score < MIN_SEARCH_SCORE:
+            continue
+        if _mapping_keyword_coverage(mapping, chunk) < 0.4:
+            continue
+        if not _has_specific_mapping_phrase(mapping, chunk):
+            continue
+        ranked.append((location_score + keyword_score, keyword_score, chunk))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [
+        _decorate_guided_chunk(
+            chunk,
+            mapping,
+            "location",
+            score,
+            keyword_score=keyword_score,
+        )
+        for score, keyword_score, chunk in ranked[:limit]
+    ]
+
+
+def _search_keywords_in_source(
+    query: str,
+    mapping: dict,
+    source_chunks: list[dict],
+    limit: int,
+) -> list[dict]:
+    ranked = []
+    candidates = _keyword_windows(query, mapping, source_chunks) + source_chunks
+    for chunk in candidates:
+        score = _guided_keyword_score(query, mapping, chunk)
+        if score >= MIN_SEARCH_SCORE:
+            ranked.append((score, chunk))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [
+        _decorate_guided_chunk(
+            chunk,
+            mapping,
+            "keyword",
+            score,
+            keyword_score=score,
+        )
+        for score, chunk in ranked[:limit]
+    ]
+
+
+def _search_vectors_in_source(
+    query: str,
+    mapping: dict,
+    source_chunks: list[dict],
+    limit: int,
+) -> tuple[list[dict], str | None]:
+    try:
+        from app.data.embedding_client import embed_documents, embed_query
+
+        guidance = " ".join([
+            query,
+            mapping.get("faq_keywords", ""),
+            mapping.get("faq_answer", ""),
+        ])
+        query_vector = embed_query(guidance)
+        document_vectors = embed_documents([
+            chunk.get("content", "")
+            for chunk in source_chunks
+        ])
+    except Exception as exc:
+        return [], str(exc)
+
+    ranked = []
+    for chunk, vector in zip(source_chunks, document_vectors):
+        score = sum(left * right for left, right in zip(query_vector, vector))
+        if score >= BUSINESS_GUIDED_VECTOR_MIN_SCORE:
+            ranked.append((score, chunk))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [
+        _decorate_guided_chunk(
+            chunk,
+            mapping,
+            "vector",
+            score,
+            vector_score=score,
+        )
+        for score, chunk in ranked[:limit]
+    ], None
+
+
+def _compact_guided_sources(results: list[dict]) -> list[dict]:
+    return [
+        {
+            "doc_name": item.get("doc_name"),
+            "relative_path": item.get("relative_path"),
+            "chunk_index": item.get("chunk_index"),
+            "retrieval_method": item.get("retrieval_method"),
+            "matched_location": item.get("matched_location"),
+            "score": item.get("score"),
+            "keyword_score": item.get("keyword_score"),
+            "vector_score": item.get("vector_score"),
+        }
+        for item in results
+    ]
+
+
 def search_business_sources(query: str, limit: int | None = None, debug: dict | None = None) -> list[dict]:
     query = str(query or "").strip()
     limit = limit or BUSINESS_SEARCH_TOP_K
-    cache_key = (normalize_text(query), limit)
+    cache_key = ("mapping_guided_v1", normalize_text(query), limit)
 
     if cache_key in _BUSINESS_SEARCH_CACHE:
         cached = deepcopy(_BUSINESS_SEARCH_CACHE[cache_key])
@@ -709,52 +1094,80 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
         return cached.get("results", [])
 
     chunks, doc_freq, total_docs = _load_business_index()
-    results = []
+    mappings = _mapping_candidates(query, chunks)
+    selected_mapping = mappings[0] if mappings else None
+    final_results = []
+    retrieval_method = None
+    vector_error = None
+    source_chunks = []
 
-    for chunk in chunks:
-        score = _score_chunk(query, chunk, doc_freq, total_docs)
-        min_score = (
-            BUSINESS_FAQ_MIN_SCORE
-            if chunk.get("source_type") == BUSINESS_FAQ_SOURCE_TYPE
-            else MIN_SEARCH_SCORE
-        )
-        if score < min_score:
-            continue
+    if selected_mapping:
+        source_chunks = _source_chunks_for_mapping(selected_mapping, chunks)
+        if source_chunks:
+            final_results = _search_location_in_source(
+                query,
+                selected_mapping,
+                source_chunks,
+                limit,
+            )
+            retrieval_method = "location" if final_results else None
 
-        clean_chunk = {
-            key: value
-            for key, value in chunk.items()
-            if not key.startswith("_")
-        }
-        clean_chunk["score"] = score
-        clean_chunk["keyword_score"] = score
-        results.append(clean_chunk)
+            if not final_results:
+                final_results = _search_keywords_in_source(
+                    query,
+                    selected_mapping,
+                    source_chunks,
+                    limit,
+                )
+                retrieval_method = "keyword" if final_results else None
 
-    results.sort(key=lambda item: item["score"], reverse=True)
-    final_results = results[:limit]
+            if not final_results:
+                final_results, vector_error = _search_vectors_in_source(
+                    query,
+                    selected_mapping,
+                    source_chunks,
+                    limit,
+                )
+                retrieval_method = "vector" if final_results else None
+    else:
+        generic_results = []
+        for chunk in chunks:
+            if chunk.get("source_type") == BUSINESS_FAQ_SOURCE_TYPE:
+                continue
+            score = _score_chunk(query, chunk, doc_freq, total_docs)
+            if score < MIN_SEARCH_SCORE:
+                continue
+            result = _clean_index_chunk(chunk)
+            result["score"] = score
+            result["keyword_score"] = score
+            result["retrieval_method"] = "generic_keyword"
+            generic_results.append(result)
+
+        generic_results.sort(key=lambda item: item["score"], reverse=True)
+        final_results = generic_results[:limit]
+        retrieval_method = "generic_keyword" if final_results else None
+
     debug_data = {
         "cache_hit": False,
         "business_documents_dir": str(_business_path()),
         "indexed_chunk_count": total_docs,
-        "candidate_count": len(results),
+        "candidate_count": len(mappings),
         "final_results_count": len(final_results),
-        "faq_candidate_count": sum(
-            1 for item in results if item.get("source_type") == BUSINESS_FAQ_SOURCE_TYPE
+        "mapping_selected": bool(selected_mapping),
+        "mapping_score": selected_mapping.get("mapping_score") if selected_mapping else None,
+        "mapping_question": selected_mapping.get("faq_question") if selected_mapping else None,
+        "file_id": selected_mapping.get("file_id") if selected_mapping else None,
+        "source_file": selected_mapping.get("doc_name") if selected_mapping else None,
+        "source_file_found": bool(source_chunks) if selected_mapping else None,
+        "requested_location": selected_mapping.get("faq_location") if selected_mapping else None,
+        "matched_location": (
+            selected_mapping.get("faq_location")
+            if retrieval_method == "location"
+            else None
         ),
-        "faq_final_count": sum(
-            1 for item in final_results if item.get("source_type") == BUSINESS_FAQ_SOURCE_TYPE
-        ),
-        "final_sources": [
-            {
-                "title": item.get("title"),
-                "doc_name": item.get("doc_name"),
-                "relative_path": item.get("relative_path"),
-                "source_type": item.get("source_type"),
-                "file_id": item.get("file_id"),
-                "score": item.get("score"),
-            }
-            for item in final_results
-        ],
+        "retrieval_method": retrieval_method,
+        "vector_error": vector_error,
+        "final_sources": _compact_guided_sources(final_results),
     }
 
     _BUSINESS_SEARCH_CACHE[cache_key] = {
