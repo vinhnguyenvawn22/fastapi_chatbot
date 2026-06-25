@@ -1,3 +1,4 @@
+import asyncio
 from collections import Counter, OrderedDict
 from copy import deepcopy
 import math
@@ -7,7 +8,14 @@ import unicodedata
 
 from app.controller.document_controller import build_document_chunks, list_documents
 from app.core.config import (
+    ANN_TOP_K,
+    BM25_B,
+    BM25_K1,
+    BM25_METADATA_BOOST,
+    BM25_TOP_K,
     MIN_SEARCH_SCORE,
+    RRF_CANDIDATE_TOP_K,
+    RRF_K,
     RERANK_AMBIGUOUS_QUERY_KEYWORDS,
     RETRIEVAL_CACHE_MAX_ITEMS,
     RETRIEVAL_CACHE_TTL_SECONDS,
@@ -15,7 +23,9 @@ from app.core.config import (
     VECTOR_FAST_PATH_CONFIDENCE,
     VECTOR_FAST_PATH_SCORE_GAP,
 )
+from app.data.query_expander import expand_query
 from app.data.query_analyzer import extract_metadata_constraints, normalize_date
+from app.data.reranker import rerank_chunks
 from app.data.vector_store import search_similar_chunks
 
 
@@ -185,7 +195,6 @@ _INDEX_CACHE = {
     "skipped_files": [],
 }
 _SEARCH_CACHE = OrderedDict()
-RRF_K = 60
 HYBRID_CANDIDATE_MULTIPLIER = 4
 METADATA_EXACT_SCORE = 100.0
 SEARCHABLE_METADATA_FIELDS = (
@@ -220,6 +229,7 @@ def clear_document_index_cache():
     _INDEX_CACHE["chunks"] = []
     _INDEX_CACHE["doc_freq"] = Counter()
     _INDEX_CACHE["total_docs"] = 0
+    _INDEX_CACHE["average_doc_length"] = 0.0
     _INDEX_CACHE["skipped_files"] = []
     _SEARCH_CACHE.clear()
 
@@ -361,6 +371,10 @@ def _load_document_index():
     _INDEX_CACHE["chunks"] = chunks
     _INDEX_CACHE["doc_freq"] = doc_freq
     _INDEX_CACHE["total_docs"] = len(chunks)
+    _INDEX_CACHE["average_doc_length"] = (
+        sum(sum(chunk["_token_counts"].values()) for chunk in chunks) / len(chunks)
+        if chunks else 0.0
+    )
     _INDEX_CACHE["skipped_files"] = skipped_files
 
     return chunks, doc_freq, len(chunks)
@@ -524,31 +538,35 @@ def _search_metadata_documents(question: str, limit: int):
 
 
 def score_chunk(question: str, title: str, content: str, doc_freq=None, total_docs=0, token_counts=None):
-    """Tính điểm liên quan keyword/IDF giữa câu hỏi và một chunk tài liệu."""
+    """Tính điểm BM25, có boost metadata/tiêu đề cho văn bản hành chính."""
     query_keywords = get_keywords(question)
     if not query_keywords:
         return 0.0
 
     title_tokens = set(get_keywords(title))
-    content_tokens = set(get_keywords(content))
     token_counts = token_counts or Counter(get_keywords(f"{title} {content}"))
     doc_freq = doc_freq or Counter()
     total_docs = total_docs or 1
-
+    document_length = sum(token_counts.values()) or 1
+    average_doc_length = _INDEX_CACHE.get("average_doc_length") or document_length
     score = 0.0
 
     for word in query_keywords:
         if word not in token_counts:
             continue
 
-        idf = math.log((1 + total_docs) / (1 + doc_freq.get(word, 0))) + 1
-        score += token_counts[word] * idf
+        document_frequency = doc_freq.get(word, 0)
+        idf = math.log(
+            1 + (total_docs - document_frequency + 0.5) / (document_frequency + 0.5)
+        )
+        term_frequency = token_counts[word]
+        denominator = term_frequency + BM25_K1 * (
+            1 - BM25_B + BM25_B * document_length / average_doc_length
+        )
+        score += idf * (term_frequency * (BM25_K1 + 1)) / denominator
 
         if word in title_tokens:
-            score += 4.0 * idf
-
-        if word in content_tokens:
-            score += 0.5 * idf
+            score += BM25_METADATA_BOOST * idf
 
     return round(score, 4)
 
@@ -620,19 +638,35 @@ def _merge_with_rrf(result_sets: list[list[dict]], limit: int):
             )
             item["rrf_score"] += 1 / (RRF_K + rank)
 
-            if "distance" in chunk:
-                item["chunk"]["vector_score"] = chunk.get("score")
-                item["chunk"]["distance"] = chunk.get("distance")
+            if chunk.get("distance") is not None:
+                incoming_distance = float(chunk["distance"])
+                incoming_vector_score = chunk.get("vector_score")
+                if incoming_vector_score is None:
+                    incoming_vector_score = 1 - incoming_distance
 
-            if "keyword_score" in chunk:
-                item["chunk"]["keyword_score"] = chunk.get("keyword_score")
+                current_vector_score = item["chunk"].get("vector_score")
+                if (
+                    current_vector_score is None
+                    or float(incoming_vector_score) > float(current_vector_score)
+                ):
+                    item["chunk"]["vector_score"] = float(incoming_vector_score)
+                    item["chunk"]["distance"] = incoming_distance
+
+            if chunk.get("keyword_score") is not None:
+                current_keyword_score = item["chunk"].get("keyword_score")
+                if (
+                    current_keyword_score is None
+                    or float(chunk["keyword_score"]) > float(current_keyword_score)
+                ):
+                    item["chunk"]["keyword_score"] = float(chunk["keyword_score"])
 
     ranked = sorted(fused.values(), key=lambda item: item["rrf_score"], reverse=True)
     results = []
 
     for item in ranked[:limit]:
         chunk = item["chunk"]
-        chunk["score"] = round(item["rrf_score"], 6)
+        chunk["rrf_score"] = round(item["rrf_score"], 6)
+        chunk["score"] = chunk["rrf_score"]
         results.append(chunk)
 
     return results
@@ -648,6 +682,8 @@ def _compact_debug_sources(results: list[dict], limit: int = 5) -> list[dict]:
             "score": item.get("score"),
             "vector_score": item.get("vector_score"),
             "keyword_score": item.get("keyword_score"),
+            "rrf_score": item.get("rrf_score"),
+            "cross_encoder_score": item.get("cross_encoder_score"),
             "distance": item.get("distance"),
             "metadata_matched": item.get("metadata_matched"),
         }
@@ -683,13 +719,67 @@ def _should_use_hybrid_rerank(question: str, vector_results: list[dict]) -> tupl
     return True, "close_or_low_confidence_results"
 
 
+def _lexical_coverage(question: str, result: dict) -> float:
+    query_terms = set(get_keywords(question))
+    if not query_terms:
+        return 0.0
+    source_terms = set(get_keywords(_chunk_search_text(result)))
+    return len(query_terms & source_terms) / len(query_terms)
+
+
+def _original_retrieval_is_strong(
+    question: str,
+    metadata_results: list[dict],
+    vector_results: list[dict],
+    keyword_results: list[dict],
+) -> tuple[bool, str]:
+    if metadata_results:
+        return True, "metadata_match"
+    if vector_results:
+        top = _result_confidence(vector_results[0])
+        second = _result_confidence(vector_results[1]) if len(vector_results) > 1 else 0.0
+        if top >= VECTOR_FAST_PATH_CONFIDENCE and top - second >= VECTOR_FAST_PATH_SCORE_GAP:
+            return True, "strong_ann_result"
+    if keyword_results and _lexical_coverage(question, keyword_results[0]) >= 0.8:
+        return True, "strong_bm25_result"
+    return False, "weak_or_ambiguous_results"
+
+
+async def _run_retrieval_pair(query, metadata_filter, source_type_filter):
+    started = time.perf_counter()
+    ann_task = asyncio.to_thread(
+        search_similar_chunks,
+        query,
+        ANN_TOP_K,
+        metadata_filter if metadata_filter else None,
+    )
+    bm25_task = asyncio.to_thread(
+        _search_keyword_documents,
+        query,
+        BM25_TOP_K,
+        source_type_filter,
+    )
+    ann_outcome, bm25_outcome = await asyncio.gather(
+        ann_task, bm25_task, return_exceptions=True
+    )
+    ann_error = str(ann_outcome) if isinstance(ann_outcome, Exception) else None
+    bm25_error = str(bm25_outcome) if isinstance(bm25_outcome, Exception) else None
+    return {
+        "query": query,
+        "ann": [] if ann_error else ann_outcome,
+        "bm25": [] if bm25_error else bm25_outcome,
+        "ann_error": ann_error,
+        "bm25_error": bm25_error,
+        "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+    }
+
+
 async def search_documents(
     question: str,
     debug: dict | None = None,
     source_type_filter: str | None = None,
 ):
-    """Truy xuất tài liệu theo hybrid search: vector semantic + keyword/IDF + RRF."""
-    # Hybrid search: vector bắt ngữ nghĩa, keyword/IDF bắt chính xác thuật ngữ.
+    """Hybrid retrieval: query expansion -> BM25 + ANN -> RRF -> cross-encoder."""
     signature = _current_document_signature()
     cache_key = _search_cache_key(question, source_type_filter, signature)
     cached_results = _get_search_cache(cache_key)
@@ -704,61 +794,76 @@ async def search_documents(
             })
         return cached_results
 
-    candidate_limit = max(SEARCH_TOP_K * HYBRID_CANDIDATE_MULTIPLIER, SEARCH_TOP_K)
+    total_started = time.perf_counter()
+    timings = {}
+    candidate_limit = max(RRF_CANDIDATE_TOP_K, SEARCH_TOP_K)
+    step_started = time.perf_counter()
     metadata_results, metadata_constraints = _search_metadata_documents(question, candidate_limit)
+    timings["metadata_ms"] = round((time.perf_counter() - step_started) * 1000, 3)
     vector_constraints = metadata_constraints if metadata_results else {}
     metadata_filter = _metadata_filter_from_constraints(vector_constraints, source_type_filter)
 
-    vector_results = []
-    vector_error = None
-
-    try:
-        vector_results = search_similar_chunks(
-            question,
-            top_k=candidate_limit,
-            metadata_filter=metadata_filter if metadata_filter else None,
-        )
-    except Exception as exc:
-        # Nếu embedding/vector store lỗi, keyword search vẫn giữ hệ thống trả lời được.
-        vector_error = str(exc)
-
-    use_hybrid_rerank, rerank_reason = _should_use_hybrid_rerank(question, vector_results)
-    if metadata_results:
-        use_hybrid_rerank = True
-        rerank_reason = "metadata_results_need_keyword_merge"
-    elif metadata_constraints:
-        use_hybrid_rerank = True
-        rerank_reason = "metadata_constraints_keyword_fallback"
-
-    if not use_hybrid_rerank:
-        final_results = vector_results[:SEARCH_TOP_K]
-        _set_search_cache(cache_key, final_results)
-        if debug is not None:
-            debug.update({
-                "cache_hit": False,
-                "metadata_constraints": metadata_constraints,
-                "source_type_filter": source_type_filter,
-                "metadata_results_count": len(metadata_results),
-                "vector_results_count": len(vector_results),
-                "keyword_results_count": 0,
-                "vector_error": vector_error,
-                "hybrid_rerank_used": False,
-                "rerank_reason": rerank_reason,
-                "metadata_sources": _compact_debug_sources(metadata_results),
-                "vector_sources": _compact_debug_sources(vector_results),
-                "keyword_sources": [],
-                "final_results_count": len(final_results),
-                "final_sources": _compact_debug_sources(final_results),
-                "skipped_files": deepcopy(_INDEX_CACHE.get("skipped_files", [])),
+    original_pair = await _run_retrieval_pair(question, metadata_filter, source_type_filter)
+    vector_result_sets = [original_pair["ann"]] if original_pair["ann"] else []
+    bm25_result_sets = [original_pair["bm25"]] if original_pair["bm25"] else []
+    vector_errors = (
+        [{"query": question, "error": original_pair["ann_error"]}]
+        if original_pair["ann_error"] else []
+    )
+    bm25_errors = (
+        [{"query": question, "error": original_pair["bm25_error"]}]
+        if original_pair["bm25_error"] else []
+    )
+    timings["original_parallel_retrieval_ms"] = original_pair["duration_ms"]
+    strong, adaptive_reason = _original_retrieval_is_strong(
+        question, metadata_results, original_pair["ann"], original_pair["bm25"]
+    )
+    expansion_started = time.perf_counter()
+    if strong:
+        queries = [question]
+        expansion_debug = {
+            "enabled": True,
+            "used": False,
+            "reason": f"adaptive_skip:{adaptive_reason}",
+            "queries": queries,
+            "error": None,
+        }
+    else:
+        queries, expansion_debug = await asyncio.to_thread(expand_query, question)
+    timings["query_expansion_ms"] = round(
+        (time.perf_counter() - expansion_started) * 1000, 3
+    )
+    expanded_pair_timings = []
+    if len(queries) > 1:
+        outcomes = await asyncio.gather(*[
+            _run_retrieval_pair(query, metadata_filter, source_type_filter)
+            for query in queries[1:]
+        ])
+        for outcome in outcomes:
+            expanded_pair_timings.append({
+                "query": outcome["query"],
+                "duration_ms": outcome["duration_ms"],
             })
-        return final_results
+            if outcome["ann"]:
+                vector_result_sets.append(outcome["ann"])
+            if outcome["bm25"]:
+                bm25_result_sets.append(outcome["bm25"])
+            if outcome["ann_error"]:
+                vector_errors.append({"query": outcome["query"], "error": outcome["ann_error"]})
+            if outcome["bm25_error"]:
+                bm25_errors.append({"query": outcome["query"], "error": outcome["bm25_error"]})
+    timings["expanded_parallel_retrieval"] = expanded_pair_timings
 
-    keyword_results = _search_keyword_documents(question, candidate_limit, source_type_filter)
-    result_sets = [
-        result_set
-        for result_set in (metadata_results, vector_results, keyword_results)
-        if result_set
-    ]
+    rrf_started = time.perf_counter()
+    vector_results = (
+        _merge_with_rrf(vector_result_sets, candidate_limit)
+        if vector_result_sets else []
+    )
+    keyword_results = (
+        _merge_with_rrf(bm25_result_sets, candidate_limit)
+        if bm25_result_sets else []
+    )
+    result_sets = [items for items in (metadata_results, vector_results, keyword_results) if items]
 
     if not result_sets:
         _set_search_cache(cache_key, [])
@@ -770,9 +875,9 @@ async def search_documents(
                 "metadata_results_count": len(metadata_results),
                 "vector_results_count": len(vector_results),
                 "keyword_results_count": len(keyword_results),
-                "vector_error": vector_error,
-                "hybrid_rerank_used": use_hybrid_rerank,
-                "rerank_reason": rerank_reason,
+                "expanded_queries": expansion_debug,
+                "vector_errors": vector_errors,
+                "bm25_errors": bm25_errors,
                 "metadata_sources": _compact_debug_sources(metadata_results),
                 "vector_sources": _compact_debug_sources(vector_results),
                 "keyword_sources": _compact_debug_sources(keyword_results),
@@ -782,7 +887,24 @@ async def search_documents(
             })
         return []
 
-    results = _merge_with_rrf(result_sets, SEARCH_TOP_K)
+    rrf_results = _merge_with_rrf(result_sets, candidate_limit)
+    timings["rrf_ms"] = round((time.perf_counter() - rrf_started) * 1000, 3)
+    should_rerank, rerank_reason = _should_use_hybrid_rerank(question, vector_results)
+    if metadata_results:
+        should_rerank, rerank_reason = False, "metadata_match"
+    elif keyword_results and _lexical_coverage(question, keyword_results[0]) >= 0.8:
+        should_rerank, rerank_reason = False, "strong_bm25_coverage"
+    rerank_started = time.perf_counter()
+    if should_rerank:
+        results, rerank_debug = await asyncio.to_thread(
+            rerank_chunks, question, rrf_results
+        )
+        for result in results:
+            result["reranked"] = True
+    else:
+        results = rrf_results
+        rerank_debug = {"used": False, "reason": rerank_reason}
+    timings["cross_encoder_ms"] = round((time.perf_counter() - rerank_started) * 1000, 3)
 
     if metadata_results:
         metadata_keys = {_chunk_key(chunk) for chunk in metadata_results}
@@ -808,12 +930,21 @@ async def search_documents(
             "metadata_results_count": len(metadata_results),
             "vector_results_count": len(vector_results),
             "keyword_results_count": len(keyword_results),
-            "vector_error": vector_error,
-            "hybrid_rerank_used": use_hybrid_rerank,
-            "rerank_reason": rerank_reason,
+            "bm25_results_count": len(keyword_results),
+            "ann_results_count": len(vector_results),
+            "rrf_results_count": len(rrf_results),
+            "expanded_queries": expansion_debug,
+            "vector_errors": vector_errors,
+            "bm25_errors": bm25_errors,
+            "reranking": rerank_debug,
+            "timings": {
+                **timings,
+                "total_retrieval_ms": round((time.perf_counter() - total_started) * 1000, 3),
+            },
             "metadata_sources": _compact_debug_sources(metadata_results),
             "vector_sources": _compact_debug_sources(vector_results),
             "keyword_sources": _compact_debug_sources(keyword_results),
+            "rrf_sources": _compact_debug_sources(rrf_results),
             "final_results_count": len(final_results),
             "final_sources": _compact_debug_sources(final_results),
             "skipped_files": deepcopy(_INDEX_CACHE.get("skipped_files", [])),

@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import json
+import time
 import uuid
 
 
@@ -34,6 +35,7 @@ def load_trace(trace_id: str) -> dict:
 
 class RagTrace:
     def __init__(self, question: str):
+        self.started_monotonic = time.perf_counter()
         self.trace_id = str(uuid.uuid4())
         self.payload = {
             "trace_id": self.trace_id,
@@ -57,6 +59,12 @@ class RagTrace:
         self.payload["updated_at"] = timestamp
 
     def set_response(self, response: dict):
+        self.add_step("request_timing", {
+            "total_request_ms": round(
+                (time.perf_counter() - self.started_monotonic) * 1000,
+                3,
+            ),
+        })
         self.payload["response"] = response
         self.payload["updated_at"] = _now()
 

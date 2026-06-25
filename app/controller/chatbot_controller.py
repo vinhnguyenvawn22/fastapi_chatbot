@@ -1,5 +1,6 @@
 import asyncio
 import re
+import time
 
 from fastapi import HTTPException
 
@@ -17,6 +18,7 @@ from app.data.langchain_pipeline import (
     retrieve_website,
 )
 from app.data.query_analyzer import QueryIntent, classify_query
+from app.data.reranker import rerank_chunks
 from app.data.trace_logger import RagTrace, load_trace
 from app.data.website_search_client import index_uneti_website
 
@@ -28,10 +30,92 @@ NO_EVIDENCE_ANSWER = "Không tìm thấy căn cứ đủ rõ trong tài liệu �
 OUT_OF_SCOPE_ANSWER = "Câu hỏi này nằm ngoài phạm vi tài liệu nội bộ hiện có."
 GENERAL_ADVICE_ANSWER = "Câu hỏi này không cần tra cứu tài liệu nội bộ. Vui lòng hỏi về quy định, quy trình, văn bản hoặc nội dung trong tài liệu đã cung cấp."
 SHORT_QUERY_KEYWORD_COUNT = 3
+MIN_LEXICAL_COVERAGE = 0.5
+MIN_SOURCE_CONTENT_CHARS = 80
+MAX_CHUNKS_PER_DOCUMENT = 2
 
 
 def _clean_answer_text(answer: str | None) -> str:
     return str(answer or "").replace("**", "")
+
+
+def _is_no_evidence_answer(answer: str | None) -> bool:
+    normalized = normalize_text(_clean_answer_text(answer))
+    return normalize_text(NO_EVIDENCE_ANSWER) in normalized
+
+
+def _source_search_text(doc: dict) -> str:
+    return " ".join(
+        str(doc.get(field) or "")
+        for field in (
+            "title",
+            "content",
+            "doc_name",
+            "ten_van_ban",
+            "so_van_ban",
+            "phong_ban",
+        )
+    )
+
+
+def _lexical_coverage(question: str, doc: dict) -> float:
+    query_terms = set(get_keywords(question))
+    if not query_terms:
+        return 0.0
+    source_terms = set(get_keywords(_source_search_text(doc)))
+    return len(query_terms & source_terms) / len(query_terms)
+
+
+def _is_usable_source(question: str, doc: dict) -> tuple[bool, str]:
+    content = str(doc.get("content") or "").strip()
+    if len(content) < MIN_SOURCE_CONTENT_CHARS:
+        return False, "content_too_short"
+    if not (doc.get("relative_path") or doc.get("doc_name") or doc.get("url")):
+        return False, "missing_source_identity"
+    if doc.get("metadata_matched"):
+        return True, "metadata_matched"
+
+    coverage = _lexical_coverage(question, doc)
+    vector_score = doc.get("vector_score")
+    if vector_score is None and doc.get("distance") is not None:
+        vector_score = 1 - float(doc["distance"])
+
+    if coverage >= MIN_LEXICAL_COVERAGE:
+        return True, "lexical_coverage_passed"
+    if vector_score is not None and float(vector_score) >= MIN_VECTOR_CONFIDENCE:
+        return True, "semantic_score_passed"
+    return False, "insufficient_query_coverage"
+
+
+def _filter_usable_sources(question: str, docs: list[dict]) -> tuple[list[dict], list[dict]]:
+    accepted = []
+    rejected = []
+    for doc in docs:
+        usable, reason = _is_usable_source(question, doc)
+        enriched = dict(doc)
+        enriched["lexical_coverage"] = round(_lexical_coverage(question, doc), 4)
+        if usable:
+            accepted.append(enriched)
+        else:
+            rejected.append({
+                "doc_name": doc.get("doc_name"),
+                "title": doc.get("title"),
+                "reason": reason,
+                "lexical_coverage": enriched["lexical_coverage"],
+            })
+    return accepted, rejected
+
+
+def _limit_document_dominance(docs: list[dict]) -> list[dict]:
+    selected = []
+    counts = {}
+    for doc in docs:
+        key = doc.get("relative_path") or doc.get("doc_name") or doc.get("url")
+        if counts.get(key, 0) >= MAX_CHUNKS_PER_DOCUMENT:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        selected.append(doc)
+    return selected
 
 
 def _looks_like_document_number_query(question: str) -> bool:
@@ -441,22 +525,38 @@ async def _answer_with_aggregate_documents(
     business_docs = business_state.get("docs") or []
     internal_docs = internal_state.get("docs") or []
 
-    business_has_evidence, business_reason = _has_confident_evidence(question, business_docs)
-    internal_has_evidence, internal_reason = _has_confident_evidence(question, internal_docs)
+    usable_business, rejected_business = _filter_usable_sources(question, business_docs)
+    usable_internal, rejected_internal = _filter_usable_sources(question, internal_docs)
+    business_has_evidence, business_reason = _has_confident_evidence(question, usable_business)
+    internal_has_evidence, internal_reason = _has_confident_evidence(question, usable_internal)
     trace.add_step("lcel_aggregate_evidence", {
         "business_has_evidence": business_has_evidence,
         "business_reason": business_reason,
         "internal_has_evidence": internal_has_evidence,
         "internal_reason": internal_reason,
+        "business_usable_count": len(usable_business),
+        "internal_usable_count": len(usable_internal),
+        "business_rejected": rejected_business,
+        "internal_rejected": rejected_internal,
     })
 
-    selected_business = business_docs if business_has_evidence else []
-    selected_internal = internal_docs if internal_has_evidence else []
+    selected_business = usable_business if business_has_evidence else []
+    selected_internal = usable_internal if internal_has_evidence else []
     docs = _deduplicate_docs(selected_business, selected_internal)
+    source_types = {doc.get("source_type") for doc in docs}
+    if len(source_types) > 1:
+        docs, aggregate_rerank_debug = await asyncio.to_thread(rerank_chunks, question, docs)
+    else:
+        aggregate_rerank_debug = {
+            "used": False,
+            "reason": "single_source_type_or_already_ranked",
+        }
+    docs = _limit_document_dominance(docs)
     trace.add_step("lcel_aggregate_merge", {
         "business_source_count": len(selected_business),
         "internal_source_count": len(selected_internal),
         "deduplicated_source_count": len(docs),
+        "reranking": aggregate_rerank_debug,
     })
 
     if not docs:
@@ -473,10 +573,40 @@ async def _answer_with_aggregate_documents(
         )
 
     generation_state = await generate_answer({**base_state, "docs": docs})
+    answer = generation_state["answer"]
+
+    if _is_no_evidence_answer(answer) and selected_internal:
+        internal_only = selected_internal
+        internal_rerank_debug = {
+            "used": False,
+            "reason": "internal_results_already_ranked",
+        }
+        internal_only = _limit_document_dominance(internal_only)
+        trace.add_step("fallback_decision", {
+            "from": "aggregate_generation",
+            "to": "internal_only_generation",
+            "reason": "aggregate_answer_reported_no_evidence",
+            "internal_source_count": len(internal_only),
+            "reranking": internal_rerank_debug,
+        })
+        retry_state = await generate_answer({**base_state, "docs": internal_only})
+        if not _is_no_evidence_answer(retry_state["answer"]):
+            docs = internal_only
+            answer = retry_state["answer"]
+
+    if _is_no_evidence_answer(answer):
+        return _finalize(trace, {
+            "question": question,
+            "answer": NO_EVIDENCE_ANSWER,
+            "source": None,
+            "sources": [],
+            "intent": intent,
+        })
+
     best_doc = docs[0]
     return _finalize(trace, {
         "question": question,
-        "answer": generation_state["answer"],
+        "answer": answer,
         "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
         "sources": _build_sources(docs, question),
         "intent": intent,
@@ -567,11 +697,13 @@ async def handle_chat(request):
             "intent": QueryIntent.OUT_OF_SCOPE.value,
         })
 
+    analysis_started = time.perf_counter()
     analysis = classify_query(question)
     trace.add_step("classify_query", {
         "intent": analysis.intent.value,
         "reason": analysis.reason,
         "metadata": analysis.metadata,
+        "duration_ms": round((time.perf_counter() - analysis_started) * 1000, 3),
     }, {"question": question})
 
     if analysis.intent == QueryIntent.OUT_OF_SCOPE:

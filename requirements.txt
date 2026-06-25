@@ -6,7 +6,6 @@ python-multipart==0.0.28
 # Config and schemas
 python-dotenv==1.1.1
 pydantic==2.11.7
-langchain-core>=0.3.72,<1.0
 langchain-core>=1.2,<2.0
 
 # LLM and website search

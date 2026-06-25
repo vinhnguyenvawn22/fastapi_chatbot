@@ -122,6 +122,168 @@ def test_aggregate_source_deduplication():
     assert result == [duplicate, unique]
 
 
+def test_aggregate_rejects_keyword_false_positive_and_uses_internal(monkeypatch):
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Khối lượng giảm trừ",
+        "content": "Hướng dẫn xem khối lượng giảm trừ của cán bộ giảng viên trên hệ thống.",
+        "doc_name": "support-cbgv.docx",
+        "relative_path": "support-cbgv.docx",
+        "chunk_index": 1,
+        "keyword_score": 81.0,
+    }
+    internal_doc = {
+        "source_type": "official_document",
+        "title": "Đối tượng được miễn, giảm học phí",
+        "content": (
+            "Quy định các đối tượng sinh viên được miễn, giảm học phí "
+            "và hồ sơ đề nghị áp dụng."
+        ),
+        "doc_name": "mien-giam-hoc-phi.pdf",
+        "relative_path": "ctsv/mien-giam-hoc-phi.pdf",
+        "chunk_index": 1,
+        "keyword_score": 20.0,
+    }
+    generated_docs = []
+
+    async def fake_business(state):
+        return {**state, "docs": [business_doc]}
+
+    async def fake_internal(state):
+        return {**state, "docs": [internal_doc]}
+
+    async def fake_generate(state):
+        generated_docs.append(state["docs"])
+        return {**state, "answer": "Sinh viên thuộc các nhóm quy định được miễn, giảm học phí."}
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_business", fake_business)
+    monkeypatch.setattr(chatbot_controller, "retrieve_internal", fake_internal)
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "rerank_chunks",
+        lambda question, docs: (docs, {"used": False, "reason": "mock"}),
+    )
+
+    result = asyncio.run(
+        chatbot_controller.handle_chat(
+            ChatRequest(question="đối tượng được miễn giảm học phí")
+        )
+    )
+
+    assert generated_docs == [[internal_doc | {"lexical_coverage": 1.0}]]
+    assert result["source"].endswith("mien-giam-hoc-phi.pdf")
+    assert all(source["source_type"] != "business_document" for source in result["sources"])
+
+
+def test_aggregate_retries_internal_when_combined_generation_has_no_evidence(monkeypatch):
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Học phí trên cổng hỗ trợ",
+        "content": (
+            "Hướng dẫn xem mục học phí và thông tin tài chính trên cổng hỗ trợ "
+            "dành cho người học và cán bộ phụ trách."
+        ),
+        "doc_name": "support.docx",
+        "relative_path": "support.docx",
+        "chunk_index": 1,
+        "keyword_score": 20.0,
+    }
+    internal_doc = {
+        "source_type": "official_document",
+        "title": "Miễn giảm học phí",
+        "content": (
+            "Các đối tượng được miễn giảm học phí thực hiện theo quy định này, "
+            "bao gồm điều kiện, hồ sơ và trình tự đề nghị áp dụng chính sách."
+        ),
+        "doc_name": "policy.pdf",
+        "relative_path": "policy.pdf",
+        "chunk_index": 1,
+        "keyword_score": 20.0,
+    }
+    call_count = 0
+
+    async def fake_generate(state):
+        nonlocal call_count
+        call_count += 1
+        answer = (
+            chatbot_controller.NO_EVIDENCE_ANSWER
+            if call_count == 1
+            else "Câu trả lời từ tài liệu nội bộ."
+        )
+        return {**state, "answer": answer}
+
+    monkeypatch.setattr(
+        chatbot_controller,
+        "retrieve_business",
+        lambda state: asyncio.sleep(0, result={**state, "docs": [business_doc]}),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "retrieve_internal",
+        lambda state: asyncio.sleep(0, result={**state, "docs": [internal_doc]}),
+    )
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "rerank_chunks",
+        lambda question, docs: (docs, {"used": False, "reason": "mock"}),
+    )
+
+    result = asyncio.run(
+        chatbot_controller.handle_chat(
+            ChatRequest(question="miễn giảm học phí")
+        )
+    )
+
+    assert call_count == 2
+    assert result["answer"] == "Câu trả lời từ tài liệu nội bộ."
+    assert result["source"].endswith("policy.pdf")
+
+
+def test_aggregate_no_evidence_does_not_return_misleading_sources(monkeypatch):
+    irrelevant_doc = {
+        "source_type": "business_document",
+        "title": "Khối lượng giảm trừ",
+        "content": "Hướng dẫn khối lượng công tác dành cho cán bộ giảng viên.",
+        "doc_name": "support.docx",
+        "relative_path": "support.docx",
+        "chunk_index": 1,
+        "keyword_score": 81.0,
+    }
+
+    monkeypatch.setattr(
+        chatbot_controller,
+        "retrieve_business",
+        lambda state: asyncio.sleep(0, result={**state, "docs": [irrelevant_doc]}),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "retrieve_internal",
+        lambda state: asyncio.sleep(0, result={**state, "docs": []}),
+    )
+
+    async def fake_website(trace, question, intent, reason):
+        return chatbot_controller._finalize(trace, {
+            "question": question,
+            "answer": chatbot_controller.NO_EVIDENCE_ANSWER,
+            "source": None,
+            "sources": [],
+            "intent": intent,
+        })
+
+    monkeypatch.setattr(chatbot_controller, "_search_website_and_finalize", fake_website)
+
+    result = asyncio.run(
+        chatbot_controller.handle_chat(
+            ChatRequest(question="đối tượng được miễn giảm học phí")
+        )
+    )
+
+    assert result["source"] is None
+    assert result["sources"] == []
+
+
 def test_document_number_extraction_does_not_use_year_after_qd_prefix():
     file_name = (
         "DHKTKTCN_PDT_QD_2025_12_09_"

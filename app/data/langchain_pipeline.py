@@ -1,4 +1,5 @@
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -71,6 +72,7 @@ async def _retrieve_website(state: PipelineState) -> PipelineState:
 
 
 def _build_generation_prompt(state: PipelineState) -> PipelineState:
+    started = time.perf_counter()
     docs = state.get("docs") or []
     context = build_context(docs)
     if state.get("prompt_type") == "website":
@@ -83,15 +85,18 @@ def _build_generation_prompt(state: PipelineState) -> PipelineState:
         "prompt_chars": len(prompt),
         "source_count": len(docs),
         "prompt_type": state.get("prompt_type", "document"),
+        "duration_ms": round((time.perf_counter() - started) * 1000, 3),
     })
     return {**state, "context": context, "prompt": prompt}
 
 
 async def _generate_answer(state: PipelineState) -> PipelineState:
+    started = time.perf_counter()
     answer = await asyncio.to_thread(ask_gemini, state["prompt"])
     _trace(state, "lcel_llm_call", {
         "answer_chars": len(answer or ""),
         "llm_called": True,
+        "duration_ms": round((time.perf_counter() - started) * 1000, 3),
     })
     return {**state, "answer": answer}
 
