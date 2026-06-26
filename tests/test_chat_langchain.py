@@ -15,6 +15,7 @@ from app.controller.document_controller import (
 from app.data.prompt_builder import build_prompt
 from app.data.trace_logger import RagTrace
 import app.data.elasticsearch_client as document_search
+import app.data.langchain_pipeline as langchain_pipeline
 from app.main import app
 import app.routers.chat_router as chat_router
 from app.schemas.chat_schema import ChatRequest
@@ -309,6 +310,138 @@ def test_trace_write_failure_does_not_break_chat(monkeypatch):
     monkeypatch.setattr("pathlib.Path.write_text", fail_write)
 
     assert trace.save() == trace.trace_id
+
+
+def test_ambiguous_chat_returns_clarification_without_retrieval(monkeypatch):
+    class Decision:
+        def to_dict(self):
+            return {
+                "action": "clarification_needed",
+                "topic": None,
+                "confidence": 0.2,
+                "reason": "garbled_query",
+                "clarifying_question": (
+                    "Bạn muốn kiểm tra đầu ra của chức năng hoặc hệ thống nào?"
+                ),
+                "analyzer": "rule",
+                "cache_hit": False,
+            }
+
+    async def fail_retrieval(*args, **kwargs):
+        raise AssertionError("Retrieval must not run for clarification")
+
+    monkeypatch.setattr(chatbot_controller, "analyze_ambiguity", lambda question: Decision())
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_answer_with_aggregate_documents",
+        fail_retrieval,
+    )
+
+    result = asyncio.run(
+        chatbot_controller.handle_chat(
+            ChatRequest(question="xtet đầu ra ta4 kiểu gì")
+        )
+    )
+
+    assert result["intent"] == "clarification_needed"
+    assert result["sources"] == []
+    assert result["answer"] == "Bạn cần hỏi rõ ràng hơn"
+
+
+def test_probe_failure_returns_clarification_after_retrieval(monkeypatch):
+    async def fake_retrieve_internal(state):
+        return {
+            **state,
+            "docs": [],
+            "retrieval_debug": {
+                "fallback_reason": "probe_insufficient_evidence",
+                "ambiguity": {
+                    "action": "probe_retrieval",
+                    "reason": "unknown_topic_requires_probe",
+                },
+            },
+        }
+
+    monkeypatch.setattr(
+        chatbot_controller,
+        "retrieve_internal",
+        fake_retrieve_internal,
+    )
+
+    trace = RagTrace("chủ đề lạ")
+    result = asyncio.run(
+        chatbot_controller._answer_with_internal_documents(
+            trace,
+            "chủ đề lạ",
+            "internal_document",
+            "test",
+            {"action": "probe_retrieval"},
+        )
+    )
+
+    assert result["answer"] == "Bạn cần hỏi rõ ràng hơn"
+    assert result["intent"] == "clarification_needed"
+
+
+def test_gemini_error_uses_controlled_source_summary(monkeypatch):
+    monkeypatch.setattr(
+        langchain_pipeline,
+        "ask_gemini",
+        lambda prompt: "He thong AI dang ban, vui long thu lai sau it phut.",
+    )
+    traces = []
+    state = {
+        "prompt": "prompt",
+        "docs": [{
+            "title": "Điều kiện tốt nghiệp",
+            "content": "Sinh viên phải tích lũy đủ học phần và hoàn thành nghĩa vụ.",
+        }],
+        "trace_callback": lambda name, output, input_data=None: traces.append(
+            (name, output)
+        ),
+    }
+
+    result = asyncio.run(langchain_pipeline._generate_answer(state))
+
+    assert "Thông tin tóm tắt từ các nguồn đã truy xuất" in result["answer"]
+    assert "Điều kiện tốt nghiệp" in result["answer"]
+    assert traces[-1][1]["fallback_used"] is True
+
+
+def test_gemini_exception_uses_controlled_source_summary(monkeypatch):
+    monkeypatch.setattr(
+        langchain_pipeline,
+        "ask_gemini",
+        lambda prompt: (_ for _ in ()).throw(RuntimeError("Gemini offline")),
+    )
+    state = {
+        "prompt": "prompt",
+        "docs": [{
+            "title": "Quy định camera",
+            "content": "Hệ thống camera được quản lý và vận hành theo quy định.",
+        }],
+    }
+
+    result = asyncio.run(langchain_pipeline._generate_answer(state))
+
+    assert "Quy định camera" in result["answer"]
+
+
+def test_hyde_only_source_requires_rerank_score(monkeypatch):
+    monkeypatch.setattr(chatbot_controller, "HYDE_MIN_RERANK_SCORE", 0.5)
+    low = {
+        "hyde_only": True,
+        "rerank_score": 0.2,
+        "vector_score": 0.95,
+    }
+    high = {
+        "hyde_only": True,
+        "rerank_score": 0.8,
+        "vector_score": 0.95,
+    }
+
+    assert chatbot_controller._has_confident_evidence("camera", [low])[0] is False
+    assert chatbot_controller._has_confident_evidence("camera", [high])[0] is True
 
 
 def test_business_chat_generates_from_original_source_not_mapping_summary(monkeypatch):

@@ -1,4 +1,3 @@
-import asyncio
 from collections import Counter, OrderedDict
 from copy import deepcopy
 import math
@@ -12,21 +11,39 @@ from app.core.config import (
     BM25_B,
     BM25_K1,
     BM25_METADATA_BOOST,
+    BM25_MIN_SCORE,
     BM25_TOP_K,
+    CROSS_ENCODER_FINAL_TOP_K,
+    GROUNDED_HYDE_ANN_TOP_K,
     MIN_SEARCH_SCORE,
+    PROBE_BM25_MIN_SCORE,
+    PROBE_EVIDENCE_TOP_K,
+    PROBE_MIN_EVIDENCE_SIGNALS,
+    PROBE_MIN_TITLE_OVERLAP,
+    PROBE_RRF_MIN_SCORE,
+    PROBE_RRF_SCORE_GAP,
+    PROBE_TOP_K,
+    PROBE_VECTOR_MIN_SCORE,
     RRF_CANDIDATE_TOP_K,
     RRF_K,
-    RERANK_AMBIGUOUS_QUERY_KEYWORDS,
     RETRIEVAL_CACHE_MAX_ITEMS,
     RETRIEVAL_CACHE_TTL_SECONDS,
     SEARCH_TOP_K,
-    VECTOR_FAST_PATH_CONFIDENCE,
-    VECTOR_FAST_PATH_SCORE_GAP,
 )
-from app.data.query_expander import expand_query
+from app.data.ambiguity_analyzer import (
+    CLARIFICATION_NEEDED,
+    DIRECT_RETRIEVAL,
+    HYDE_RETRIEVAL,
+    PROBE_RETRIEVAL,
+)
+from app.data.hyde import (
+    generate_grounded_hyde_document,
+    generate_hyde_document,
+)
 from app.data.query_analyzer import extract_metadata_constraints, normalize_date
-from app.data.reranker import rerank_chunks
+from app.data.reranker import rerank_documents
 from app.data.vector_store import search_similar_chunks
+from rank_bm25 import BM25Okapi
 
 
 STOP_WORDS = {
@@ -193,9 +210,10 @@ _INDEX_CACHE = {
     "doc_freq": Counter(),
     "total_docs": 0,
     "skipped_files": [],
+    "bm25": None,
+    "bm25_corpus": [],
 }
 _SEARCH_CACHE = OrderedDict()
-HYBRID_CANDIDATE_MULTIPLIER = 4
 METADATA_EXACT_SCORE = 100.0
 SEARCHABLE_METADATA_FIELDS = (
     "so_van_ban",
@@ -229,8 +247,9 @@ def clear_document_index_cache():
     _INDEX_CACHE["chunks"] = []
     _INDEX_CACHE["doc_freq"] = Counter()
     _INDEX_CACHE["total_docs"] = 0
-    _INDEX_CACHE["average_doc_length"] = 0.0
     _INDEX_CACHE["skipped_files"] = []
+    _INDEX_CACHE["bm25"] = None
+    _INDEX_CACHE["bm25_corpus"] = []
     _SEARCH_CACHE.clear()
 
 
@@ -261,6 +280,16 @@ def get_keywords(text: str):
     ]
 
 
+def _bm25_tokens(text: str) -> list[str]:
+    """Tokenize Vietnamese while preserving legal references and numbers."""
+    tokens = re.findall(r"[a-z0-9]+", normalize_text(text))
+    return [
+        token
+        for token in tokens
+        if token.isdigit() or len(token) >= 2 or token in {"i", "v", "x"}
+    ]
+
+
 def _document_signature(files):
     """Tạo chữ ký từ danh sách file để biết cache keyword index còn hợp lệ hay không."""
     return tuple(
@@ -273,10 +302,16 @@ def _current_document_signature():
     return _document_signature(list_documents())
 
 
-def _search_cache_key(question: str, source_type_filter: str | None, signature):
+def _search_cache_key(
+    question: str,
+    source_type_filter: str | None,
+    signature,
+    retrieval_action: str = DIRECT_RETRIEVAL,
+):
     return (
         normalize_text(question),
         source_type_filter or "",
+        retrieval_action,
         signature,
         SEARCH_TOP_K,
     )
@@ -334,6 +369,20 @@ def _chunk_search_text(chunk: dict) -> str:
     ])
 
 
+def _bm25_document_tokens(chunk: dict) -> list[str]:
+    content_tokens = _bm25_tokens(chunk.get("content", ""))
+    title_tokens = _bm25_tokens(chunk.get("title", ""))
+    metadata_tokens = _bm25_tokens(_metadata_search_text(chunk))
+
+    metadata_repeats = max(1, round(BM25_METADATA_BOOST))
+    boosted = content_tokens + title_tokens * 2 + metadata_tokens * metadata_repeats
+    for field in ("so_van_ban", "so_van_ban_ngan", "dieu", "muc", "phong_ban"):
+        value = chunk.get(field)
+        if value is not None:
+            boosted += _bm25_tokens(str(value)) * metadata_repeats
+    return boosted
+
+
 def _load_document_index():
     """Load và cache toàn bộ chunk tài liệu cho luồng keyword/IDF search."""
     files = list_documents()
@@ -371,11 +420,14 @@ def _load_document_index():
     _INDEX_CACHE["chunks"] = chunks
     _INDEX_CACHE["doc_freq"] = doc_freq
     _INDEX_CACHE["total_docs"] = len(chunks)
-    _INDEX_CACHE["average_doc_length"] = (
-        sum(sum(chunk["_token_counts"].values()) for chunk in chunks) / len(chunks)
-        if chunks else 0.0
-    )
     _INDEX_CACHE["skipped_files"] = skipped_files
+    bm25_corpus = [_bm25_document_tokens(chunk) for chunk in chunks]
+    _INDEX_CACHE["bm25_corpus"] = bm25_corpus
+    _INDEX_CACHE["bm25"] = (
+        BM25Okapi(bm25_corpus, k1=BM25_K1, b=BM25_B)
+        if any(bm25_corpus)
+        else None
+    )
 
     return chunks, doc_freq, len(chunks)
 
@@ -538,35 +590,31 @@ def _search_metadata_documents(question: str, limit: int):
 
 
 def score_chunk(question: str, title: str, content: str, doc_freq=None, total_docs=0, token_counts=None):
-    """Tính điểm BM25, có boost metadata/tiêu đề cho văn bản hành chính."""
+    """Tính điểm liên quan keyword/IDF giữa câu hỏi và một chunk tài liệu."""
     query_keywords = get_keywords(question)
     if not query_keywords:
         return 0.0
 
     title_tokens = set(get_keywords(title))
+    content_tokens = set(get_keywords(content))
     token_counts = token_counts or Counter(get_keywords(f"{title} {content}"))
     doc_freq = doc_freq or Counter()
     total_docs = total_docs or 1
-    document_length = sum(token_counts.values()) or 1
-    average_doc_length = _INDEX_CACHE.get("average_doc_length") or document_length
+
     score = 0.0
 
     for word in query_keywords:
         if word not in token_counts:
             continue
 
-        document_frequency = doc_freq.get(word, 0)
-        idf = math.log(
-            1 + (total_docs - document_frequency + 0.5) / (document_frequency + 0.5)
-        )
-        term_frequency = token_counts[word]
-        denominator = term_frequency + BM25_K1 * (
-            1 - BM25_B + BM25_B * document_length / average_doc_length
-        )
-        score += idf * (term_frequency * (BM25_K1 + 1)) / denominator
+        idf = math.log((1 + total_docs) / (1 + doc_freq.get(word, 0))) + 1
+        score += token_counts[word] * idf
 
         if word in title_tokens:
-            score += BM25_METADATA_BOOST * idf
+            score += 4.0 * idf
+
+        if word in content_tokens:
+            score += 0.5 * idf
 
     return round(score, 4)
 
@@ -587,39 +635,42 @@ def _chunk_key(chunk: dict):
     )
 
 
-def _search_keyword_documents(question: str, limit: int, source_type_filter: str | None = None):
-    """Tìm các chunk liên quan bằng keyword/IDF, bổ sung tốt cho vector search."""
-    # Keyword/IDF search giữ vai trò bắt đúng tên riêng, mã văn bản, điều khoản.
-    results = []
-    expanded_question = apply_uneti_query_expansion(question)
-    chunks, doc_freq, total_docs = _load_document_index()
+def _search_bm25_documents(
+    question: str,
+    limit: int,
+    source_type_filter: str | None = None,
+):
+    """Search the in-memory document corpus with BM25 and metadata field boosts."""
+    chunks, _, _ = _load_document_index()
+    bm25 = _INDEX_CACHE.get("bm25")
+    query_tokens = _bm25_tokens(question)
+    if bm25 is None or not query_tokens:
+        return []
 
-    for chunk in chunks:
+    results = []
+    for chunk, score in zip(chunks, bm25.get_scores(query_tokens)):
         if source_type_filter and chunk.get("source_type") != source_type_filter:
             continue
+        if float(score) <= BM25_MIN_SCORE:
+            continue
 
-        score = score_chunk(
-            expanded_question,
-            f'{chunk.get("title", "")} {_metadata_search_text(chunk)}',
-            chunk.get("content", ""),
-            doc_freq=doc_freq,
-            total_docs=total_docs,
-            token_counts=chunk.get("_token_counts"),
-        )
+        clean_chunk = {
+            key: value
+            for key, value in chunk.items()
+            if not key.startswith("_")
+        }
+        clean_chunk["score"] = round(float(score), 6)
+        clean_chunk["keyword_score"] = round(float(score), 6)
+        clean_chunk["bm25_score"] = round(float(score), 6)
+        results.append(clean_chunk)
 
-        if score >= MIN_SEARCH_SCORE:
-            clean_chunk = {
-                key: value
-                for key, value in chunk.items()
-                if not key.startswith("_")
-            }
-            clean_chunk["score"] = score
-            clean_chunk["keyword_score"] = score
-            results.append(clean_chunk)
-
-    results.sort(key=lambda item: item["score"], reverse=True)
-
+    results.sort(key=lambda item: item["bm25_score"], reverse=True)
     return results[:limit]
+
+
+def _search_keyword_documents(question: str, limit: int, source_type_filter: str | None = None):
+    """Compatibility alias for the old keyword-search helper."""
+    return _search_bm25_documents(question, limit, source_type_filter)
 
 
 def _merge_with_rrf(result_sets: list[list[dict]], limit: int):
@@ -638,27 +689,17 @@ def _merge_with_rrf(result_sets: list[list[dict]], limit: int):
             )
             item["rrf_score"] += 1 / (RRF_K + rank)
 
-            if chunk.get("distance") is not None:
-                incoming_distance = float(chunk["distance"])
-                incoming_vector_score = chunk.get("vector_score")
-                if incoming_vector_score is None:
-                    incoming_vector_score = 1 - incoming_distance
+            if "distance" in chunk:
+                item["chunk"]["vector_score"] = chunk.get("score")
+                item["chunk"]["distance"] = chunk.get("distance")
 
-                current_vector_score = item["chunk"].get("vector_score")
-                if (
-                    current_vector_score is None
-                    or float(incoming_vector_score) > float(current_vector_score)
-                ):
-                    item["chunk"]["vector_score"] = float(incoming_vector_score)
-                    item["chunk"]["distance"] = incoming_distance
-
-            if chunk.get("keyword_score") is not None:
-                current_keyword_score = item["chunk"].get("keyword_score")
-                if (
-                    current_keyword_score is None
-                    or float(chunk["keyword_score"]) > float(current_keyword_score)
-                ):
-                    item["chunk"]["keyword_score"] = float(chunk["keyword_score"])
+            if "keyword_score" in chunk:
+                item["chunk"]["keyword_score"] = chunk.get("keyword_score")
+            if "bm25_score" in chunk:
+                item["chunk"]["bm25_score"] = chunk.get("bm25_score")
+            branches = set(item["chunk"].get("retrieval_branches") or [])
+            branches.update(chunk.get("retrieval_branches") or [])
+            item["chunk"]["retrieval_branches"] = sorted(branches)
 
     ranked = sorted(fused.values(), key=lambda item: item["rrf_score"], reverse=True)
     results = []
@@ -682,8 +723,11 @@ def _compact_debug_sources(results: list[dict], limit: int = 5) -> list[dict]:
             "score": item.get("score"),
             "vector_score": item.get("vector_score"),
             "keyword_score": item.get("keyword_score"),
+            "bm25_score": item.get("bm25_score"),
             "rrf_score": item.get("rrf_score"),
-            "cross_encoder_score": item.get("cross_encoder_score"),
+            "rerank_score": item.get("rerank_score"),
+            "retrieval_branches": item.get("retrieval_branches"),
+            "hyde_only": item.get("hyde_only"),
             "distance": item.get("distance"),
             "metadata_matched": item.get("metadata_matched"),
         }
@@ -691,235 +735,454 @@ def _compact_debug_sources(results: list[dict], limit: int = 5) -> list[dict]:
     ]
 
 
-def _result_confidence(result: dict) -> float:
-    score = result.get("vector_score")
-    if score is None:
-        score = result.get("score")
-
-    try:
-        return float(score or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _should_use_hybrid_rerank(question: str, vector_results: list[dict]) -> tuple[bool, str]:
-    if not vector_results:
-        return True, "no_vector_results"
-
-    if len(get_keywords(question)) <= RERANK_AMBIGUOUS_QUERY_KEYWORDS:
-        return True, "ambiguous_or_short_query"
-
-    top_score = _result_confidence(vector_results[0])
-    second_score = _result_confidence(vector_results[1]) if len(vector_results) > 1 else 0.0
-    score_gap = top_score - second_score
-
-    if top_score >= VECTOR_FAST_PATH_CONFIDENCE and score_gap >= VECTOR_FAST_PATH_SCORE_GAP:
-        return False, "top_vector_result_confident"
-
-    return True, "close_or_low_confidence_results"
-
-
-def _lexical_coverage(question: str, result: dict) -> float:
+def _probe_title_overlap(question: str, doc: dict) -> int:
     query_terms = set(get_keywords(question))
     if not query_terms:
-        return 0.0
-    source_terms = set(get_keywords(_chunk_search_text(result)))
-    return len(query_terms & source_terms) / len(query_terms)
+        return 0
+    searchable = normalize_text(
+        " ".join([
+            str(doc.get("title") or ""),
+            _metadata_search_text(doc),
+        ])
+    )
+    return sum(1 for term in query_terms if term in searchable)
 
 
-def _original_retrieval_is_strong(
+def _evaluate_probe_evidence(
     question: str,
-    metadata_results: list[dict],
-    vector_results: list[dict],
-    keyword_results: list[dict],
-) -> tuple[bool, str]:
-    if metadata_results:
-        return True, "metadata_match"
-    if vector_results:
-        top = _result_confidence(vector_results[0])
-        second = _result_confidence(vector_results[1]) if len(vector_results) > 1 else 0.0
-        if top >= VECTOR_FAST_PATH_CONFIDENCE and top - second >= VECTOR_FAST_PATH_SCORE_GAP:
-            return True, "strong_ann_result"
-    if keyword_results and _lexical_coverage(question, keyword_results[0]) >= 0.8:
-        return True, "strong_bm25_result"
-    return False, "weak_or_ambiguous_results"
+    bm25_results: list[dict],
+    ann_results: list[dict],
+    rrf_results: list[dict],
+) -> tuple[bool, dict]:
+    top_bm25 = max(
+        (float(item.get("bm25_score") or 0) for item in bm25_results),
+        default=0.0,
+    )
+    top_vector = max(
+        (
+            float(
+                item.get("vector_score")
+                if item.get("vector_score") is not None
+                else item.get("score") or 0
+            )
+            for item in ann_results
+        ),
+        default=0.0,
+    )
+    top_rrf = float(rrf_results[0].get("rrf_score") or 0) if rrf_results else 0.0
+    second_rrf = (
+        float(rrf_results[1].get("rrf_score") or 0)
+        if len(rrf_results) > 1
+        else 0.0
+    )
+    rrf_gap = top_rrf - second_rrf
+    title_overlap = max(
+        (_probe_title_overlap(question, item) for item in rrf_results[:PROBE_TOP_K]),
+        default=0,
+    )
 
-
-async def _run_retrieval_pair(query, metadata_filter, source_type_filter):
-    started = time.perf_counter()
-    ann_task = asyncio.to_thread(
-        search_similar_chunks,
-        query,
-        ANN_TOP_K,
-        metadata_filter if metadata_filter else None,
-    )
-    bm25_task = asyncio.to_thread(
-        _search_keyword_documents,
-        query,
-        BM25_TOP_K,
-        source_type_filter,
-    )
-    ann_outcome, bm25_outcome = await asyncio.gather(
-        ann_task, bm25_task, return_exceptions=True
-    )
-    ann_error = str(ann_outcome) if isinstance(ann_outcome, Exception) else None
-    bm25_error = str(bm25_outcome) if isinstance(bm25_outcome, Exception) else None
-    return {
-        "query": query,
-        "ann": [] if ann_error else ann_outcome,
-        "bm25": [] if bm25_error else bm25_outcome,
-        "ann_error": ann_error,
-        "bm25_error": bm25_error,
-        "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+    signals = {
+        "bm25_passed": top_bm25 >= PROBE_BM25_MIN_SCORE,
+        "vector_passed": top_vector >= PROBE_VECTOR_MIN_SCORE,
+        "rrf_passed": top_rrf >= PROBE_RRF_MIN_SCORE,
+        "rrf_gap_passed": rrf_gap >= PROBE_RRF_SCORE_GAP,
+        "title_overlap_passed": title_overlap >= PROBE_MIN_TITLE_OVERLAP,
     }
+    signal_count = sum(1 for passed in signals.values() if passed)
+    strong_vector_anchor = top_vector >= min(0.95, PROBE_VECTOR_MIN_SCORE + 0.12)
+    has_lexical_or_strong_semantic_anchor = (
+        signals["bm25_passed"]
+        or signals["title_overlap_passed"]
+        or strong_vector_anchor
+    )
+    has_evidence = (
+        bool(rrf_results)
+        and signal_count >= PROBE_MIN_EVIDENCE_SIGNALS
+        and has_lexical_or_strong_semantic_anchor
+    )
+    debug = {
+        "attempted": True,
+        "has_confident_evidence": has_evidence,
+        "decision": "grounded_hyde" if has_evidence else "clarification_needed",
+        "top_bm25_score": round(top_bm25, 6),
+        "top_vector_score": round(top_vector, 6),
+        "top_rrf_score": round(top_rrf, 6),
+        "rrf_score_gap": round(rrf_gap, 6),
+        "title_metadata_overlap": title_overlap,
+        "signal_count": signal_count,
+        "required_signal_count": PROBE_MIN_EVIDENCE_SIGNALS,
+        "strong_vector_anchor": strong_vector_anchor,
+        "signals": signals,
+        "thresholds": {
+            "bm25": PROBE_BM25_MIN_SCORE,
+            "vector": PROBE_VECTOR_MIN_SCORE,
+            "rrf": PROBE_RRF_MIN_SCORE,
+            "rrf_gap": PROBE_RRF_SCORE_GAP,
+            "title_overlap": PROBE_MIN_TITLE_OVERLAP,
+        },
+        "evidence_sources": _compact_debug_sources(
+            rrf_results,
+            limit=PROBE_EVIDENCE_TOP_K,
+        ),
+    }
+    return has_evidence, debug
 
 
 async def search_documents(
     question: str,
     debug: dict | None = None,
     source_type_filter: str | None = None,
+    ambiguity_decision: dict | None = None,
 ):
-    """Hybrid retrieval: query expansion -> BM25 + ANN -> RRF -> cross-encoder."""
+    """Run query expansion, BM25, Chroma ANN, RRF and cross-encoder reranking."""
+    ambiguity_decision = ambiguity_decision or {
+        "action": DIRECT_RETRIEVAL,
+        "topic": None,
+        "confidence": 1.0,
+        "reason": "retrieval_default_direct",
+        "clarifying_question": None,
+    }
+    ambiguity_action = ambiguity_decision.get("action", DIRECT_RETRIEVAL)
     signature = _current_document_signature()
-    cache_key = _search_cache_key(question, source_type_filter, signature)
+    cache_key = _search_cache_key(
+        question,
+        source_type_filter,
+        signature,
+        ambiguity_action,
+    )
     cached_results = _get_search_cache(cache_key)
     if cached_results is not None:
         if debug is not None:
+            probe_cache_hit = ambiguity_action == PROBE_RETRIEVAL
             debug.update({
                 "cache_hit": True,
+                "ambiguity": ambiguity_decision,
                 "source_type_filter": source_type_filter,
+                "probe_retrieval": {
+                    "attempted": False,
+                    "has_confident_evidence": bool(cached_results),
+                    "decision": (
+                        "cached_results_reused"
+                        if cached_results
+                        else "clarification_needed"
+                    ),
+                    "cache_hit": True,
+                } if probe_cache_hit else {
+                    "attempted": False,
+                    "decision": "not_requested",
+                    "cache_hit": True,
+                },
+                "grounded_hyde": {
+                    "attempted": False,
+                    "status": "cached_retrieval_reused",
+                    "cache_hit": True,
+                },
+                "rrf_results": _compact_debug_sources(cached_results),
+                "reranking": {"reason": "cached_retrieval_reused"},
                 "final_results_count": len(cached_results),
                 "final_sources": _compact_debug_sources(cached_results),
+                "fallback_reason": (
+                    "probe_insufficient_evidence"
+                    if probe_cache_hit and not cached_results
+                    else None
+                ),
                 "skipped_files": deepcopy(_INDEX_CACHE.get("skipped_files", [])),
             })
         return cached_results
 
-    total_started = time.perf_counter()
-    timings = {}
     candidate_limit = max(RRF_CANDIDATE_TOP_K, SEARCH_TOP_K)
-    step_started = time.perf_counter()
-    metadata_results, metadata_constraints = _search_metadata_documents(question, candidate_limit)
-    timings["metadata_ms"] = round((time.perf_counter() - step_started) * 1000, 3)
-    vector_constraints = metadata_constraints if metadata_results else {}
-    metadata_filter = _metadata_filter_from_constraints(vector_constraints, source_type_filter)
+    metadata_results, metadata_constraints = _search_metadata_documents(
+        question, candidate_limit
+    )
 
-    original_pair = await _run_retrieval_pair(question, metadata_filter, source_type_filter)
-    vector_result_sets = [original_pair["ann"]] if original_pair["ann"] else []
-    bm25_result_sets = [original_pair["bm25"]] if original_pair["bm25"] else []
-    vector_errors = (
-        [{"query": question, "error": original_pair["ann_error"]}]
-        if original_pair["ann_error"] else []
-    )
-    bm25_errors = (
-        [{"query": question, "error": original_pair["bm25_error"]}]
-        if original_pair["bm25_error"] else []
-    )
-    timings["original_parallel_retrieval_ms"] = original_pair["duration_ms"]
-    strong, adaptive_reason = _original_retrieval_is_strong(
-        question, metadata_results, original_pair["ann"], original_pair["bm25"]
-    )
-    expansion_started = time.perf_counter()
-    if strong:
-        queries = [question]
-        expansion_debug = {
-            "enabled": True,
-            "used": False,
-            "reason": f"adaptive_skip:{adaptive_reason}",
-            "queries": queries,
-            "error": None,
-        }
-    else:
-        queries, expansion_debug = await asyncio.to_thread(expand_query, question)
-    timings["query_expansion_ms"] = round(
-        (time.perf_counter() - expansion_started) * 1000, 3
-    )
-    expanded_pair_timings = []
-    if len(queries) > 1:
-        outcomes = await asyncio.gather(*[
-            _run_retrieval_pair(query, metadata_filter, source_type_filter)
-            for query in queries[1:]
-        ])
-        for outcome in outcomes:
-            expanded_pair_timings.append({
-                "query": outcome["query"],
-                "duration_ms": outcome["duration_ms"],
-            })
-            if outcome["ann"]:
-                vector_result_sets.append(outcome["ann"])
-            if outcome["bm25"]:
-                bm25_result_sets.append(outcome["bm25"])
-            if outcome["ann_error"]:
-                vector_errors.append({"query": outcome["query"], "error": outcome["ann_error"]})
-            if outcome["bm25_error"]:
-                bm25_errors.append({"query": outcome["query"], "error": outcome["bm25_error"]})
-    timings["expanded_parallel_retrieval"] = expanded_pair_timings
-
-    rrf_started = time.perf_counter()
-    vector_results = (
-        _merge_with_rrf(vector_result_sets, candidate_limit)
-        if vector_result_sets else []
-    )
-    keyword_results = (
-        _merge_with_rrf(bm25_result_sets, candidate_limit)
-        if bm25_result_sets else []
-    )
-    result_sets = [items for items in (metadata_results, vector_results, keyword_results) if items]
-
-    if not result_sets:
-        _set_search_cache(cache_key, [])
+    # Exact document-number requests must never fall through to a different document.
+    if metadata_constraints.get("so_van_ban") and not metadata_results:
+        final_results = []
+        _set_search_cache(cache_key, final_results)
         if debug is not None:
             debug.update({
                 "cache_hit": False,
                 "metadata_constraints": metadata_constraints,
                 "source_type_filter": source_type_filter,
-                "metadata_results_count": len(metadata_results),
-                "vector_results_count": len(vector_results),
-                "keyword_results_count": len(keyword_results),
-                "expanded_queries": expansion_debug,
-                "vector_errors": vector_errors,
-                "bm25_errors": bm25_errors,
-                "metadata_sources": _compact_debug_sources(metadata_results),
-                "vector_sources": _compact_debug_sources(vector_results),
-                "keyword_sources": _compact_debug_sources(keyword_results),
+                "metadata_results_count": 0,
+                "expanded_queries": [question],
+                "expansion": {
+                    "attempted": False,
+                    "reason": "exact_document_number_not_found",
+                },
+                "bm25_results": [],
+                "bm25_errors": [],
+                "ann_results": [],
+                "rrf_results": [],
+                "reranking": {"reason": "no_exact_document"},
                 "final_results_count": 0,
                 "final_sources": [],
                 "skipped_files": deepcopy(_INDEX_CACHE.get("skipped_files", [])),
             })
+        return final_results
+
+    if ambiguity_action == CLARIFICATION_NEEDED:
+        if debug is not None:
+            debug.update({
+                "cache_hit": False,
+                "ambiguity": ambiguity_decision,
+                "fallback_reason": "clarification_needed_before_retrieval",
+                "final_results_count": 0,
+                "final_sources": [],
+            })
         return []
 
-    rrf_results = _merge_with_rrf(result_sets, candidate_limit)
-    timings["rrf_ms"] = round((time.perf_counter() - rrf_started) * 1000, 3)
-    should_rerank, rerank_reason = _should_use_hybrid_rerank(question, vector_results)
-    if metadata_results:
-        should_rerank, rerank_reason = False, "metadata_match"
-    elif keyword_results and _lexical_coverage(question, keyword_results[0]) >= 0.8:
-        should_rerank, rerank_reason = False, "strong_bm25_coverage"
-    rerank_started = time.perf_counter()
-    if should_rerank:
-        results, rerank_debug = await asyncio.to_thread(
-            rerank_chunks, question, rrf_results
+    metadata_filter = _metadata_filter_from_constraints(
+        metadata_constraints if metadata_results else {},
+        source_type_filter,
+    )
+    for doc in metadata_results:
+        doc["retrieval_branches"] = ["metadata"]
+    result_sets = [metadata_results] if metadata_results else []
+    bm25_debug = []
+    bm25_errors = []
+    ann_debug = []
+    vector_errors = []
+    probe_debug = {
+        "attempted": False,
+        "has_confident_evidence": None,
+        "decision": "not_requested",
+    }
+    hyde_result = {
+        "text": "",
+        "attempted": False,
+        "status": "not_requested",
+        "text_hash": None,
+        "char_count": 0,
+        "word_count": 0,
+        "error": None,
+        "cache_hit": False,
+    }
+    grounded_hyde_result = {
+        "text": "",
+        "attempted": False,
+        "status": "not_requested",
+        "text_hash": None,
+        "char_count": 0,
+        "word_count": 0,
+        "error": None,
+        "cache_hit": False,
+    }
+    if ambiguity_action == HYDE_RETRIEVAL:
+        hyde_result = generate_hyde_document(question)
+        if hyde_result.get("status") == "need_clarification":
+            if debug is not None:
+                debug.update({
+                    "cache_hit": False,
+                    "ambiguity": ambiguity_decision,
+                    "hyde": {
+                        key: value
+                        for key, value in hyde_result.items()
+                        if key != "text"
+                    },
+                    "fallback_reason": "hyde_requested_clarification",
+                    "final_results_count": 0,
+                    "final_sources": [],
+                })
+            return []
+
+    bm25_results = []
+    bm25_error = None
+    try:
+        bm25_results = _search_bm25_documents(
+            question,
+            min(BM25_TOP_K, candidate_limit),
+            source_type_filter,
         )
-        for result in results:
-            result["reranked"] = True
+    except Exception as exc:
+        bm25_error = str(exc)
+        bm25_errors.append({"query": question, "error": bm25_error})
+    for doc in bm25_results:
+        doc["retrieval_branches"] = ["bm25_original"]
+    if bm25_results:
+        result_sets.append(bm25_results)
+    bm25_debug.append({
+        "query": question,
+        "error": bm25_error,
+        "results": _compact_debug_sources(bm25_results, limit=BM25_TOP_K),
+    })
+
+    ann_original = []
+    ann_original_error = None
+    try:
+        ann_original = search_similar_chunks(
+            question,
+            top_k=min(ANN_TOP_K, candidate_limit),
+            metadata_filter=metadata_filter if metadata_filter else None,
+        )
+    except Exception as exc:
+        ann_original_error = str(exc)
+        vector_errors.append({"branch": "ann_original", "error": ann_original_error})
+    for doc in ann_original:
+        doc["retrieval_branches"] = ["ann_original"]
+    if ann_original:
+        result_sets.append(ann_original)
+    ann_debug.append({
+        "branch": "ann_original",
+        "error": ann_original_error,
+        "results": _compact_debug_sources(ann_original, limit=ANN_TOP_K),
+    })
+
+    ann_hyde = []
+    ann_grounded_hyde = []
+    fallback_reason = None
+
+    if ambiguity_action == PROBE_RETRIEVAL:
+        probe_result_sets = [
+            result_set
+            for result_set in (bm25_results, ann_original)
+            if result_set
+        ]
+        probe_rrf_results = (
+            _merge_with_rrf(probe_result_sets, PROBE_TOP_K)
+            if probe_result_sets
+            else []
+        )
+        has_probe_evidence, probe_debug = _evaluate_probe_evidence(
+            question,
+            bm25_results,
+            ann_original,
+            probe_rrf_results,
+        )
+        if not has_probe_evidence:
+            final_results = []
+            _set_search_cache(cache_key, final_results)
+            if debug is not None:
+                debug.update({
+                    "cache_hit": False,
+                    "metadata_constraints": metadata_constraints,
+                    "source_type_filter": source_type_filter,
+                    "metadata_results_count": len(metadata_results),
+                    "ambiguity": ambiguity_decision,
+                    "probe_retrieval": probe_debug,
+                    "grounded_hyde": {
+                        key: value
+                        for key, value in grounded_hyde_result.items()
+                        if key != "text"
+                    },
+                    "bm25_results": bm25_debug,
+                    "bm25_errors": bm25_errors,
+                    "ann_results": ann_debug,
+                    "bm25_original_results": bm25_debug,
+                    "ann_original_results": _compact_debug_sources(
+                        ann_original,
+                        limit=ANN_TOP_K,
+                    ),
+                    "ann_grounded_hyde_results": [],
+                    "vector_errors": vector_errors,
+                    "rrf_results": _compact_debug_sources(
+                        probe_rrf_results,
+                        limit=PROBE_TOP_K,
+                    ),
+                    "reranking": {"reason": "probe_insufficient_evidence"},
+                    "final_results_count": 0,
+                    "final_sources": [],
+                    "fallback_reason": "probe_insufficient_evidence",
+                    "skipped_files": deepcopy(_INDEX_CACHE.get("skipped_files", [])),
+                })
+            return []
+
+        grounding_docs = probe_rrf_results[:PROBE_EVIDENCE_TOP_K]
+        grounded_hyde_result = generate_grounded_hyde_document(
+            question,
+            grounding_docs,
+        )
+        grounded_text = grounded_hyde_result.get("text") or ""
+        if grounded_text:
+            grounded_error = None
+            try:
+                ann_grounded_hyde = search_similar_chunks(
+                    grounded_text,
+                    top_k=min(GROUNDED_HYDE_ANN_TOP_K, candidate_limit),
+                    metadata_filter=metadata_filter if metadata_filter else None,
+                )
+            except Exception as exc:
+                grounded_error = str(exc)
+                fallback_reason = "grounded_hyde_ann_error_original_retrieval"
+                vector_errors.append({
+                    "branch": "ann_grounded_hyde",
+                    "error": grounded_error,
+                })
+            for doc in ann_grounded_hyde:
+                doc["retrieval_branches"] = ["ann_grounded_hyde"]
+            if ann_grounded_hyde:
+                result_sets.append(ann_grounded_hyde)
+            ann_debug.append({
+                "branch": "ann_grounded_hyde",
+                "error": grounded_error,
+                "results": _compact_debug_sources(
+                    ann_grounded_hyde,
+                    limit=GROUNDED_HYDE_ANN_TOP_K,
+                ),
+            })
+        elif grounded_hyde_result.get("status") in {
+            "error_direct_fallback",
+            "need_clarification",
+            "disabled",
+            "no_grounding_evidence",
+            "ungrounded_output_rejected",
+        }:
+            fallback_reason = "grounded_hyde_error_original_retrieval"
+
+    if ambiguity_action == HYDE_RETRIEVAL:
+        hyde_text = hyde_result.get("text") or ""
+        if hyde_text:
+            hyde_error = None
+            try:
+                from app.core.config import HYDE_ANN_TOP_K
+
+                ann_hyde = search_similar_chunks(
+                    hyde_text,
+                    top_k=min(HYDE_ANN_TOP_K, candidate_limit),
+                    metadata_filter=metadata_filter if metadata_filter else None,
+                )
+            except Exception as exc:
+                hyde_error = str(exc)
+                vector_errors.append({"branch": "ann_hyde", "error": hyde_error})
+            for doc in ann_hyde:
+                doc["retrieval_branches"] = ["ann_hyde"]
+            if ann_hyde:
+                result_sets.append(ann_hyde)
+            ann_debug.append({
+                "branch": "ann_hyde",
+                "error": hyde_error,
+                "results": _compact_debug_sources(ann_hyde, limit=ANN_TOP_K),
+            })
+
+    if result_sets:
+        rrf_results = _merge_with_rrf(result_sets, candidate_limit)
+        if metadata_results:
+            metadata_keys = {_chunk_key(chunk) for chunk in metadata_results}
+            rrf_results.sort(
+                key=lambda item: (
+                    _chunk_key(item) in metadata_keys,
+                    item.get("document_number_match_strength", 0),
+                    item.get("metadata_score", 0),
+                    item.get("rrf_score", 0),
+                ),
+                reverse=True,
+            )
+        final_results, rerank_debug = rerank_documents(
+            question,
+            rrf_results,
+            final_top_k=min(CROSS_ENCODER_FINAL_TOP_K, SEARCH_TOP_K),
+        )
+        for doc in final_results:
+            branches = set(doc.get("retrieval_branches") or [])
+            doc["hyde_only"] = branches in (
+                {"ann_hyde"},
+                {"ann_grounded_hyde"},
+            )
     else:
-        results = rrf_results
-        rerank_debug = {"used": False, "reason": rerank_reason}
-    timings["cross_encoder_ms"] = round((time.perf_counter() - rerank_started) * 1000, 3)
+        rrf_results = []
+        final_results = []
+        rerank_debug = {"reason": "no_candidates"}
 
-    if metadata_results:
-        metadata_keys = {_chunk_key(chunk) for chunk in metadata_results}
-        results.sort(
-            key=lambda item: (
-                _chunk_key(item) in metadata_keys,
-                item.get("document_number_match_strength", 0),
-                item.get("metadata_score", 0),
-                item.get("keyword_score", 0) or 0,
-                item.get("score", 0) or 0,
-            ),
-            reverse=True,
-        )
-
-    final_results = results[:SEARCH_TOP_K]
     _set_search_cache(cache_key, final_results)
 
     if debug is not None:
@@ -928,25 +1191,48 @@ async def search_documents(
             "metadata_constraints": metadata_constraints,
             "source_type_filter": source_type_filter,
             "metadata_results_count": len(metadata_results),
-            "vector_results_count": len(vector_results),
-            "keyword_results_count": len(keyword_results),
-            "bm25_results_count": len(keyword_results),
-            "ann_results_count": len(vector_results),
-            "rrf_results_count": len(rrf_results),
-            "expanded_queries": expansion_debug,
-            "vector_errors": vector_errors,
-            "bm25_errors": bm25_errors,
-            "reranking": rerank_debug,
-            "timings": {
-                **timings,
-                "total_retrieval_ms": round((time.perf_counter() - total_started) * 1000, 3),
+            "ambiguity": ambiguity_decision,
+            "probe_retrieval": probe_debug,
+            "expanded_queries": [question],
+            "expansion": {
+                "attempted": False,
+                "reason": "replaced_by_ambiguity_hyde",
             },
+            "hyde": {
+                key: value
+                for key, value in hyde_result.items()
+                if key != "text"
+            },
+            "grounded_hyde": {
+                key: value
+                for key, value in grounded_hyde_result.items()
+                if key != "text"
+            },
+            "bm25_results": bm25_debug,
+            "bm25_errors": bm25_errors,
+            "ann_results": ann_debug,
+            "bm25_original_results": bm25_debug,
+            "ann_original_results": _compact_debug_sources(
+                ann_original, limit=ANN_TOP_K
+            ),
+            "ann_hyde_results": _compact_debug_sources(
+                ann_hyde, limit=ANN_TOP_K
+            ),
+            "ann_grounded_hyde_results": _compact_debug_sources(
+                ann_grounded_hyde,
+                limit=GROUNDED_HYDE_ANN_TOP_K,
+            ),
+            "vector_errors": vector_errors,
+            "rrf_results": _compact_debug_sources(rrf_results, limit=candidate_limit),
+            "reranking": rerank_debug,
             "metadata_sources": _compact_debug_sources(metadata_results),
-            "vector_sources": _compact_debug_sources(vector_results),
-            "keyword_sources": _compact_debug_sources(keyword_results),
-            "rrf_sources": _compact_debug_sources(rrf_results),
             "final_results_count": len(final_results),
             "final_sources": _compact_debug_sources(final_results),
+            "fallback_reason": fallback_reason or (
+                "hyde_error_direct_retrieval"
+                if hyde_result.get("status") == "error_direct_fallback"
+                else None
+            ),
             "skipped_files": deepcopy(_INDEX_CACHE.get("skipped_files", [])),
         })
 

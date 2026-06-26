@@ -5,12 +5,17 @@ import time
 from fastapi import HTTPException
 
 from app.core.config import (
+    HYDE_MIN_RERANK_SCORE,
     MIN_SEARCH_SCORE,
     MIN_VECTOR_CONFIDENCE,
     SHORT_QUERY_MIN_SEARCH_SCORE,
     SHORT_QUERY_MIN_VECTOR_CONFIDENCE,
 )
 from app.data.elasticsearch_client import get_keywords, normalize_text, search_documents
+from app.data.ambiguity_analyzer import (
+    CLARIFICATION_NEEDED,
+    analyze_ambiguity,
+)
 from app.data.langchain_pipeline import (
     generate_answer,
     retrieve_business,
@@ -321,6 +326,11 @@ def _has_confident_evidence(question: str, docs) -> tuple[bool, str]:
     )
 
     for doc in docs:
+        if doc.get("hyde_only"):
+            rerank_score = doc.get("rerank_score")
+            if rerank_score is None or float(rerank_score) < HYDE_MIN_RERANK_SCORE:
+                continue
+
         if doc.get("metadata_matched"):
             return True, "metadata_matched"
 
@@ -353,12 +363,68 @@ def _pipeline_state(
     question: str,
     reason: str,
     prompt_type: str = "document",
+    ambiguity_decision: dict | None = None,
 ) -> dict:
     return {
         "question": question,
         "reason": reason,
         "prompt_type": prompt_type,
+        "ambiguity_decision": ambiguity_decision,
         "trace_callback": trace.add_step,
+    }
+
+
+def _analyze_retrieval_question(trace: RagTrace, question: str) -> dict:
+    decision = analyze_ambiguity(question).to_dict()
+    trace.add_step("ambiguity_detection", {
+        "ambiguity_action": decision.get("action"),
+        "detected_topic": decision.get("topic"),
+        "ambiguity_confidence": decision.get("confidence"),
+        "ambiguity_reason": decision.get("reason"),
+        "clarification_question": decision.get("clarifying_question"),
+        "analyzer": decision.get("analyzer"),
+        "cache_hit": decision.get("cache_hit"),
+    })
+    return decision
+
+
+def _clarification_response(
+    trace: RagTrace,
+    question: str,
+    decision: dict,
+    retrieval_called: bool = False,
+):
+    trace.add_step("route_decision", {
+        "llm_called": False,
+        "retrieval_called": retrieval_called,
+        "reason": decision.get("reason") or "clarification_needed",
+    })
+    return _finalize(trace, {
+        "question": question,
+        "answer": "Bạn cần hỏi rõ ràng hơn",
+        "source": None,
+        "sources": [],
+        "intent": CLARIFICATION_NEEDED,
+    })
+
+
+def _retrieval_clarification_decision(state: dict) -> dict | None:
+    retrieval_debug = state.get("retrieval_debug") or {}
+    fallback_reason = retrieval_debug.get("fallback_reason")
+    if fallback_reason not in {
+        "hyde_requested_clarification",
+        "probe_insufficient_evidence",
+    }:
+        return None
+    ambiguity = retrieval_debug.get("ambiguity") or {}
+    return {
+        **ambiguity,
+        "action": CLARIFICATION_NEEDED,
+        "reason": fallback_reason,
+        "clarifying_question": (
+            ambiguity.get("clarifying_question")
+            or "Bạn cần hỏi rõ ràng hơn"
+        ),
     }
 
 
@@ -439,12 +505,34 @@ async def _search_website_and_finalize(trace: RagTrace, question: str, intent: s
     })
 
 
-async def _answer_with_internal_documents(trace: RagTrace, question: str, intent: str, reason: str):
-    state = await retrieve_internal(_pipeline_state(trace, question, reason))
+async def _answer_with_internal_documents(
+    trace: RagTrace,
+    question: str,
+    intent: str,
+    reason: str,
+    ambiguity_decision: dict | None = None,
+):
+    state = await retrieve_internal(
+        _pipeline_state(
+            trace,
+            question,
+            reason,
+            ambiguity_decision=ambiguity_decision,
+        )
+    )
+    retrieval_clarification = _retrieval_clarification_decision(state)
+    if retrieval_clarification:
+        return _clarification_response(
+            trace,
+            question,
+            retrieval_clarification,
+            retrieval_called=True,
+        )
     docs = state.get("docs") or []
 
     has_evidence, evidence_reason = _has_confident_evidence(question, docs)
     trace.add_step("evidence_check", {
+        "evidence_decision": "pass" if has_evidence else "reject",
         "has_confident_evidence": has_evidence,
         "reason": evidence_reason,
         "query_keyword_count": len(get_keywords(question)),
@@ -481,6 +569,9 @@ async def _answer_with_business_documents(trace: RagTrace, question: str, intent
 
     has_business_evidence, business_evidence_reason = _has_confident_evidence(question, business_docs)
     trace.add_step("business_evidence_check", {
+        "evidence_decision": (
+            "pass" if has_business_evidence else "reject"
+        ),
         "has_confident_evidence": has_business_evidence,
         "reason": business_evidence_reason,
         "query_keyword_count": len(get_keywords(question)),
@@ -516,8 +607,14 @@ async def _answer_with_aggregate_documents(
     question: str,
     intent: str,
     reason: str,
+    ambiguity_decision: dict | None = None,
 ):
-    base_state = _pipeline_state(trace, question, reason)
+    base_state = _pipeline_state(
+        trace,
+        question,
+        reason,
+        ambiguity_decision=ambiguity_decision,
+    )
     business_state, internal_state = await asyncio.gather(
         retrieve_business(dict(base_state)),
         retrieve_internal(dict(base_state)),
@@ -529,7 +626,18 @@ async def _answer_with_aggregate_documents(
     usable_internal, rejected_internal = _filter_usable_sources(question, internal_docs)
     business_has_evidence, business_reason = _has_confident_evidence(question, usable_business)
     internal_has_evidence, internal_reason = _has_confident_evidence(question, usable_internal)
+    retrieval_clarification = _retrieval_clarification_decision(internal_state)
+    if retrieval_clarification and not business_has_evidence:
+        return _clarification_response(
+            trace,
+            question,
+            retrieval_clarification,
+            retrieval_called=True,
+        )
     trace.add_step("lcel_aggregate_evidence", {
+        "evidence_decision": (
+            "pass" if business_has_evidence or internal_has_evidence else "reject"
+        ),
         "business_has_evidence": business_has_evidence,
         "business_reason": business_reason,
         "internal_has_evidence": internal_has_evidence,
@@ -635,11 +743,16 @@ async def handle_internal_chat(request):
     if not question:
         return _empty_question_response(trace, request.question)
 
+    decision = _analyze_retrieval_question(trace, question)
+    if decision["action"] == CLARIFICATION_NEEDED:
+        return _clarification_response(trace, question, decision)
+
     return await _answer_with_internal_documents(
         trace,
         question,
         QueryIntent.INTERNAL_DOCUMENT.value,
         "explicit_internal_endpoint",
+        decision,
     )
 
 
@@ -654,6 +767,10 @@ async def handle_business_chat(request):
 
     if not question:
         return _empty_question_response(trace, request.question)
+
+    decision = _analyze_retrieval_question(trace, question)
+    if decision["action"] == CLARIFICATION_NEEDED:
+        return _clarification_response(trace, question, decision)
 
     return await _answer_with_business_documents(
         trace,
@@ -742,11 +859,16 @@ async def handle_chat(request):
             "document_number_query",
         )
 
+    decision = _analyze_retrieval_question(trace, question)
+    if decision["action"] == CLARIFICATION_NEEDED:
+        return _clarification_response(trace, question, decision)
+
     return await _answer_with_aggregate_documents(
         trace,
         question,
         analysis.intent.value,
         analysis.reason,
+        decision,
     )
 
 

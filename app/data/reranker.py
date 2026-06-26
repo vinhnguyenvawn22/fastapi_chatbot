@@ -3,10 +3,12 @@ from collections import OrderedDict
 from functools import lru_cache
 
 from app.core.config import (
-    CROSS_ENCODER_ENABLED,
     CROSS_ENCODER_CACHE_MAX_ITEMS,
     CROSS_ENCODER_CACHE_TTL_SECONDS,
+    CROSS_ENCODER_ENABLED,
+    CROSS_ENCODER_FINAL_TOP_K,
     CROSS_ENCODER_MAX_LENGTH,
+    CROSS_ENCODER_MIN_SCORE,
     CROSS_ENCODER_MODEL,
     CROSS_ENCODER_TOP_N,
 )
@@ -24,7 +26,10 @@ def clear_rerank_cache():
 def get_cross_encoder():
     from sentence_transformers import CrossEncoder
 
-    return CrossEncoder(CROSS_ENCODER_MODEL, max_length=CROSS_ENCODER_MAX_LENGTH)
+    return CrossEncoder(
+        CROSS_ENCODER_MODEL,
+        max_length=CROSS_ENCODER_MAX_LENGTH,
+    )
 
 
 def _rerank_text(chunk: dict) -> str:
@@ -35,10 +40,17 @@ def _rerank_text(chunk: dict) -> str:
             chunk.get("ten_van_ban"),
             chunk.get("so_van_ban"),
             chunk.get("phong_ban"),
+            chunk.get("don_vi_ban_hanh"),
+            chunk.get("dieu"),
+            chunk.get("muc"),
             chunk.get("content"),
         )
         if value
     )
+
+
+def _passage_text(doc: dict) -> str:
+    return _rerank_text(doc)
 
 
 def _chunk_cache_key(chunk: dict):
@@ -111,3 +123,76 @@ def rerank_chunks(question: str, chunks: list[dict]) -> tuple[list[dict], dict]:
     except Exception as exc:
         debug.update({"reason": "model_error", "error": str(exc)})
         return candidates + tail, debug
+
+
+def rerank_documents(
+    question: str,
+    docs: list[dict],
+    final_top_k: int | None = None,
+) -> tuple[list[dict], dict]:
+    final_top_k = final_top_k or CROSS_ENCODER_FINAL_TOP_K
+    candidates = [dict(doc) for doc in docs[:CROSS_ENCODER_TOP_N]]
+    debug = {
+        "enabled": CROSS_ENCODER_ENABLED,
+        "model": CROSS_ENCODER_MODEL,
+        "candidate_count": len(candidates),
+        "error": None,
+    }
+
+    if not candidates:
+        debug["reason"] = "no_candidates"
+        return [], debug
+
+    if not CROSS_ENCODER_ENABLED:
+        debug["reason"] = "disabled_rrf_fallback"
+        return candidates[:final_top_k], debug
+
+    try:
+        query_key = normalize_text(question)
+        missing = []
+        for doc in candidates:
+            cache_key = (query_key, _chunk_cache_key(doc), CROSS_ENCODER_MODEL)
+            cached_score = _get_cached_score(cache_key)
+            if cached_score is None:
+                missing.append((doc, cache_key))
+            else:
+                doc["rerank_score"] = round(float(cached_score), 6)
+
+        if missing:
+            pairs = [(question, _passage_text(doc)) for doc, _ in missing]
+            scores = get_cross_encoder().predict(pairs)
+            for (doc, cache_key), score in zip(missing, scores):
+                doc["rerank_score"] = round(float(score), 6)
+                _set_cached_score(cache_key, score)
+
+        candidates.sort(
+            key=lambda item: (
+                item.get("metadata_matched", False),
+                item.get("rerank_score", float("-inf")),
+                item.get("rrf_score", 0),
+            ),
+            reverse=True,
+        )
+        filtered = [
+            doc
+            for doc in candidates
+            if doc.get("metadata_matched")
+            or float(doc.get("rerank_score", float("-inf"))) >= CROSS_ENCODER_MIN_SCORE
+        ]
+        debug["reason"] = "cross_encoder_success"
+        debug["scores"] = [
+            {
+                "doc_name": doc.get("doc_name"),
+                "title": doc.get("title"),
+                "chunk_index": doc.get("chunk_index"),
+                "rerank_score": doc.get("rerank_score"),
+            }
+            for doc in candidates
+        ]
+        debug["cache_hits"] = len(candidates) - len(missing)
+        debug["model_scored"] = len(missing)
+        return filtered[:final_top_k], debug
+    except Exception as exc:
+        debug["reason"] = "cross_encoder_error_rrf_fallback"
+        debug["error"] = str(exc)
+        return candidates[:final_top_k], debug

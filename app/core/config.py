@@ -15,31 +15,21 @@ MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "20"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1200"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 SEARCH_TOP_K = int(os.getenv("SEARCH_TOP_K", "5"))
-BM25_TOP_K = int(os.getenv("BM25_TOP_K", "12"))
-ANN_TOP_K = int(os.getenv("ANN_TOP_K", "12"))
-RRF_CANDIDATE_TOP_K = int(os.getenv("RRF_CANDIDATE_TOP_K", "20"))
-RRF_K = int(os.getenv("RRF_K", "60"))
+RRF_CANDIDATE_TOP_K = int(
+    os.getenv(
+        "RRF_CANDIDATE_TOP_K",
+        os.getenv("HYBRID_CANDIDATE_TOP_K", "30"),
+    )
+)
+# Backward-compatible alias for deployments that still import the old name.
+HYBRID_CANDIDATE_TOP_K = RRF_CANDIDATE_TOP_K
+BM25_TOP_K = int(os.getenv("BM25_TOP_K", "20"))
+BM25_MIN_SCORE = float(os.getenv("BM25_MIN_SCORE", "0"))
 BM25_K1 = float(os.getenv("BM25_K1", "1.5"))
 BM25_B = float(os.getenv("BM25_B", "0.75"))
 BM25_METADATA_BOOST = float(os.getenv("BM25_METADATA_BOOST", "2.0"))
-QUERY_EXPANSION_ENABLED = os.getenv("QUERY_EXPANSION_ENABLED", "true").lower() in {"1", "true", "yes"}
-QUERY_EXPANSION_MAX_VARIANTS = int(os.getenv("QUERY_EXPANSION_MAX_VARIANTS", "3"))
-QUERY_EXPANSION_MAX_WORDS = int(os.getenv("QUERY_EXPANSION_MAX_WORDS", "6"))
-QUERY_EXPANSION_CACHE_TTL_SECONDS = int(os.getenv("QUERY_EXPANSION_CACHE_TTL_SECONDS", "1800"))
-QUERY_EXPANSION_CACHE_MAX_ITEMS = int(os.getenv("QUERY_EXPANSION_CACHE_MAX_ITEMS", "256"))
-CROSS_ENCODER_ENABLED = os.getenv("CROSS_ENCODER_ENABLED", "true").lower() in {"1", "true", "yes"}
-CROSS_ENCODER_MODEL = os.getenv(
-    "CROSS_ENCODER_MODEL",
-    "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
-)
-CROSS_ENCODER_TOP_N = int(os.getenv("CROSS_ENCODER_TOP_N", "10"))
-CROSS_ENCODER_MAX_LENGTH = int(os.getenv("CROSS_ENCODER_MAX_LENGTH", "512"))
-CROSS_ENCODER_CACHE_TTL_SECONDS = int(os.getenv("CROSS_ENCODER_CACHE_TTL_SECONDS", "1800"))
-CROSS_ENCODER_CACHE_MAX_ITEMS = int(os.getenv("CROSS_ENCODER_CACHE_MAX_ITEMS", "2048"))
-CROSS_ENCODER_LEXICAL_FAST_PATH = float(os.getenv("CROSS_ENCODER_LEXICAL_FAST_PATH", "0.8"))
-PRELOAD_RAG_COMPONENTS = os.getenv("PRELOAD_RAG_COMPONENTS", "false").lower() in {"1", "true", "yes"}
-PRELOAD_EMBEDDING_MODEL = os.getenv("PRELOAD_EMBEDDING_MODEL", "false").lower() in {"1", "true", "yes"}
-PRELOAD_CROSS_ENCODER = os.getenv("PRELOAD_CROSS_ENCODER", "false").lower() in {"1", "true", "yes"}
+ANN_TOP_K = int(os.getenv("ANN_TOP_K", "20"))
+RRF_K = int(os.getenv("RRF_K", "60"))
 MIN_SEARCH_SCORE = float(os.getenv("MIN_SEARCH_SCORE", "4"))
 SHORT_QUERY_MIN_SEARCH_SCORE = float(os.getenv("SHORT_QUERY_MIN_SEARCH_SCORE", "10"))
 MIN_VECTOR_CONFIDENCE = float(os.getenv("MIN_VECTOR_CONFIDENCE", "0.45"))
@@ -52,6 +42,62 @@ EMBEDDING_CACHE_MAX_ITEMS = int(os.getenv("EMBEDDING_CACHE_MAX_ITEMS", "512"))
 VECTOR_FAST_PATH_CONFIDENCE = float(os.getenv("VECTOR_FAST_PATH_CONFIDENCE", "0.82"))
 VECTOR_FAST_PATH_SCORE_GAP = float(os.getenv("VECTOR_FAST_PATH_SCORE_GAP", "0.12"))
 RERANK_AMBIGUOUS_QUERY_KEYWORDS = int(os.getenv("RERANK_AMBIGUOUS_QUERY_KEYWORDS", "4"))
+QUERY_EXPANSION_ENABLED = os.getenv("QUERY_EXPANSION_ENABLED", "true").lower() in {
+    "1", "true", "yes", "on",
+}
+QUERY_EXPANSION_MODEL = os.getenv("QUERY_EXPANSION_MODEL", GEMINI_MODEL)
+QUERY_EXPANSION_MAX_VARIANTS = int(os.getenv("QUERY_EXPANSION_MAX_VARIANTS", "2"))
+QUERY_EXPANSION_MAX_WORDS = int(os.getenv("QUERY_EXPANSION_MAX_WORDS", "6"))
+QUERY_EXPANSION_CACHE_TTL_SECONDS = int(os.getenv("QUERY_EXPANSION_CACHE_TTL_SECONDS", "1800"))
+QUERY_EXPANSION_CACHE_MAX_ITEMS = int(os.getenv("QUERY_EXPANSION_CACHE_MAX_ITEMS", "256"))
+HYDE_ENABLED = os.getenv("HYDE_ENABLED", "true").lower() in {
+    "1", "true", "yes", "on",
+}
+HYDE_MODEL = os.getenv("HYDE_MODEL", GEMINI_MODEL)
+HYDE_MAX_WORDS = int(os.getenv("HYDE_MAX_WORDS", "100"))
+HYDE_ANN_TOP_K = int(os.getenv("HYDE_ANN_TOP_K", "20"))
+HYDE_MIN_TOPIC_CONFIDENCE = float(os.getenv("HYDE_MIN_TOPIC_CONFIDENCE", "0.65"))
+HYDE_MIN_RERANK_SCORE = float(os.getenv("HYDE_MIN_RERANK_SCORE", "0.0"))
+PROBE_TOP_K = int(os.getenv("PROBE_TOP_K", "6"))
+PROBE_EVIDENCE_TOP_K = int(os.getenv("PROBE_EVIDENCE_TOP_K", "3"))
+PROBE_BM25_MIN_SCORE = float(os.getenv("PROBE_BM25_MIN_SCORE", "1.5"))
+PROBE_VECTOR_MIN_SCORE = float(os.getenv("PROBE_VECTOR_MIN_SCORE", "0.42"))
+PROBE_RRF_MIN_SCORE = float(os.getenv("PROBE_RRF_MIN_SCORE", "0.015"))
+PROBE_RRF_SCORE_GAP = float(os.getenv("PROBE_RRF_SCORE_GAP", "0.001"))
+PROBE_MIN_TITLE_OVERLAP = int(os.getenv("PROBE_MIN_TITLE_OVERLAP", "1"))
+PROBE_MIN_EVIDENCE_SIGNALS = int(os.getenv("PROBE_MIN_EVIDENCE_SIGNALS", "2"))
+GROUNDED_HYDE_ANN_TOP_K = int(os.getenv("GROUNDED_HYDE_ANN_TOP_K", "20"))
+GROUNDED_HYDE_MAX_EVIDENCE_CHARS = int(
+    os.getenv("GROUNDED_HYDE_MAX_EVIDENCE_CHARS", "3600")
+)
+AMBIGUITY_CLARIFY_THRESHOLD = float(
+    os.getenv("AMBIGUITY_CLARIFY_THRESHOLD", "0.40")
+)
+AMBIGUITY_CACHE_TTL_SECONDS = int(
+    os.getenv("AMBIGUITY_CACHE_TTL_SECONDS", "900")
+)
+AMBIGUITY_CACHE_MAX_ITEMS = int(os.getenv("AMBIGUITY_CACHE_MAX_ITEMS", "128"))
+HYDE_CACHE_TTL_SECONDS = int(os.getenv("HYDE_CACHE_TTL_SECONDS", "900"))
+HYDE_CACHE_MAX_ITEMS = int(os.getenv("HYDE_CACHE_MAX_ITEMS", "128"))
+CROSS_ENCODER_ENABLED = os.getenv("CROSS_ENCODER_ENABLED", "true").lower() in {
+    "1", "true", "yes", "on",
+}
+CROSS_ENCODER_MODEL = os.getenv(
+    "CROSS_ENCODER_MODEL",
+    "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+)
+CROSS_ENCODER_TOP_N = int(os.getenv("CROSS_ENCODER_TOP_N", "20"))
+CROSS_ENCODER_MAX_LENGTH = int(os.getenv("CROSS_ENCODER_MAX_LENGTH", "512"))
+CROSS_ENCODER_FINAL_TOP_K = int(
+    os.getenv("CROSS_ENCODER_FINAL_TOP_K", str(SEARCH_TOP_K))
+)
+CROSS_ENCODER_MIN_SCORE = float(os.getenv("CROSS_ENCODER_MIN_SCORE", "-100"))
+CROSS_ENCODER_CACHE_TTL_SECONDS = int(os.getenv("CROSS_ENCODER_CACHE_TTL_SECONDS", "1800"))
+CROSS_ENCODER_CACHE_MAX_ITEMS = int(os.getenv("CROSS_ENCODER_CACHE_MAX_ITEMS", "2048"))
+CROSS_ENCODER_LEXICAL_FAST_PATH = float(os.getenv("CROSS_ENCODER_LEXICAL_FAST_PATH", "0.8"))
+PRELOAD_RAG_COMPONENTS = os.getenv("PRELOAD_RAG_COMPONENTS", "false").lower() in {"1", "true", "yes", "on"}
+PRELOAD_EMBEDDING_MODEL = os.getenv("PRELOAD_EMBEDDING_MODEL", "false").lower() in {"1", "true", "yes", "on"}
+PRELOAD_CROSS_ENCODER = os.getenv("PRELOAD_CROSS_ENCODER", "false").lower() in {"1", "true", "yes", "on"}
 MAX_CONTEXT_DOCS = int(os.getenv("MAX_CONTEXT_DOCS", str(MAX_CONTEXT_CHUNKS)))
 RETRIEVAL_CACHE_SIZE = int(os.getenv("RETRIEVAL_CACHE_SIZE", str(RETRIEVAL_CACHE_MAX_ITEMS)))
 KEYWORD_CONFIDENT_SCORE = float(os.getenv("KEYWORD_CONFIDENT_SCORE", "40"))

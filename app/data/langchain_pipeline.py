@@ -1,5 +1,4 @@
 import asyncio
-import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -23,13 +22,52 @@ def _trace(state: PipelineState, name: str, output: dict, input_data: dict | Non
         callback(name, output, input_data)
 
 
+def _trace_hybrid_retrieval(state: PipelineState, debug: dict) -> None:
+    ambiguity = debug.get("ambiguity", {})
+    _trace(state, "ambiguity_detection", {
+        "ambiguity_action": ambiguity.get("action"),
+        "detected_topic": ambiguity.get("topic"),
+        "ambiguity_confidence": ambiguity.get("confidence"),
+        "ambiguity_reason": ambiguity.get("reason"),
+        "clarification_question": ambiguity.get("clarifying_question"),
+        "cache_hit": ambiguity.get("cache_hit"),
+    })
+    _trace(state, "probe_retrieval", debug.get("probe_retrieval", {}))
+    _trace(state, "probe_evidence_decision", {
+        key: value
+        for key, value in debug.get("probe_retrieval", {}).items()
+        if key != "evidence_sources"
+    })
+    _trace(state, "hyde_generation", debug.get("hyde", {}))
+    _trace(state, "grounded_hyde_generation", debug.get("grounded_hyde", {}))
+    _trace(state, "bm25_retrieval", {
+        "queries": debug.get("bm25_original_results", []),
+        "errors": debug.get("bm25_errors", []),
+    })
+    _trace(state, "ann_retrieval", {
+        "ann_original_results": debug.get("ann_original_results", []),
+        "ann_hyde_results": debug.get("ann_hyde_results", []),
+        "ann_grounded_hyde_results": debug.get(
+            "ann_grounded_hyde_results",
+            [],
+        ),
+        "errors": debug.get("vector_errors", []),
+    })
+    _trace(state, "rrf_fusion", {
+        "results": debug.get("rrf_results", []),
+    })
+    _trace(state, "cross_encoder_rerank", debug.get("reranking", {}))
+
+
 async def _retrieve_internal(state: PipelineState) -> PipelineState:
     debug = {}
     docs = await search_documents(
         state["question"],
         debug=debug,
         source_type_filter=state.get("source_type_filter"),
+        ambiguity_decision=state.get("ambiguity_decision"),
     )
+    _trace_hybrid_retrieval(state, debug)
     _trace(state, "lcel_internal_retrieval", debug, {
         "source_route": "internal_document",
         "reason": state.get("reason"),
@@ -63,8 +101,10 @@ async def _retrieve_website(state: PipelineState) -> PipelineState:
         state["question"],
         debug=debug,
         source_type_filter="website_uneti",
+        ambiguity_decision=state.get("ambiguity_decision"),
     )
     docs = [doc for doc in docs if doc.get("source_type") == "website_uneti"]
+    _trace_hybrid_retrieval(state, debug)
     _trace(state, "lcel_website_retrieval", debug, {
         "source_route": "website_uneti",
     })
@@ -72,7 +112,6 @@ async def _retrieve_website(state: PipelineState) -> PipelineState:
 
 
 def _build_generation_prompt(state: PipelineState) -> PipelineState:
-    started = time.perf_counter()
     docs = state.get("docs") or []
     context = build_context(docs)
     if state.get("prompt_type") == "website":
@@ -80,23 +119,67 @@ def _build_generation_prompt(state: PipelineState) -> PipelineState:
     else:
         prompt = build_prompt(state["question"], context)
 
+    _trace(state, "context_selection", {
+        "selected_source_count": len(docs),
+        "selected_sources": [
+            {
+                "doc_name": doc.get("doc_name"),
+                "title": doc.get("title"),
+                "chunk_index": doc.get("chunk_index"),
+                "bm25_score": doc.get("bm25_score"),
+                "vector_score": doc.get("vector_score"),
+                "rrf_score": doc.get("rrf_score"),
+                "rerank_score": doc.get("rerank_score"),
+            }
+            for doc in docs
+        ],
+        "context_chars": len(context),
+    })
     _trace(state, "lcel_prompt_builder", {
         "context_chars": len(context),
         "prompt_chars": len(prompt),
         "source_count": len(docs),
         "prompt_type": state.get("prompt_type", "document"),
-        "duration_ms": round((time.perf_counter() - started) * 1000, 3),
     })
     return {**state, "context": context, "prompt": prompt}
 
 
 async def _generate_answer(state: PipelineState) -> PipelineState:
-    started = time.perf_counter()
-    answer = await asyncio.to_thread(ask_gemini, state["prompt"])
+    llm_error = None
+    try:
+        answer = await asyncio.to_thread(ask_gemini, state["prompt"])
+    except Exception as exc:
+        llm_error = str(exc)
+        answer = ""
+    error_markers = (
+        "He thong AI tam thoi vuot gioi han",
+        "He thong AI dang ban",
+        "Loi khi goi Gemini API",
+    )
+    fallback_used = llm_error is not None or any(
+        marker in str(answer or "")
+        for marker in error_markers
+    )
+    if fallback_used:
+        summaries = []
+        for doc in (state.get("docs") or [])[:3]:
+            title = str(doc.get("title") or doc.get("doc_name") or "Nguồn tài liệu")
+            content = " ".join(str(doc.get("content") or "").split())
+            if len(content) > 360:
+                content = content[:357].rsplit(" ", 1)[0] + "..."
+            summaries.append(f"- {title}: {content}")
+        answer = (
+            "Thông tin tóm tắt từ các nguồn đã truy xuất:\n"
+            + "\n".join(summaries)
+            if summaries
+            else "Không tìm thấy căn cứ đủ rõ trong tài liệu đã cung cấp."
+        )
     _trace(state, "lcel_llm_call", {
         "answer_chars": len(answer or ""),
         "llm_called": True,
-        "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+        "fallback_used": fallback_used,
+        "fallback_reason": "gemini_error_source_summary" if fallback_used else None,
+        "error": llm_error,
     })
     return {**state, "answer": answer}
 
