@@ -8,8 +8,24 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", "uploads/Tổng hợp văn bản AI")
+DOCUMENT_INDEX_CACHE_ENABLED = os.getenv(
+    "DOCUMENT_INDEX_CACHE_ENABLED",
+    "true",
+).lower() in {"1", "true", "yes", "on"}
+DOCUMENT_INDEX_CACHE_FILE = os.getenv(
+    "DOCUMENT_INDEX_CACHE_FILE",
+    "storage/document_index/index.json",
+)
 BUSINESS_DOCUMENTS_DIR = os.getenv("BUSINESS_DOCUMENTS_DIR", "documents/nghiep_vu")
 BUSINESS_SEARCH_TOP_K = int(os.getenv("BUSINESS_SEARCH_TOP_K", "5"))
+BUSINESS_INDEX_CACHE_ENABLED = os.getenv(
+    "BUSINESS_INDEX_CACHE_ENABLED",
+    "true",
+).lower() in {"1", "true", "yes", "on"}
+BUSINESS_INDEX_CACHE_FILE = os.getenv(
+    "BUSINESS_INDEX_CACHE_FILE",
+    "storage/business_knowledge_index/index.json",
+)
 
 MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "20"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1200"))

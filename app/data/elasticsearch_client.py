@@ -1,6 +1,9 @@
 from collections import Counter, OrderedDict
 from copy import deepcopy
+from datetime import datetime, timezone
+import json
 import math
+from pathlib import Path
 import re
 import time
 import unicodedata
@@ -14,6 +17,8 @@ from app.core.config import (
     BM25_MIN_SCORE,
     BM25_TOP_K,
     CROSS_ENCODER_FINAL_TOP_K,
+    DOCUMENT_INDEX_CACHE_ENABLED,
+    DOCUMENT_INDEX_CACHE_FILE,
     GROUNDED_HYDE_ANN_TOP_K,
     MIN_SEARCH_SCORE,
     PROBE_BM25_MIN_SCORE,
@@ -214,6 +219,7 @@ _INDEX_CACHE = {
     "bm25_corpus": [],
 }
 _SEARCH_CACHE = OrderedDict()
+DOCUMENT_INDEX_CACHE_VERSION = 1
 METADATA_EXACT_SCORE = 100.0
 SEARCHABLE_METADATA_FIELDS = (
     "so_van_ban",
@@ -296,6 +302,109 @@ def _document_signature(files):
         (file.get("relative_path") or file["file_name"], file["file_size_kb"], file.get("updated_at"))
         for file in files
     )
+
+
+def _document_index_cache_path() -> Path:
+    return Path(DOCUMENT_INDEX_CACHE_FILE).resolve()
+
+
+def _json_safe_signature(signature):
+    return json.loads(json.dumps(signature))
+
+
+def _serialize_index_chunk(chunk: dict) -> dict:
+    serialized = dict(chunk)
+    token_counts = serialized.get("_token_counts")
+    token_set = serialized.get("_token_set")
+
+    if isinstance(token_counts, Counter):
+        serialized["_token_counts"] = dict(token_counts)
+    if isinstance(token_set, set):
+        serialized["_token_set"] = sorted(token_set)
+
+    return serialized
+
+
+def _deserialize_index_chunk(chunk: dict) -> dict:
+    deserialized = dict(chunk)
+    deserialized["_token_counts"] = Counter(deserialized.get("_token_counts") or {})
+    deserialized["_token_set"] = set(deserialized.get("_token_set") or [])
+    return deserialized
+
+
+def _restore_document_index_cache(signature, chunks, doc_freq, total_docs, skipped_files, bm25_corpus):
+    _INDEX_CACHE["signature"] = signature
+    _INDEX_CACHE["chunks"] = chunks
+    _INDEX_CACHE["doc_freq"] = doc_freq
+    _INDEX_CACHE["total_docs"] = total_docs
+    _INDEX_CACHE["skipped_files"] = skipped_files
+    _INDEX_CACHE["bm25_corpus"] = bm25_corpus
+    _INDEX_CACHE["bm25"] = (
+        BM25Okapi(bm25_corpus, k1=BM25_K1, b=BM25_B)
+        if any(bm25_corpus)
+        else None
+    )
+
+
+def _load_document_index_from_disk(signature):
+    if not DOCUMENT_INDEX_CACHE_ENABLED:
+        return None
+
+    cache_path = _document_index_cache_path()
+    if not cache_path.is_file():
+        return None
+
+    try:
+        with cache_path.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+    except Exception:
+        return None
+
+    if payload.get("version") != DOCUMENT_INDEX_CACHE_VERSION:
+        return None
+    if payload.get("signature") != _json_safe_signature(signature):
+        return None
+
+    chunks = [
+        _deserialize_index_chunk(chunk)
+        for chunk in payload.get("chunks", [])
+        if isinstance(chunk, dict)
+    ]
+    doc_freq = Counter(payload.get("doc_freq") or {})
+    total_docs = int(payload.get("total_docs") or len(chunks))
+    skipped_files = payload.get("skipped_files") or []
+    bm25_corpus = payload.get("bm25_corpus") or []
+
+    if len(bm25_corpus) != len(chunks):
+        bm25_corpus = [_bm25_document_tokens(chunk) for chunk in chunks]
+
+    return chunks, doc_freq, total_docs, skipped_files, bm25_corpus
+
+
+def _write_document_index_to_disk(signature, chunks, doc_freq, total_docs, skipped_files, bm25_corpus):
+    if not DOCUMENT_INDEX_CACHE_ENABLED:
+        return
+
+    cache_path = _document_index_cache_path()
+    payload = {
+        "version": DOCUMENT_INDEX_CACHE_VERSION,
+        "signature": _json_safe_signature(signature),
+        "chunks": [_serialize_index_chunk(chunk) for chunk in chunks],
+        "doc_freq": dict(doc_freq),
+        "total_docs": total_docs,
+        "skipped_files": skipped_files,
+        "bm25_corpus": bm25_corpus,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = cache_path.with_suffix(f"{cache_path.suffix}.tmp")
+        with temp_path.open("w", encoding="utf-8") as file:
+            json.dump(payload, file, ensure_ascii=False)
+        temp_path.replace(cache_path)
+    except Exception:
+        return
 
 
 def _current_document_signature():
@@ -391,6 +500,20 @@ def _load_document_index():
     if _INDEX_CACHE["signature"] == signature:
         return _INDEX_CACHE["chunks"], _INDEX_CACHE["doc_freq"], _INDEX_CACHE["total_docs"]
 
+    disk_cache = _load_document_index_from_disk(signature)
+    if disk_cache is not None:
+        chunks, doc_freq, total_docs, skipped_files, bm25_corpus = disk_cache
+        _restore_document_index_cache(
+            signature,
+            chunks,
+            doc_freq,
+            total_docs,
+            skipped_files,
+            bm25_corpus,
+        )
+        _SEARCH_CACHE.clear()
+        return chunks, doc_freq, total_docs
+
     chunks = []
     doc_freq = Counter()
     skipped_files = []
@@ -427,6 +550,15 @@ def _load_document_index():
         BM25Okapi(bm25_corpus, k1=BM25_K1, b=BM25_B)
         if any(bm25_corpus)
         else None
+    )
+    _SEARCH_CACHE.clear()
+    _write_document_index_to_disk(
+        signature,
+        chunks,
+        doc_freq,
+        len(chunks),
+        skipped_files,
+        bm25_corpus,
     )
 
     return chunks, doc_freq, len(chunks)
