@@ -601,39 +601,192 @@ Lưu ý: Tên endpoint tài liệu có thể thay đổi tùy theo nội dung tr
 
 ---
 
-## 15. Test API chatbot
+## 15. Hướng dẫn test endpoint chat
 
-Endpoint chính:
+Endpoint cần test:
 
 ```text
 POST /api/chat/
 ```
 
-Body mẫu:
+Endpoint này nhận câu hỏi từ người dùng, gọi luồng xử lý chatbot trong `chatbot_controller.py`, sau đó trả về câu trả lời theo schema `ChatResponse`.
+
+### 15.1. Chuẩn bị trước khi test
+
+Tạo file `.env` hoặc cấu hình biến môi trường cần thiết, tối thiểu phải có:
+
+```env
+GEMINI_API_KEY=your-gemini-api-key
+```
+
+Cài thư viện:
+
+```powershell
+pip install -r requirements.txt
+```
+
+Chạy server FastAPI:
+
+```powershell
+uvicorn app.main:app --reload
+```
+
+Khi server chạy thành công, API mặc định ở:
+
+```text
+http://127.0.0.1:8000
+```
+
+### 15.2. Test bằng Swagger UI
+
+Mở trình duyệt:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Chọn endpoint:
+
+```text
+POST /api/chat/
+```
+
+Bấm **Try it out**, nhập body mẫu:
 
 ```json
 {
-  "question": "Phòng Tổ hợp STUDIO ở đâu?"
+  "question": "Quy chế đào tạo đại học chính quy quy định thế nào về học phần?"
 }
 ```
 
-Response mẫu:
+Bấm **Execute**.
+
+Kết quả đúng là Swagger trả về HTTP status `200` và response có các trường như:
 
 ```json
 {
-  "question": "Phòng Tổ hợp STUDIO ở đâu?",
+  "question": "Quy chế đào tạo đại học chính quy quy định thế nào về học phần?",
   "answer": "Nội dung câu trả lời từ chatbot",
-  "source": "Tên tài liệu nguồn"
+  "source": "Tên tài liệu nguồn",
+  "intent": "document_question",
+  "trace_id": "trace-id",
+  "sources": []
 }
 ```
 
-Nếu API trả lời được và terminal hiện:
+Lưu ý: Nội dung `answer`, `source`, `intent`, `trace_id` và `sources` có thể thay đổi tùy dữ liệu đã index và kết quả xử lý của chatbot.
+
+### 15.3. Test bằng PowerShell
+
+Chạy lệnh:
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/api/chat/" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"question":"Quy chế đào tạo đại học chính quy quy định thế nào về học phần?"}'
+```
+
+Nếu muốn xem response dạng JSON dễ đọc hơn:
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/api/chat/" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"question":"Quy chế đào tạo đại học chính quy quy định thế nào về học phần?"}' |
+ConvertTo-Json -Depth 10
+```
+
+### 15.4. Test bằng curl
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/chat/" \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Quy chế đào tạo đại học chính quy quy định thế nào về học phần?"}'
+```
+
+Kết quả đúng là response JSON có ít nhất:
+
+```json
+{
+  "question": "...",
+  "answer": "..."
+}
+```
+
+### 15.5. Test trace sau khi gọi chat
+
+Mỗi lần gọi `POST /api/chat/`, response có thể trả về `trace_id`.
+
+Dùng `trace_id` đó để xem chi tiết luồng xử lý:
+
+```text
+GET /api/chat/traces/{trace_id}
+```
+
+Ví dụ:
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/api/chat/traces/trace-id" `
+  -Method Get |
+ConvertTo-Json -Depth 10
+```
+
+Trace dùng để kiểm tra từng bước xử lý như phân tích câu hỏi, tìm kiếm tài liệu, xây dựng prompt và tạo câu trả lời.
+
+### 15.6. Test tự động bằng pytest
+
+Dự án đã có test cho endpoint `/api/chat/` trong:
+
+```text
+tests/test_app.py
+```
+
+Test này mock `handle_chat`, nên không gọi Gemini thật. Cách này giúp kiểm tra router, schema request và schema response ổn định hơn khi chạy CI hoặc khi chưa có API key thật.
+
+Chạy toàn bộ test:
+
+```powershell
+pytest
+```
+
+Chạy riêng file test app:
+
+```powershell
+pytest tests/test_app.py
+```
+
+Chạy riêng test endpoint chat:
+
+```powershell
+pytest tests/test_app.py -k chat_api
+```
+
+Kết quả đúng:
+
+```text
+passed
+```
+
+### 15.7. Một số lỗi thường gặp
+
+| Lỗi | Nguyên nhân thường gặp | Cách kiểm tra |
+| --- | --- | --- |
+| `404 Not Found` | Gọi sai URL, thiếu dấu `/` cuối hoặc server chưa include router | Kiểm tra URL là `/api/chat/` và xem `app/main.py` |
+| `422 Unprocessable Entity` | Body sai schema hoặc thiếu trường `question` | Body phải có dạng `{"question":"..."}` |
+| `500 Internal Server Error` | Thiếu API key, lỗi gọi Gemini, lỗi vector store hoặc dữ liệu chưa sẵn sàng | Xem log terminal đang chạy `uvicorn` |
+| Response không có nguồn | Không tìm được tài liệu phù hợp hoặc dữ liệu chưa được index | Kiểm tra thư mục `documents/` và luồng index tài liệu |
+
+Nếu terminal hiện dòng tương tự:
 
 ```text
 POST /api/chat/ HTTP/1.1" 200 OK
 ```
 
-nghĩa là endpoint chatbot đã hoạt động.
+nghĩa là endpoint chat đã nhận request và trả response thành công.
 
 ---
 

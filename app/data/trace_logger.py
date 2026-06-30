@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import json
+import time
 import uuid
 
 
@@ -34,6 +35,7 @@ def load_trace(trace_id: str) -> dict:
 
 class RagTrace:
     def __init__(self, question: str):
+        self.started_monotonic = time.perf_counter()
         self.trace_id = str(uuid.uuid4())
         self.payload = {
             "trace_id": self.trace_id,
@@ -57,14 +59,25 @@ class RagTrace:
         self.payload["updated_at"] = timestamp
 
     def set_response(self, response: dict):
+        self.add_step("request_timing", {
+            "total_request_ms": round(
+                (time.perf_counter() - self.started_monotonic) * 1000,
+                3,
+            ),
+        })
         self.payload["response"] = response
         self.payload["updated_at"] = _now()
 
     def save(self) -> str:
-        TRACE_DIR.mkdir(parents=True, exist_ok=True)
-        trace_path = TRACE_DIR / f"{self.trace_id}.json"
-        trace_path.write_text(
-            json.dumps(self.payload, ensure_ascii=False, indent=2, default=_json_default),
-            encoding="utf-8",
-        )
+        try:
+            TRACE_DIR.mkdir(parents=True, exist_ok=True)
+            trace_path = TRACE_DIR / f"{self.trace_id}.json"
+            trace_path.write_text(
+                json.dumps(self.payload, ensure_ascii=False, indent=2, default=_json_default),
+                encoding="utf-8",
+            )
+        except OSError:
+            # Trace persistence must never turn a successful chat response into HTTP 500.
+            return self.trace_id
+
         return self.trace_id

@@ -1,29 +1,135 @@
+import asyncio
+import re
+import time
+
 from fastapi import HTTPException
-from starlette.concurrency import run_in_threadpool
 
 from app.core.config import (
+    HYDE_MIN_RERANK_SCORE,
     MIN_SEARCH_SCORE,
     MIN_VECTOR_CONFIDENCE,
     SHORT_QUERY_MIN_SEARCH_SCORE,
     SHORT_QUERY_MIN_VECTOR_CONFIDENCE,
 )
-from app.data.elasticsearch_client import get_keywords, search_documents
-from app.data.gemini_client import ask_gemini
-from app.data.prompt_builder import build_context, build_prompt, build_website_prompt
+from app.data.elasticsearch_client import get_keywords, normalize_text, search_documents
+from app.data.ambiguity_analyzer import (
+    CLARIFICATION_NEEDED,
+    analyze_ambiguity,
+)
+from app.data.langchain_pipeline import (
+    generate_answer,
+    retrieve_business,
+    retrieve_internal,
+    retrieve_website,
+)
 from app.data.query_analyzer import QueryIntent, classify_query
+from app.data.reranker import rerank_chunks
 from app.data.trace_logger import RagTrace, load_trace
 from app.data.website_search_client import index_uneti_website
 
 
+SOURCE_PREVIEW_CHARS = 1100
+SOURCE_PREVIEW_SENTENCES = 5
 NO_WEBSITE_EVIDENCE_ANSWER = "Không tìm thấy thông tin phù hợp trên website UNETI."
 NO_EVIDENCE_ANSWER = "Không tìm thấy căn cứ đủ rõ trong tài liệu đã cung cấp."
 OUT_OF_SCOPE_ANSWER = "Câu hỏi này nằm ngoài phạm vi tài liệu nội bộ hiện có."
 GENERAL_ADVICE_ANSWER = "Câu hỏi này không cần tra cứu tài liệu nội bộ. Vui lòng hỏi về quy định, quy trình, văn bản hoặc nội dung trong tài liệu đã cung cấp."
 SHORT_QUERY_KEYWORD_COUNT = 3
+MIN_LEXICAL_COVERAGE = 0.5
+MIN_SOURCE_CONTENT_CHARS = 80
+MAX_CHUNKS_PER_DOCUMENT = 2
 
 
 def _clean_answer_text(answer: str | None) -> str:
     return str(answer or "").replace("**", "")
+
+
+def _is_no_evidence_answer(answer: str | None) -> bool:
+    normalized = normalize_text(_clean_answer_text(answer))
+    return normalize_text(NO_EVIDENCE_ANSWER) in normalized
+
+
+def _source_search_text(doc: dict) -> str:
+    return " ".join(
+        str(doc.get(field) or "")
+        for field in (
+            "title",
+            "content",
+            "doc_name",
+            "ten_van_ban",
+            "so_van_ban",
+            "phong_ban",
+        )
+    )
+
+
+def _lexical_coverage(question: str, doc: dict) -> float:
+    query_terms = set(get_keywords(question))
+    if not query_terms:
+        return 0.0
+    source_terms = set(get_keywords(_source_search_text(doc)))
+    return len(query_terms & source_terms) / len(query_terms)
+
+
+def _is_usable_source(question: str, doc: dict) -> tuple[bool, str]:
+    content = str(doc.get("content") or "").strip()
+    if len(content) < MIN_SOURCE_CONTENT_CHARS:
+        return False, "content_too_short"
+    if not (doc.get("relative_path") or doc.get("doc_name") or doc.get("url")):
+        return False, "missing_source_identity"
+    if doc.get("metadata_matched"):
+        return True, "metadata_matched"
+
+    coverage = _lexical_coverage(question, doc)
+    vector_score = doc.get("vector_score")
+    if vector_score is None and doc.get("distance") is not None:
+        vector_score = 1 - float(doc["distance"])
+
+    if coverage >= MIN_LEXICAL_COVERAGE:
+        return True, "lexical_coverage_passed"
+    if vector_score is not None and float(vector_score) >= MIN_VECTOR_CONFIDENCE:
+        return True, "semantic_score_passed"
+    return False, "insufficient_query_coverage"
+
+
+def _filter_usable_sources(question: str, docs: list[dict]) -> tuple[list[dict], list[dict]]:
+    accepted = []
+    rejected = []
+    for doc in docs:
+        usable, reason = _is_usable_source(question, doc)
+        enriched = dict(doc)
+        enriched["lexical_coverage"] = round(_lexical_coverage(question, doc), 4)
+        if usable:
+            accepted.append(enriched)
+        else:
+            rejected.append({
+                "doc_name": doc.get("doc_name"),
+                "title": doc.get("title"),
+                "reason": reason,
+                "lexical_coverage": enriched["lexical_coverage"],
+            })
+    return accepted, rejected
+
+
+def _limit_document_dominance(docs: list[dict]) -> list[dict]:
+    selected = []
+    counts = {}
+    for doc in docs:
+        key = doc.get("relative_path") or doc.get("doc_name") or doc.get("url")
+        if counts.get(key, 0) >= MAX_CHUNKS_PER_DOCUMENT:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        selected.append(doc)
+    return selected
+
+
+def _looks_like_document_number_query(question: str) -> bool:
+    normalized = normalize_text(question)
+    searchable = re.sub(r"[_\-.]+", " ", normalized)
+    return bool(re.search(
+        r"\b(?:so|van\s*ban|quyet\s*dinh|quy\s*dinh|quy\s*che|thong\s*bao|qd|qc|tb|vb)\s*\d{1,6}\b",
+        searchable,
+    ))
 
 
 def _confidence_from_source(doc: dict) -> tuple[float | None, str | None]:
@@ -59,11 +165,100 @@ def _confidence_from_source(doc: dict) -> tuple[float | None, str | None]:
     return round(confidence, 4), label
 
 
-def _source_preview(content: str) -> str:
-    return " ".join(str(content or "").split())
+def _clean_preview_text(text: str) -> str:
+    text = str(text or "")
+    text = re.sub(r"---\s*Trang\s+\d+\s*---", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
-def _build_sources(docs):
+def _split_preview_sentences(text: str) -> list[str]:
+    text = re.sub(r"\s+([,.!?;:])", r"\1", text)
+    text = re.sub(r"\b([a-zA-Z])\s+([a-zA-Z])\b", r"\1\2", text)
+    parts = re.split(r"(?<=[.!?])\s+|(?<=;)\s+|(?=\b[a-z]\)\s+)", text)
+    return [part.strip(" -") for part in parts if len(part.strip(" -")) >= 24]
+
+
+def _score_preview_sentence(sentence: str, question_keywords: list[str]) -> int:
+    normalized_sentence = normalize_text(sentence)
+    return sum(1 for keyword in set(question_keywords) if keyword in normalized_sentence)
+
+
+def _shorten_preview_sentence(sentence: str, limit: int = 260) -> str:
+    sentence = sentence.strip(" -")
+    if len(sentence) <= limit:
+        return sentence
+
+    cut_at = sentence.rfind(". ", 0, limit)
+    if cut_at < limit * 0.45:
+        cut_at = sentence.rfind("; ", 0, limit)
+    if cut_at < limit * 0.45:
+        cut_at = sentence.rfind(", ", 0, limit)
+    if cut_at < limit * 0.45:
+        cut_at = sentence.rfind(" ", 0, limit)
+    if cut_at < limit * 0.45:
+        cut_at = limit
+
+    return sentence[:cut_at].rstrip(" ,;:-") + "."
+
+
+def _fallback_preview(text: str) -> str:
+    if len(text) <= SOURCE_PREVIEW_CHARS:
+        return text
+
+    cut_at = text.rfind(". ", 0, SOURCE_PREVIEW_CHARS)
+    if cut_at < SOURCE_PREVIEW_CHARS * 0.55:
+        cut_at = text.rfind("; ", 0, SOURCE_PREVIEW_CHARS)
+    if cut_at < SOURCE_PREVIEW_CHARS * 0.55:
+        cut_at = text.rfind(" ", 0, SOURCE_PREVIEW_CHARS)
+    if cut_at < SOURCE_PREVIEW_CHARS * 0.55:
+        cut_at = SOURCE_PREVIEW_CHARS
+
+    return text[:cut_at].rstrip(" ,;:-") + "."
+
+
+def _source_preview(content: str, title: str | None = None, question: str | None = None) -> str:
+    title_text = _clean_preview_text(title or "")
+    content_text = _clean_preview_text(content)
+    question_keywords = get_keywords(question or "")
+    sentences = _split_preview_sentences(content_text)
+
+    if sentences:
+        ranked_sentences = sorted(
+            enumerate(sentences),
+            key=lambda item: (_score_preview_sentence(item[1], question_keywords), -item[0]),
+            reverse=True,
+        )
+        selected_indexes = [
+            index
+            for index, sentence in ranked_sentences
+            if _score_preview_sentence(sentence, question_keywords) > 0
+        ][:SOURCE_PREVIEW_SENTENCES]
+
+        if not selected_indexes:
+            selected_indexes = list(range(min(SOURCE_PREVIEW_SENTENCES, len(sentences))))
+
+        selected_indexes = sorted(selected_indexes)
+        summary_items = [
+            _shorten_preview_sentence(sentences[index])
+            for index in selected_indexes
+        ]
+        summary = "\n".join(f"- {item}" for item in summary_items)
+    else:
+        summary = content_text
+
+    if "\n- " not in summary:
+        summary = _fallback_preview(summary)
+
+    if title_text and title_text.lower() not in summary.lower():
+        preview = f"{title_text}\n{summary}"
+    else:
+        preview = summary
+
+    return f"Tóm tắt nguồn:\n{preview}"
+
+
+def _build_sources(docs, question: str | None = None):
     sources = []
 
     for doc in docs:
@@ -100,6 +295,10 @@ def _build_sources(docs):
             "muc": doc.get("muc"),
             "dieu": doc.get("dieu"),
             "chunk_index": doc.get("chunk_index"),
+            "file_id": doc.get("file_id"),
+            "faq_location": doc.get("faq_location"),
+            "audience": doc.get("audience"),
+            "mapping_relative_path": doc.get("mapping_relative_path"),
             "score": scores["score"],
             "vector_score": scores["vector_score"],
             "keyword_score": scores["keyword_score"],
@@ -107,7 +306,7 @@ def _build_sources(docs):
             "confidence": confidence,
             "confidence_percent": round(confidence * 100) if confidence is not None else None,
             "confidence_label": confidence_label,
-            "preview": _source_preview(doc.get("content", "")),
+            "preview": _source_preview(doc.get("content", ""), doc.get("title"), question),
         })
 
     return sources
@@ -127,6 +326,11 @@ def _has_confident_evidence(question: str, docs) -> tuple[bool, str]:
     )
 
     for doc in docs:
+        if doc.get("hyde_only"):
+            rerank_score = doc.get("rerank_score")
+            if rerank_score is None or float(rerank_score) < HYDE_MIN_RERANK_SCORE:
+                continue
+
         if doc.get("metadata_matched"):
             return True, "metadata_matched"
 
@@ -154,10 +358,101 @@ def _finalize(trace: RagTrace, response: dict) -> dict:
     return response
 
 
+def _pipeline_state(
+    trace: RagTrace,
+    question: str,
+    reason: str,
+    prompt_type: str = "document",
+    ambiguity_decision: dict | None = None,
+) -> dict:
+    return {
+        "question": question,
+        "reason": reason,
+        "prompt_type": prompt_type,
+        "ambiguity_decision": ambiguity_decision,
+        "trace_callback": trace.add_step,
+    }
+
+
+def _analyze_retrieval_question(trace: RagTrace, question: str) -> dict:
+    decision = analyze_ambiguity(question).to_dict()
+    trace.add_step("ambiguity_detection", {
+        "ambiguity_action": decision.get("action"),
+        "detected_topic": decision.get("topic"),
+        "ambiguity_confidence": decision.get("confidence"),
+        "ambiguity_reason": decision.get("reason"),
+        "clarification_question": decision.get("clarifying_question"),
+        "analyzer": decision.get("analyzer"),
+        "cache_hit": decision.get("cache_hit"),
+    })
+    return decision
+
+
+def _clarification_response(
+    trace: RagTrace,
+    question: str,
+    decision: dict,
+    retrieval_called: bool = False,
+):
+    trace.add_step("route_decision", {
+        "llm_called": False,
+        "retrieval_called": retrieval_called,
+        "reason": decision.get("reason") or "clarification_needed",
+    })
+    return _finalize(trace, {
+        "question": question,
+        "answer": "Bạn cần hỏi rõ ràng hơn",
+        "source": None,
+        "sources": [],
+        "intent": CLARIFICATION_NEEDED,
+    })
+
+
+def _retrieval_clarification_decision(state: dict) -> dict | None:
+    retrieval_debug = state.get("retrieval_debug") or {}
+    fallback_reason = retrieval_debug.get("fallback_reason")
+    if fallback_reason not in {
+        "hyde_requested_clarification",
+        "probe_insufficient_evidence",
+    }:
+        return None
+    ambiguity = retrieval_debug.get("ambiguity") or {}
+    return {
+        **ambiguity,
+        "action": CLARIFICATION_NEEDED,
+        "reason": fallback_reason,
+        "clarifying_question": (
+            ambiguity.get("clarifying_question")
+            or "Bạn cần hỏi rõ ràng hơn"
+        ),
+    }
+
+
+def _deduplicate_docs(*doc_groups: list[dict]) -> list[dict]:
+    docs = []
+    seen = set()
+
+    for group in doc_groups:
+        for doc in group:
+            key = (
+                doc.get("source_type"),
+                doc.get("relative_path") or doc.get("doc_name"),
+                doc.get("chunk_index"),
+                doc.get("title"),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            docs.append(doc)
+
+    return docs
+
+
 async def _search_website_and_finalize(trace: RagTrace, question: str, intent: str, reason: str):
-    website_debug = {}
     try:
-        index_result = await run_in_threadpool(index_uneti_website, question, website_debug)
+        state = await retrieve_website(
+            _pipeline_state(trace, question, reason, prompt_type="website")
+        )
     except Exception as exc:
         trace.add_step("website_search", {
             "status": "index_error",
@@ -174,38 +469,7 @@ async def _search_website_and_finalize(trace: RagTrace, question: str, intent: s
             "intent": intent,
         })
 
-    trace.add_step("website_search", website_debug, {
-        "question": question,
-        "reason": reason,
-    })
-
-    if not index_result.get("indexed_chunks"):
-        trace.add_step("website_index", {
-            "indexed_chunks": 0,
-            "llm_called": False,
-            "reason": "no_text_chunks_from_website",
-        })
-        return _finalize(trace, {
-            "question": question,
-            "answer": NO_WEBSITE_EVIDENCE_ANSWER,
-            "source": None,
-            "sources": [],
-            "intent": intent,
-        })
-
-    retrieval_debug = {}
-    docs = await search_documents(
-        question,
-        debug=retrieval_debug,
-        source_type_filter="website_uneti",
-    )
-    trace.add_step("retrieval_after_website_index", retrieval_debug, {"question": question})
-
-    website_docs = [
-        doc
-        for doc in docs
-        if doc.get("source_type") == "website_uneti"
-    ]
+    website_docs = state.get("docs") or []
 
     has_evidence = bool(website_docs)
     evidence_reason = "website_indexed_source" if has_evidence else "no_website_chunks_found"
@@ -222,24 +486,12 @@ async def _search_website_and_finalize(trace: RagTrace, question: str, intent: s
             "question": question,
             "answer": NO_WEBSITE_EVIDENCE_ANSWER,
             "source": None,
-            "sources": _build_sources(website_docs),
+            "sources": _build_sources(website_docs, question),
             "intent": intent,
         })
 
-    context = build_context(website_docs)
-    prompt = build_website_prompt(question, context)
-    trace.add_step("context_builder", {
-        "context_chars": len(context),
-        "prompt_chars": len(prompt),
-        "source_count": len(website_docs),
-        "source_type": "website_uneti",
-    })
-
-    answer = await run_in_threadpool(ask_gemini, prompt)
-    trace.add_step("llm_call", {
-        "answer_chars": len(answer or ""),
-        "llm_called": True,
-    })
+    state = await generate_answer({**state, "docs": website_docs})
+    answer = state["answer"]
 
     best_doc = website_docs[0]
     source = best_doc.get("attachment_url") or best_doc.get("url")
@@ -248,9 +500,304 @@ async def _search_website_and_finalize(trace: RagTrace, question: str, intent: s
         "question": question,
         "answer": answer,
         "source": source,
-        "sources": _build_sources(website_docs),
+        "sources": _build_sources(website_docs, question),
         "intent": intent,
     })
+
+
+async def _answer_with_internal_documents(
+    trace: RagTrace,
+    question: str,
+    intent: str,
+    reason: str,
+    ambiguity_decision: dict | None = None,
+):
+    state = await retrieve_internal(
+        _pipeline_state(
+            trace,
+            question,
+            reason,
+            ambiguity_decision=ambiguity_decision,
+        )
+    )
+    retrieval_clarification = _retrieval_clarification_decision(state)
+    if retrieval_clarification:
+        return _clarification_response(
+            trace,
+            question,
+            retrieval_clarification,
+            retrieval_called=True,
+        )
+    docs = state.get("docs") or []
+
+    has_evidence, evidence_reason = _has_confident_evidence(question, docs)
+    trace.add_step("evidence_check", {
+        "evidence_decision": "pass" if has_evidence else "reject",
+        "has_confident_evidence": has_evidence,
+        "reason": evidence_reason,
+        "query_keyword_count": len(get_keywords(question)),
+        "llm_called": bool(docs and has_evidence),
+    })
+
+    if not docs or not has_evidence:
+        return _finalize(trace, {
+            "question": question,
+            "answer": NO_EVIDENCE_ANSWER,
+            "source": None,
+            "sources": _build_sources(docs, question),
+            "intent": intent,
+        })
+
+    state = await generate_answer({**state, "docs": docs})
+    answer = state["answer"]
+
+    best_doc = docs[0]
+    source = f'{best_doc.get("title")} - {best_doc.get("doc_name")}'
+
+    return _finalize(trace, {
+        "question": question,
+        "answer": answer,
+        "source": source,
+        "sources": _build_sources(docs, question),
+        "intent": intent,
+    })
+
+
+async def _answer_with_business_documents(trace: RagTrace, question: str, intent: str, reason: str):
+    state = await retrieve_business(_pipeline_state(trace, question, reason))
+    business_docs = state.get("docs") or []
+
+    has_business_evidence, business_evidence_reason = _has_confident_evidence(question, business_docs)
+    trace.add_step("business_evidence_check", {
+        "evidence_decision": (
+            "pass" if has_business_evidence else "reject"
+        ),
+        "has_confident_evidence": has_business_evidence,
+        "reason": business_evidence_reason,
+        "query_keyword_count": len(get_keywords(question)),
+        "llm_called": bool(business_docs and has_business_evidence),
+    })
+
+    if not business_docs or not has_business_evidence:
+        return _finalize(trace, {
+            "question": question,
+            "answer": NO_EVIDENCE_ANSWER,
+            "source": None,
+            "sources": _build_sources(business_docs, question),
+            "intent": intent,
+        })
+
+    state = await generate_answer({**state, "docs": business_docs})
+    answer = state["answer"]
+
+    best_doc = business_docs[0]
+    source = f'{best_doc.get("title")} - {best_doc.get("doc_name")}'
+
+    return _finalize(trace, {
+        "question": question,
+        "answer": answer,
+        "source": source,
+        "sources": _build_sources(business_docs, question),
+        "intent": intent,
+    })
+
+
+async def _answer_with_aggregate_documents(
+    trace: RagTrace,
+    question: str,
+    intent: str,
+    reason: str,
+    ambiguity_decision: dict | None = None,
+):
+    base_state = _pipeline_state(
+        trace,
+        question,
+        reason,
+        ambiguity_decision=ambiguity_decision,
+    )
+    business_state, internal_state = await asyncio.gather(
+        retrieve_business(dict(base_state)),
+        retrieve_internal(dict(base_state)),
+    )
+    business_docs = business_state.get("docs") or []
+    internal_docs = internal_state.get("docs") or []
+
+    usable_business, rejected_business = _filter_usable_sources(question, business_docs)
+    usable_internal, rejected_internal = _filter_usable_sources(question, internal_docs)
+    business_has_evidence, business_reason = _has_confident_evidence(question, usable_business)
+    internal_has_evidence, internal_reason = _has_confident_evidence(question, usable_internal)
+    retrieval_clarification = _retrieval_clarification_decision(internal_state)
+    if retrieval_clarification and not business_has_evidence:
+        return _clarification_response(
+            trace,
+            question,
+            retrieval_clarification,
+            retrieval_called=True,
+        )
+    trace.add_step("lcel_aggregate_evidence", {
+        "evidence_decision": (
+            "pass" if business_has_evidence or internal_has_evidence else "reject"
+        ),
+        "business_has_evidence": business_has_evidence,
+        "business_reason": business_reason,
+        "internal_has_evidence": internal_has_evidence,
+        "internal_reason": internal_reason,
+        "business_usable_count": len(usable_business),
+        "internal_usable_count": len(usable_internal),
+        "business_rejected": rejected_business,
+        "internal_rejected": rejected_internal,
+    })
+
+    selected_business = usable_business if business_has_evidence else []
+    selected_internal = usable_internal if internal_has_evidence else []
+    docs = _deduplicate_docs(selected_business, selected_internal)
+    source_types = {doc.get("source_type") for doc in docs}
+    if len(source_types) > 1:
+        docs, aggregate_rerank_debug = await asyncio.to_thread(rerank_chunks, question, docs)
+    else:
+        aggregate_rerank_debug = {
+            "used": False,
+            "reason": "single_source_type_or_already_ranked",
+        }
+    docs = _limit_document_dominance(docs)
+    trace.add_step("lcel_aggregate_merge", {
+        "business_source_count": len(selected_business),
+        "internal_source_count": len(selected_internal),
+        "deduplicated_source_count": len(docs),
+        "reranking": aggregate_rerank_debug,
+    })
+
+    if not docs:
+        trace.add_step("fallback_decision", {
+            "from": "aggregate_documents",
+            "to": "website_uneti",
+            "reason": f"business={business_reason}; internal={internal_reason}",
+        })
+        return await _search_website_and_finalize(
+            trace,
+            question,
+            "website_uneti_fallback",
+            "aggregate_no_confident_source",
+        )
+
+    generation_state = await generate_answer({**base_state, "docs": docs})
+    answer = generation_state["answer"]
+
+    if _is_no_evidence_answer(answer) and selected_internal:
+        internal_only = selected_internal
+        internal_rerank_debug = {
+            "used": False,
+            "reason": "internal_results_already_ranked",
+        }
+        internal_only = _limit_document_dominance(internal_only)
+        trace.add_step("fallback_decision", {
+            "from": "aggregate_generation",
+            "to": "internal_only_generation",
+            "reason": "aggregate_answer_reported_no_evidence",
+            "internal_source_count": len(internal_only),
+            "reranking": internal_rerank_debug,
+        })
+        retry_state = await generate_answer({**base_state, "docs": internal_only})
+        if not _is_no_evidence_answer(retry_state["answer"]):
+            docs = internal_only
+            answer = retry_state["answer"]
+
+    if _is_no_evidence_answer(answer):
+        return _finalize(trace, {
+            "question": question,
+            "answer": NO_EVIDENCE_ANSWER,
+            "source": None,
+            "sources": [],
+            "intent": intent,
+        })
+
+    best_doc = docs[0]
+    return _finalize(trace, {
+        "question": question,
+        "answer": answer,
+        "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
+        "sources": _build_sources(docs, question),
+        "intent": intent,
+    })
+
+
+def _empty_question_response(trace: RagTrace, original_question: str):
+    return _finalize(trace, {
+        "question": original_question,
+        "answer": "Vui lÃ²ng nháº­p cÃ¢u há»i.",
+        "source": None,
+        "sources": [],
+        "intent": QueryIntent.OUT_OF_SCOPE.value,
+    })
+
+
+async def handle_internal_chat(request):
+    question = request.question.strip()
+    trace = RagTrace(question)
+    trace.add_step("request_received", {
+        "question": question,
+        "is_empty": not bool(question),
+        "forced_route": "internal_document",
+    })
+
+    if not question:
+        return _empty_question_response(trace, request.question)
+
+    decision = _analyze_retrieval_question(trace, question)
+    if decision["action"] == CLARIFICATION_NEEDED:
+        return _clarification_response(trace, question, decision)
+
+    return await _answer_with_internal_documents(
+        trace,
+        question,
+        QueryIntent.INTERNAL_DOCUMENT.value,
+        "explicit_internal_endpoint",
+        decision,
+    )
+
+
+async def handle_business_chat(request):
+    question = request.question.strip()
+    trace = RagTrace(question)
+    trace.add_step("request_received", {
+        "question": question,
+        "is_empty": not bool(question),
+        "forced_route": "business_document",
+    })
+
+    if not question:
+        return _empty_question_response(trace, request.question)
+
+    decision = _analyze_retrieval_question(trace, question)
+    if decision["action"] == CLARIFICATION_NEEDED:
+        return _clarification_response(trace, question, decision)
+
+    return await _answer_with_business_documents(
+        trace,
+        question,
+        QueryIntent.INTERNAL_DOCUMENT.value,
+        "explicit_business_endpoint",
+    )
+
+
+async def handle_website_chat(request):
+    question = request.question.strip()
+    trace = RagTrace(question)
+    trace.add_step("request_received", {
+        "question": question,
+        "is_empty": not bool(question),
+        "forced_route": "website_uneti",
+    })
+
+    if not question:
+        return _empty_question_response(trace, request.question)
+
+    return await _search_website_and_finalize(
+        trace,
+        question,
+        QueryIntent.WEBSITE_UNETI.value,
+        "explicit_website_endpoint",
+    )
 
 
 async def handle_chat(request):
@@ -267,11 +814,13 @@ async def handle_chat(request):
             "intent": QueryIntent.OUT_OF_SCOPE.value,
         })
 
+    analysis_started = time.perf_counter()
     analysis = classify_query(question)
     trace.add_step("classify_query", {
         "intent": analysis.intent.value,
         "reason": analysis.reason,
         "metadata": analysis.metadata,
+        "duration_ms": round((time.perf_counter() - analysis_started) * 1000, 3),
     }, {"question": question})
 
     if analysis.intent == QueryIntent.OUT_OF_SCOPE:
@@ -302,55 +851,25 @@ async def handle_chat(request):
             "explicit_website_intent",
         )
 
-    retrieval_debug = {}
-    docs = await search_documents(question, debug=retrieval_debug)
-    trace.add_step("retrieval", retrieval_debug, {"question": question})
-
-    has_evidence, evidence_reason = _has_confident_evidence(question, docs)
-    trace.add_step("evidence_check", {
-        "has_confident_evidence": has_evidence,
-        "reason": evidence_reason,
-        "query_keyword_count": len(get_keywords(question)),
-        "llm_called": bool(docs and has_evidence),
-    })
-
-    if not docs or not has_evidence:
-        trace.add_step("fallback_decision", {
-            "from": "internal_document",
-            "to": "website_uneti",
-            "reason": evidence_reason,
-        })
-        return await _search_website_and_finalize(
+    if analysis.metadata.get("so_van_ban") or _looks_like_document_number_query(question):
+        return await _answer_with_internal_documents(
             trace,
             question,
-            "website_uneti_fallback",
-            evidence_reason,
+            analysis.intent.value,
+            "document_number_query",
         )
 
-    context = build_context(docs)
-    prompt = build_prompt(question, context)
-    trace.add_step("context_builder", {
-        "context_chars": len(context),
-        "prompt_chars": len(prompt),
-        "source_count": len(docs),
-    })
+    decision = _analyze_retrieval_question(trace, question)
+    if decision["action"] == CLARIFICATION_NEEDED:
+        return _clarification_response(trace, question, decision)
 
-    answer = await run_in_threadpool(ask_gemini, prompt)
-    trace.add_step("llm_call", {
-        "answer_chars": len(answer or ""),
-        "llm_called": True,
-    })
-
-    best_doc = docs[0]
-    source = f'{best_doc.get("title")} - {best_doc.get("doc_name")}'
-
-    return _finalize(trace, {
-        "question": question,
-        "answer": answer,
-        "source": source,
-        "sources": _build_sources(docs),
-        "intent": analysis.intent.value,
-    })
+    return await _answer_with_aggregate_documents(
+        trace,
+        question,
+        analysis.intent.value,
+        analysis.reason,
+        decision,
+    )
 
 
 def get_chat_trace(trace_id: str) -> dict:

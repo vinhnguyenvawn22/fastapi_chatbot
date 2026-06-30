@@ -17,6 +17,8 @@ from app.data.query_analyzer import normalize_date, normalize_text
 
 
 PDF_MIME_TYPES = {"application/pdf", "application/octet-stream"}
+SUPPORTED_DOCUMENT_SUFFIXES = {".pdf", ".docx"}
+DISCOVERED_DOCUMENT_SUFFIXES = SUPPORTED_DOCUMENT_SUFFIXES | {".doc", ".xlsx"}
 UNSAFE_FILENAME_PATTERN = re.compile(r'[<>:"\\|?*\x00-\x1f]+')
 SECTION_PATTERN = re.compile(
     r"(?im)^\s*((?:Điều|Dieu)\s+\d+[\.\:\s]+.*|(?:Mục|Muc)\s+\d+[\.\:\s]+.*|(?:Chương|Chuong)\s+(?:[IVXLCDM]+|\d+)[\.\:\s]+.*)$"
@@ -71,6 +73,15 @@ def _safe_pdf_filename(filename: str) -> str:
     return name
 
 
+def _is_supported_document(file_path: Path) -> bool:
+    return file_path.suffix.lower() in SUPPORTED_DOCUMENT_SUFFIXES
+
+
+def _is_ignored_document(file_path: Path) -> bool:
+    """Ignore Office lock files and other transient documents."""
+    return file_path.name.startswith("~$")
+
+
 def _resolve_document_path(file_name: str | Path) -> Path:
     documents_path = _documents_path()
     raw_name = str(file_name or "").replace("\\", "/").strip()
@@ -86,15 +97,15 @@ def _resolve_document_path(file_name: str | Path) -> Path:
             raise HTTPException(status_code=400, detail="Ten file khong hop le")
         if UNSAFE_FILENAME_PATTERN.search("".join(parts)):
             raise HTTPException(status_code=400, detail="Ten file khong hop le")
-        if not raw_name.lower().endswith(".pdf"):
-            raise HTTPException(status_code=400, detail="Chi ho tro file PDF")
+        if Path(raw_name).suffix.lower() not in SUPPORTED_DOCUMENT_SUFFIXES:
+            raise HTTPException(status_code=400, detail="Chi ho tro file PDF va DOCX")
         file_path = (documents_path / raw_name).resolve()
 
     if documents_path not in file_path.parents:
         raise HTTPException(status_code=400, detail="Ten file khong hop le")
 
-    if file_path.suffix.lower() != ".pdf":
-        raise HTTPException(status_code=400, detail="Chi ho tro file PDF")
+    if not _is_supported_document(file_path):
+        raise HTTPException(status_code=400, detail="Chi ho tro file PDF va DOCX")
 
     return file_path
 
@@ -114,6 +125,48 @@ def _first_match(pattern: str, text: str, flags=re.IGNORECASE):
     return match.group(1).strip() if match else None
 
 
+def _extract_document_number_from_filename(file_name: str) -> str | None:
+    normalized_name = normalize_text(Path(file_name).stem)
+    normalized_name = re.sub(r"[_\-.]+", " ", normalized_name)
+
+    patterns = (
+        r"\b(?:qd|quyet\s*dinh|tb|thong\s*bao|qc|quy\s*che|vb|van\s*ban|hd|huong\s*dan|qt)\s+(\d{1,6})\b",
+        r"\b(\d{1,6})\s+(?:qd|quyet\s*dinh|tb|thong\s*bao|qc|quy\s*che|vb|van\s*ban|hd|huong\s*dan|qt)\b",
+    )
+    typed_candidates = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized_name):
+            candidate = match.group(1)
+            if len(candidate) == 4 and 1900 <= int(candidate) <= 2100:
+                continue
+            typed_candidates.append(candidate)
+
+    for candidate in typed_candidates:
+        if len(candidate) >= 3:
+            return candidate
+
+    number_candidates = re.findall(r"\b\d{1,6}\b", normalized_name)
+    filtered_candidates = []
+    for candidate in number_candidates:
+        if len(candidate) == 4 and 1900 <= int(candidate) <= 2100:
+            continue
+        if len(candidate) == 6:
+            continue
+        filtered_candidates.append(candidate)
+
+    for candidate in filtered_candidates:
+        if len(candidate) >= 3:
+            return candidate
+
+    if typed_candidates:
+        return typed_candidates[0]
+
+    if filtered_candidates:
+        return filtered_candidates[0]
+
+    return None
+
+
 def _extract_document_metadata(text: str, file_name: str) -> dict:
     lines = [
         " ".join(line.split())
@@ -122,6 +175,7 @@ def _extract_document_metadata(text: str, file_name: str) -> dict:
     ]
     header_text = "\n".join(lines[:80])
     normalized_header = normalize_text(header_text)
+    filename_so_van_ban = _extract_document_number_from_filename(file_name)
 
     so_van_ban = _first_match(
         r"(?:Số|So)\s*[:\-]?\s*([0-9]{1,6}(?:/[A-Za-z0-9.\-]+)?)",
@@ -134,10 +188,10 @@ def _extract_document_metadata(text: str, file_name: str) -> dict:
         )
         if not match:
             match = re.search(r"\b([0-9]{2,6})\s*/\s*(?:qd|vb|tb|qc)", normalized_header)
-        if not match:
-            match = re.search(r"\b([0-9]{2,6})\b", normalize_text(file_name))
         if match:
             so_van_ban = re.sub(r"\s+", "", match.group(1)).upper()
+    if filename_so_van_ban:
+        so_van_ban = filename_so_van_ban
 
     so_van_ban_ngan = None
     if so_van_ban:
@@ -153,7 +207,7 @@ def _extract_document_metadata(text: str, file_name: str) -> dict:
         header_text,
     )
 
-    type_match = DOCUMENT_TYPE_PATTERN.search(header_text)
+    type_match = DOCUMENT_TYPE_PATTERN.search(header_text) or DOCUMENT_TYPE_PATTERN.search(file_name)
     loai_van_ban = type_match.group(1) if type_match else None
 
     don_vi_ban_hanh = None
@@ -172,13 +226,15 @@ def _extract_document_metadata(text: str, file_name: str) -> dict:
         ):
             ten_van_ban = line
             break
+    if not ten_van_ban:
+        ten_van_ban = Path(file_name).stem
 
     return {
         "so_van_ban": so_van_ban,
         "so_van_ban_ngan": so_van_ban_ngan,
         "ngay_ban_hanh": normalize_date(ngay_ban_hanh) if ngay_ban_hanh else None,
         "ngay_hieu_luc": normalize_date(ngay_hieu_luc) if ngay_hieu_luc else None,
-        "ten_van_ban": ten_van_ban or Path(file_name).stem,
+        "ten_van_ban": ten_van_ban,
         "don_vi_ban_hanh": don_vi_ban_hanh,
         "loai_van_ban": loai_van_ban,
     }
@@ -208,13 +264,25 @@ def list_documents():
 
     files = []
 
-    for file_path in sorted(documents_path.rglob("*.pdf")):
+    for file_path in sorted(
+        path
+        for path in documents_path.rglob("*")
+        if (
+            path.is_file()
+            and path.suffix.lower() in DISCOVERED_DOCUMENT_SUFFIXES
+            and not _is_ignored_document(path)
+        )
+    ):
         stat = file_path.stat()
         source_metadata = _extract_source_metadata(file_path)
+        parse_supported = _is_supported_document(file_path)
         files.append({
             "file_name": file_path.name,
             "relative_path": source_metadata["relative_path"],
             "file_path": str(file_path),
+            "file_type": file_path.suffix.lower().lstrip("."),
+            "parse_supported": parse_supported,
+            "index_status": "supported" if parse_supported else "unsupported_file_type",
             "file_size_kb": round(stat.st_size / 1024, 2),
             "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
             "phong_ban": source_metadata["phong_ban"],
@@ -244,6 +312,41 @@ def extract_pdf_text(file_name: str):
         text_parts.append(f"\n--- Trang {page_index + 1} ---\n{text}")
 
     return "\n".join(text_parts).strip()
+
+
+def extract_docx_text(file_name: str):
+    file_path = _resolve_document_path(file_name)
+
+    try:
+        from docx import Document
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="Thieu thu vien python-docx") from exc
+
+    try:
+        document = Document(str(file_path))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="File DOCX khong doc duoc") from exc
+
+    parts = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
+    for table in document.tables:
+        for row in table.rows:
+            cells = [" ".join(cell.text.split()) for cell in row.cells if cell.text.strip()]
+            if cells:
+                parts.append(" | ".join(cells))
+
+    return "\n".join(parts).strip()
+
+
+def extract_document_text(file_name: str):
+    file_path = _resolve_document_path(file_name)
+    suffix = file_path.suffix.lower()
+
+    if suffix == ".pdf":
+        return extract_pdf_text(file_name)
+    if suffix == ".docx":
+        return extract_docx_text(file_name)
+
+    raise HTTPException(status_code=400, detail=f"Chua ho tro doc file {suffix}")
 
 
 async def upload_document(file: UploadFile):
@@ -478,7 +581,7 @@ def split_text_by_metadata(text: str):
 
 def build_document_chunks(file_name: str):
     file_path = _resolve_document_path(file_name)
-    text = extract_pdf_text(file_name)
+    text = extract_document_text(file_name)
     chunks = split_text_by_metadata(text)
     document_metadata = _extract_document_metadata(text, file_path.name)
     source_metadata = _extract_source_metadata(file_path)

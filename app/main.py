@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.routers.page_router import router as page_router
@@ -5,15 +7,25 @@ from app.routers.business_router import router as business_router
 from app.routers.chat_router import router as chat_router
 from app.routers.document_router import router as document_router
 from app.routers.health_router import router as health_router
+from app.routers.website_router import router as website_router
+from app.data.preload import preload_rag_components
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.rag_preload = await preload_rag_components()
+    yield
 
 app = FastAPI(
     title="FastAPI Chatbot",
     description="Chatbot RAG using FastAPI and Gemini",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.include_router(health_router, prefix="/api", tags=["Health"])
 app.include_router(chat_router, prefix="/api/chat", tags=["Chat"])
 app.include_router(business_router, prefix="/api/nghiep-vu", tags=["Nghiep vu"])
+app.include_router(website_router, prefix="/api/website", tags=["Website"])
 app.include_router(document_router, prefix="/api/documents", tags=["Documents"])
 app.include_router(page_router)

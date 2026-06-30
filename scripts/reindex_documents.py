@@ -19,12 +19,23 @@ def reindex_documents():
     files = list_documents()
     indexed_files = []
     failed_files = []
+    unsupported_files = []
     total_chunks = 0
 
     clear_collection()
 
     for file_info in files:
         file_name = file_info.get("relative_path") or file_info["file_name"]
+
+        if file_info.get("parse_supported") is False:
+            unsupported_files.append({
+                "file_name": file_info["file_name"],
+                "relative_path": file_name,
+                "file_type": file_info.get("file_type"),
+                "phong_ban": file_info.get("phong_ban"),
+            })
+            print(f"[SKIP] {file_name}: unsupported file type")
+            continue
 
         try:
             # Tách PDF thành chunks kèm metadata trước khi đưa vào vector store.
@@ -54,9 +65,11 @@ def reindex_documents():
 
     return {
         "indexed_file_count": len(indexed_files),
-        "discovered_pdf_count": len(files),
+        "discovered_document_count": len(files),
+        "unsupported_file_count": len(unsupported_files),
         "total_chunks_indexed": total_chunks,
         "vector_count": vector_count,
+        "unsupported_files": unsupported_files,
         "failed_files": failed_files,
     }
 
@@ -66,8 +79,9 @@ def main():
     result = reindex_documents()
 
     print("\n=== Reindex summary ===")
-    print(f"Discovered PDFs: {result['discovered_pdf_count']}")
+    print(f"Discovered documents: {result['discovered_document_count']}")
     print(f"Indexed files: {result['indexed_file_count']}")
+    print(f"Unsupported files: {result['unsupported_file_count']}")
     print(f"Indexed chunks: {result['total_chunks_indexed']}")
     print(f"Vector count: {result['vector_count']}")
 
