@@ -1,6 +1,7 @@
 import re
 
 from app.controller.chatbot_controller import _build_sources, _has_confident_evidence
+from app.data.business_mapping_store import search_business_mapping
 from app.data.business_knowledge import search_business_sources
 from app.data.elasticsearch_client import get_keywords, normalize_text
 from app.data.query_analyzer import QueryIntent, classify_query
@@ -159,6 +160,11 @@ def _extract_business_answer(docs: list[dict], query: str) -> str:
     source_text = f"Nguon: {source_names[0]}\n" if source_names else ""
 
     return source_text + "\n".join(selected_lines)
+
+
+async def ask_business_mapping(request):
+    """Hoi dap nghiep vu dua tren FAQ mapping, khong goi LLM."""
+    return search_business_mapping(request.query, top_k=request.top_k)
 
 
 async def search_business_knowledge(request):

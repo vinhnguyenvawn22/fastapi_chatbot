@@ -135,21 +135,25 @@ def _rule_decision(question: str) -> AmbiguityDecision | None:
     topic, topic_confidence = _detect_topic(normalized)
     if topic and topic_confidence >= HYDE_MIN_TOPIC_CONFIDENCE:
         return AmbiguityDecision(
-            DIRECT_RETRIEVAL,
+            HYDE_RETRIEVAL,
             topic,
             max(topic_confidence, 0.85),
-            "known_topic",
+            "known_topic_hyde",
+        )
+
+    if not _looks_garbled(question, normalized):
+        return AmbiguityDecision(
+            HYDE_RETRIEVAL,
+            None,
+            0.5,
+            "eligible_query_hyde",
         )
 
     return AmbiguityDecision(
         PROBE_RETRIEVAL,
         None,
         0.0,
-        (
-            "garbled_query_requires_probe"
-            if _looks_garbled(question, normalized)
-            else "unknown_topic_requires_probe"
-        ),
+        "garbled_query_requires_probe",
     )
 
 

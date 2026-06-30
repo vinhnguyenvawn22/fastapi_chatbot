@@ -113,6 +113,14 @@ VECTOR_COLLECTION_NAME = os.getenv("VECTOR_COLLECTION_NAME", "document_chunks")
 VECTOR_SEARCH_TOP_K = int(os.getenv("VECTOR_SEARCH_TOP_K", str(SEARCH_TOP_K)))
 VECTOR_MAX_DISTANCE = float(os.getenv("VECTOR_MAX_DISTANCE", "0.75"))
 
+BUSINESS_MAPPING_FILE = os.getenv(
+    "BUSINESS_MAPPING_FILE",
+    "storage/business_mapping/pcntt_mapping.json",
+)
+BUSINESS_MAPPING_MIN_CONFIDENCE = float(
+    os.getenv("BUSINESS_MAPPING_MIN_CONFIDENCE", "0.58")
+)
+
 UNETI_WEBSITE_DOMAIN = os.getenv("UNETI_WEBSITE_DOMAIN", "uneti.edu.vn")
 DISCOVERY_PROJECT_NUMBER = os.getenv("DISCOVERY_PROJECT_NUMBER")
 DISCOVERY_LOCATION = os.getenv("DISCOVERY_LOCATION", "global")

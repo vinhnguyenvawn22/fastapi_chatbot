@@ -735,6 +735,24 @@ def _compact_debug_sources(results: list[dict], limit: int = 5) -> list[dict]:
     ]
 
 
+def _hyde_debug_payload(result: dict, preview_chars: int = 500) -> dict:
+    payload = {
+        key: value
+        for key, value in (result or {}).items()
+        if key != "text"
+    }
+    text = " ".join(str((result or {}).get("text") or "").split())
+    if text:
+        payload["text_preview"] = (
+            text[:preview_chars].rsplit(" ", 1)[0].rstrip(" ,;:")
+            if len(text) > preview_chars
+            else text
+        )
+    else:
+        payload["text_preview"] = None
+    return payload
+
+
 def _probe_title_overlap(question: str, doc: dict) -> int:
     query_terms = set(get_keywords(question))
     if not query_terms:
@@ -975,11 +993,7 @@ async def search_documents(
                 debug.update({
                     "cache_hit": False,
                     "ambiguity": ambiguity_decision,
-                    "hyde": {
-                        key: value
-                        for key, value in hyde_result.items()
-                        if key != "text"
-                    },
+                    "hyde": _hyde_debug_payload(hyde_result),
                     "fallback_reason": "hyde_requested_clarification",
                     "final_results_count": 0,
                     "final_sources": [],
@@ -1060,11 +1074,7 @@ async def search_documents(
                     "metadata_results_count": len(metadata_results),
                     "ambiguity": ambiguity_decision,
                     "probe_retrieval": probe_debug,
-                    "grounded_hyde": {
-                        key: value
-                        for key, value in grounded_hyde_result.items()
-                        if key != "text"
-                    },
+                    "grounded_hyde": _hyde_debug_payload(grounded_hyde_result),
                     "bm25_results": bm25_debug,
                     "bm25_errors": bm25_errors,
                     "ann_results": ann_debug,
@@ -1198,16 +1208,8 @@ async def search_documents(
                 "attempted": False,
                 "reason": "replaced_by_ambiguity_hyde",
             },
-            "hyde": {
-                key: value
-                for key, value in hyde_result.items()
-                if key != "text"
-            },
-            "grounded_hyde": {
-                key: value
-                for key, value in grounded_hyde_result.items()
-                if key != "text"
-            },
+            "hyde": _hyde_debug_payload(hyde_result),
+            "grounded_hyde": _hyde_debug_payload(grounded_hyde_result),
             "bm25_results": bm25_debug,
             "bm25_errors": bm25_errors,
             "ann_results": ann_debug,

@@ -56,6 +56,8 @@ GENERAL_TERMS = {
 OUT_OF_SCOPE_TERMS = {
     "thoi tiet", "bong da", "gia vang", "chung khoan", "bitcoin",
     "nau an", "du lich", "mua gi", "phim", "am nhac",
+    "nhiet do", "bao nhieu do", "troi mua", "troi nang", "du bao",
+    "du bao thoi tiet", "hom nay nong", "hom nay lanh",
 }
 
 

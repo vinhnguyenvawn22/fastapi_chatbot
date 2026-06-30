@@ -1,0 +1,1328 @@
+{
+  "source_docx": "PCNTT_MAPPING_FILE.docx",
+  "record_count": 80,
+  "records": [
+    {
+      "id": "PCNTT_MAP_0001",
+      "unit": "PCNTT",
+      "stt": "1",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục I -> 1",
+      "question": "Mục tiêu và vai trò của module \"Tin tức – Thông báo\" trên hệ thống support là gì?",
+      "answer": "Module này là kho thông tin tập trung giúp giảng viên, cán bộ và sinh viên tiếp cận các thông tin chính thức từ nhà trường. Toàn bộ dữ liệu được đồng bộ từ website trường, các phòng ban và có cơ chế đề xuất thông tin theo vai trò người dùng.",
+      "keywords": [
+        "tin tức",
+        "thông báo",
+        "giới thiệu module",
+        "nguồn tin",
+        "đồng bộ thông tin"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0002",
+      "unit": "PCNTT",
+      "stt": "2",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục I -> 2",
+      "question": "Làm thế nào để tôi truy cập vào mục \"Tin tức – Thông báo\"?",
+      "answer": "Bạn truy cập hệ thống support tại địa chỉ https://support.uneti.edu.vn và đăng nhập tài khoản cá nhân. Sau đó, chọn mục \"Tin tức – Thông báo\" trên menu hoặc vào link trực tiếp: https://support.uneti.edu.vn/tin-tuc.",
+      "keywords": [
+        "cách truy cập",
+        "link thông báo",
+        "đăng nhập xem tin tức",
+        "đường dẫn"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0003",
+      "unit": "PCNTT",
+      "stt": "3",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục I -> 3 -> 3.1",
+      "question": "Chức năng \"Tiêu điểm\" trong mục Tin tức hiển thị thông tin dựa trên cơ chế nào?",
+      "answer": "Hệ thống sử dụng thuật toán tự động lọc nội dung theo vai trò, thời gian đăng và mức độ ưu tiên. Giảng viên sẽ thấy các văn bản quản lý, kế hoạch ; còn sinh viên sẽ được ưu tiên thấy lịch thi, tín chỉ, học phí...",
+      "keywords": [
+        "tiêu điểm",
+        "cá nhân hóa",
+        "hiển thị bài viết nổi bật",
+        "thuật toán lọc"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0004",
+      "unit": "PCNTT",
+      "stt": "4",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục I -> 3 -> 3.2 -> a",
+      "question": "Danh mục \"Thông báo\" của trường bao gồm các loại văn bản nào?",
+      "answer": "Danh mục này chứa các văn bản mang tính hành chính, chỉ đạo bao gồm: Lịch học/thi/công tác, quy định mới, hướng dẫn từ các phòng ban (Đào tạo, CTSV), công văn và quyết định.",
+      "keywords": [
+        "lịch học",
+        "lịch thi",
+        "công văn",
+        "quyết định",
+        "quy định mới",
+        "văn bản chỉ đạo"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0005",
+      "unit": "PCNTT",
+      "stt": "5",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục I -> 3 -> 3.2 -> b",
+      "question": "Mục \"Sự kiện\" trên trang thông báo hiển thị những nội dung gì?",
+      "answer": "Mục này tổng hợp các chương trình có thời gian tổ chức cụ thể như: Hội thảo khoa học, sự kiện tuyển sinh, hoạt động đoàn - hội, ngoại khóa, talkshow... Mỗi sự kiện đều ghi rõ thời gian, địa điểm.",
+      "keywords": [
+        "hội thảo",
+        "tuyển sinh",
+        "ngoại khóa",
+        "thời gian địa điểm sự kiện",
+        "talkshow"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0006",
+      "unit": "PCNTT",
+      "stt": "6",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục I -> 3 -> 3.3",
+      "question": "Tại sao tôi không thấy toàn bộ các bài viết cũ ở trang chủ Tin tức và làm sao để xem lại?",
+      "answer": "Để giữ giao diện gọn gàng, hệ thống chỉ hiển thị xem trước một số bài viết mới nhất. Bạn cần nhấn vào nút \"Xem thêm\" tại danh mục đó để chuyển sang trang danh sách hiển thị đầy đủ theo thứ tự thời gian.",
+      "keywords": [
+        "xem thêm",
+        "bài viết cũ",
+        "danh sách đầy đủ",
+        "hiển thị bài đăng"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0007",
+      "unit": "PCNTT",
+      "stt": "7",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục I -> 3 -> 3.4",
+      "question": "Làm thế nào để tìm kiếm bài viết cũ và quay trở lại danh sách mặc định khi cần?",
+      "answer": "Bạn nhập từ khóa liên quan đến tên bài đăng vào thanh tìm kiếm. Nếu muốn quay về danh sách đầy đủ ban đầu, bạn bấm vào biểu tượng \"Bỏ lọc\" để xóa từ khóa tìm kiếm.",
+      "keywords": [
+        "thanh tìm kiếm",
+        "tìm bài viết",
+        "bỏ lọc",
+        "đặt lại kết quả",
+        "từ khóa"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0008",
+      "unit": "PCNTT",
+      "stt": "8",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục I -> 3 -> 3.5",
+      "question": "Khi bấm xem chi tiết một bài đăng, tôi có thể tải văn bản đính kèm ở đâu?",
+      "answer": "Khi nhấp vào bài đăng, hệ thống sẽ điều hướng bạn đến trang thông tin chi tiết. Nếu bài viết có kèm tài liệu hoặc văn bản hướng dẫn, bạn có thể tải trực tiếp file về tại trang chi tiết này.",
+      "keywords": [
+        "tải file đính kèm",
+        "văn bản đính kèm",
+        "xem chi tiết",
+        "file tài liệu"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0009",
+      "unit": "PCNTT",
+      "stt": "9",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục I -> 4",
+      "question": "Cán bộ/Sinh viên có tự đăng bài viết hoặc thông báo lên module này được không?",
+      "answer": "Không. Việc đăng bài mới không thực hiện trong module này. Chỉ có các đơn vị truyền thông hoặc các phòng ban được nhà trường phân quyền mới có thể tạo nội dung gốc.",
+      "keywords": [
+        "đăng thông báo",
+        "tạo bài viết mới",
+        "quyền đăng bài",
+        "đơn vị truyền thông"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0010",
+      "unit": "PCNTT",
+      "stt": "10",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục II -> 1",
+      "question": "Module \"Hướng dẫn sử dụng phần mềm\" cung cấp những tài nguyên gì cho người dùng?",
+      "answer": "Module cung cấp đầy đủ các bộ cài đặt phần mềm nghiệp vụ, tài liệu hướng dẫn chi tiết (dạng PDF/DOC) và các video thuyết minh thao tác mô phỏng quy trình làm việc.",
+      "keywords": [
+        "tài nguyên kỹ thuật",
+        "bộ cài đặt",
+        "tài liệu pdf",
+        "video thao tác"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0011",
+      "unit": "PCNTT",
+      "stt": "11",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục II -> 3",
+      "question": "Giảng viên và cán bộ có thể tải bộ cài đặt các phân hệ nghiệp vụ nào trên hệ thống?",
+      "answer": "Cán bộ, giảng viên có thể tải các bộ cài đặt gồm: Phân hệ Quản lý đào tạo (EDU) và công cụ soạn câu hỏi trắc nghiệm Offline, phân hệ Quản lý nhân sự (HRM) và phần mềm Uneti Online.",
+      "keywords": [
+        "cài đặt EDU",
+        "trắc nghiệm offline",
+        "bộ cài HRM",
+        "phần mềm uneti online"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0012",
+      "unit": "PCNTT",
+      "stt": "12",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục II -> 4 -> 4.1",
+      "question": "Tôi có thể tìm thấy những tài liệu hướng dẫn nào liên quan đến thiết bị giảng đường?",
+      "answer": "Nhóm này gồm tài liệu hướng dẫn sử dụng ổ cắm âm bàn ; kết nối Tivi - Laptop ; phần mềm chuyển đổi USB sang HDMI (cho Windows/macOS) và hướng dẫn kết nối Tivi với Box trình chiếu.",
+      "keywords": [
+        "thiết bị phòng học",
+        "ổ cắm âm bàn",
+        "kết nối laptop với tivi",
+        "usb sang hdmi"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0013",
+      "unit": "PCNTT",
+      "stt": "13",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục II -> 4 -> 4.2",
+      "question": "Tài liệu hướng dẫn sử dụng phân hệ Quản lý đào tạo (EDU) được phân loại như thế nào?",
+      "answer": "Tài liệu EDU được phân nhỏ theo mục đích: Hướng dẫn cài đặt hệ thống ; hướng dẫn quản lý nhóm/phân quyền tài khoản ; và hướng dẫn sử dụng theo từng vai trò cụ thể (Giảng viên nhập điểm, Trợ lý, Trưởng khoa).",
+      "keywords": [
+        "tài liệu EDU",
+        "phân quyền tài khoản",
+        "nhập điểm",
+        "cố vấn học tập",
+        "admin khoa"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0014",
+      "unit": "PCNTT",
+      "stt": "14",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục II -> 4 -> 4.3",
+      "question": "Sinh viên muốn tìm tài liệu hướng dẫn học tập trực tuyến LMS thì xem ở đâu?",
+      "answer": "Sinh viên truy cập module Hướng dẫn sử dụng phần mềm , chọn mục \"Tài liệu hướng dẫn phân hệ LMS\" để xem và tải về file hướng dẫn cài đặt cũng như cách sử dụng các chức năng LMS. Link trực tiếp: https://support.uneti.edu.vn/huong-dan-su-dung-phan-mem?tai-lieu-huong-dan=tai-lieu-huong-dan-phan-he-lms.",
+      "keywords": [
+        "cài đặt LMS",
+        "hướng dẫn sinh viên",
+        "học trực tuyến",
+        "link lms"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0015",
+      "unit": "PCNTT",
+      "stt": "15",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục II -> 5 -> 5.1 -> a",
+      "question": "Hệ thống có các video hướng dẫn sử dụng Thủ tục hành chính một cửa cho sinh viên không?",
+      "answer": "Có. Hệ thống cung cấp chuỗi video hướng dẫn cài đặt app, đăng nhập và thao tác nộp hồ sơ Một cửa thuộc các mảng: Khảo thí, Đào tạo, CT&CTSV, Hành chính. Link: https://supportscom.uneti.edu.vn/huong-dan-su-dung-thu-tuc-hanh-chinh-sinh-vien/.",
+      "keywords": [
+        "video một cửa",
+        "thủ tục hành chính sinh viên",
+        "app điện thoại",
+        "nộp hồ sơ"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0016",
+      "unit": "PCNTT",
+      "stt": "16",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục II -> 5 -> 5.2",
+      "question": "Giảng viên có thể xem video hướng dẫn về những nghiệp vụ chuyên môn nào?",
+      "answer": "Giảng viên có thể xem video hướng dẫn xử lý hồ sơ một cửa ; sử dụng OneDrive ; báo hỏng/mượn thiết bị giảng đường ; chức năng CardVisit và quản lý Module Công tác giảng viên (nhân sự, lớp học phần, khối lượng chấm thi, thanh toán...).",
+      "keywords": [
+        "video giảng viên",
+        "công tác giảng viên",
+        "khối lượng coi thi",
+        "nhập khối lượng bù"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0017",
+      "unit": "PCNTT",
+      "stt": "17",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục II -> 5 -> 5.3 -> a",
+      "question": "Tôi gặp sự cố về Email nhà trường (quên mật khẩu, lỗi bảo mật 2 lớp) thì xử lý thế nào?",
+      "answer": "Bạn cần vào mục \"Hướng dẫn Email Google Workspace / LMS\" để xem video hướng dẫn tự khắc phục (đổi mật khẩu, bật bảo mật). Chỉ khi xem video mà không tự làm được mới gửi yêu cầu hỗ trợ qua module Thủ tục hành chính.",
+      "keywords": [
+        "quên mật khẩu email uneti",
+        "bảo mật 2 lớp",
+        "lỗi gmail trường",
+        "sao lưu email"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0018",
+      "unit": "PCNTT",
+      "stt": "18",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục III -> 3",
+      "question": "Khi thiết bị máy tính, mạng hoặc phần mềm của phòng ban bị hỏng, tôi liên hệ ai để xử lý khẩn cấp?",
+      "answer": "Bạn vào mục \"Thông tin chung\" để lấy SĐT cán bộ kỹ thuật theo từng cơ sở. Ví dụ sửa máy tính/mạng tại Hà Nội liên hệ thầy Công (Minh Khai/Lĩnh Nam - 0336804451), thầy Tuấn (Lĩnh Nam - 0967416869), thầy Thành (456 Minh Khai - 0834611991).",
+      "keywords": [
+        "số điện thoại kỹ thuật",
+        "thầy công",
+        "thầy tuấn",
+        "thầy thành",
+        "sửa mạng khẩn cấp"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0019",
+      "unit": "PCNTT",
+      "stt": "19",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục III -> 4 -> 4.2",
+      "question": "Quy trình thực hiện báo hỏng thiết bị phần cứng hoặc phần mềm trên trang Support như thế nào?",
+      "answer": "Bạn vào mục \"Báo hỏng\", chọn hình thức (theo hiện tượng hoặc cụ thể mã tài sản). Tiếp theo chọn vị trí, lĩnh vực sự cố, nhập mô tả chi tiết, đính kèm hình ảnh và nhấn \"Gửi yêu cầu\".",
+      "keywords": [
+        "các bước báo hỏng",
+        "lỗi phần mềm",
+        "hỏng camera",
+        "gửi yêu cầu sửa chữa"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0020",
+      "unit": "PCNTT",
+      "stt": "20",
+      "file_id": "PCNTT_FILE_01",
+      "source_file": "2026.03.03.ChatbotAI_CBGV_SV_V4",
+      "source_location": "Mục IV -> 2",
+      "question": "Tại sao tôi bị chặn không sử dụng được các chức năng khác trên Web Support sau khi đăng nhập?",
+      "answer": "Do Nhà trường đang triển khai một số phiếu \"Khảo sát Nội bộ bắt buộc\". Hệ thống sẽ tự động chuyển bạn sang trang khảo sát này, bạn bắt buộc phải hoàn thành và nộp phiếu khảo sát mới có thể tiếp tục sử dụng các module khác.",
+      "keywords": [
+        "bị chặn màn hình",
+        "lỗi đăng nhập không dùng được web",
+        "khảo sát bắt buộc"
+      ],
+      "audience": "Cán bộ giảng viên và sinh viên"
+    },
+    {
+      "id": "PCNTT_MAP_0021",
+      "unit": "PCNTT",
+      "stt": "1",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục I -> 1 -> 1.1",
+      "question": "Chức năng \"Kết quả học tập\" trên Web Support giúp sinh viên tra cứu được những gì?",
+      "answer": "Giúp sinh viên tra cứu toàn bộ điểm số theo từng học kỳ, hiển thị thông tin tổng hợp của từng học phần và xem chi tiết các thành phần điểm để dễ dàng đối chiếu.",
+      "keywords": [
+        "tra cứu điểm",
+        "xem điểm học kỳ",
+        "điểm thành phần",
+        "đối chiếu điểm số"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0022",
+      "unit": "PCNTT",
+      "stt": "2",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục I -> 1 -> 1.2",
+      "question": "Làm thế nào để sinh viên xem được kết quả học tập theo từng học kỳ?",
+      "answer": "Bước 1: Đăng nhập https://support.uneti.edu.vn. Bước 2: Chọn Module “Học tập” > “Kết quả học tập”. Bước 3: Chọn học kỳ cần xem để hiển thị danh sách các môn học.",
+      "keywords": [
+        "cách xem điểm",
+        "link kết quả học tập",
+        "chọn học kỳ xem điểm"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0023",
+      "unit": "PCNTT",
+      "stt": "3",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục I -> 1 -> 1.2",
+      "question": "Tôi muốn xem chi tiết các đầu điểm thành phần (điểm chuyên cần, kiểm tra) của một môn học thì làm thế nào?",
+      "answer": "Tại màn hình Kết quả học tập, bạn tìm môn học cần kiểm tra và nhấn nút \"Xem chi tiết\" ở cột thao tác. Hệ thống sẽ hiển thị cụ thể tất cả các điểm thành phần của môn học đó.",
+      "keywords": [
+        "điểm chuyên cần",
+        "điểm kiểm tra",
+        "điểm thành phần môn học",
+        "xem chi tiết"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0024",
+      "unit": "PCNTT",
+      "stt": "4",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục I -> 2 -> 2.1",
+      "question": "Làm cách nào để sinh viên kiểm tra Lịch học và Lịch thi của mình?",
+      "answer": "Bước 1: Đăng nhập hệ thống cá nhân. Bước 2: Chọn Module “Học tập” > “Lịch học – Lịch thi” hoặc truy cập đường dẫn trực tiếp: https://support.uneti.edu.vn/hoc-tap/lich-hoc-lich-thi.",
+      "keywords": [
+        "xem lịch học",
+        "lịch thi",
+        "thời khóa biểu",
+        "link lịch học lịch thi"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0025",
+      "unit": "PCNTT",
+      "stt": "5",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục I -> 2 -> 2.2",
+      "question": "Trên màn hình Lịch học - Lịch thi, sinh viên có thể xem thông tin theo những hình thức nào?",
+      "answer": "Sinh viên có thể linh hoạt chọn xem lịch hiển thị theo 2 hình thức giao diện: hiển thị theo dạng \"Danh sách\" (liệt kê tuyến tính) hoặc dạng \"Lịch tuần\" (trực quan theo thứ ngày).",
+      "keywords": [
+        "lịch tuần",
+        "dạng danh sách",
+        "giao diện lịch học",
+        "thời khóa biểu tuần"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0026",
+      "unit": "PCNTT",
+      "stt": "6",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục I -> 2 -> 2.2",
+      "question": "Làm thế nào để xem lịch học/lịch thi của một tuần bất kỳ trong năm học?",
+      "answer": "Bạn sử dụng bộ lọc \"Tuần học\" ở phía trên màn hình, nhấn chọn khoảng thời gian tuần cần tra cứu. Hệ thống sẽ tự động cập nhật thời khóa biểu và lịch thi của tuần đó.",
+      "keywords": [
+        "đổi tuần học",
+        "chọn tuần thi",
+        "xem lịch tuần tới",
+        "bộ lọc tuần"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0027",
+      "unit": "PCNTT",
+      "stt": "7",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục I -> 2 -> 2.2",
+      "question": "Sinh viên có thể lọc xem riêng \"Lịch học\" hoặc riêng \"Lịch thi\" được không?",
+      "answer": "Có. Hệ thống cung cấp bộ lọc \"Loại lịch\". Bạn có thể tích chọn xem \"Tất cả\", hoặc lọc riêng \"Lịch học\" để đi học, hoặc chọn \"Lịch thi\" để theo dõi lịch thi cử của mình.",
+      "keywords": [
+        "lọc lịch thi",
+        "lọc lịch học",
+        "loại lịch",
+        "tìm lịch thi"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0028",
+      "unit": "PCNTT",
+      "stt": "8",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục II -> 1",
+      "question": "Chức năng \"Khảo sát\" trên hệ thống UNETI Online nhằm mục đích gì?",
+      "answer": "Chức năng này là kênh để sinh viên đóng góp ý kiến, phản hồi về chất lượng giảng dạy, dịch vụ hỗ trợ và các hoạt động chung của Nhà trường, giúp cải tiến chất lượng quản lý.",
+      "keywords": [
+        "khảo sát sinh viên",
+        "lấy ý kiến sinh viên",
+        "phản hồi chất lượng"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0029",
+      "unit": "PCNTT",
+      "stt": "9",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục II -> 1",
+      "question": "Có mấy loại phiếu khảo sát trên hệ thống và sự khác biệt là gì?",
+      "answer": "Có 2 loại: Khảo sát Nội bộ (yêu cầu đăng nhập tài khoản sinh viên, hiển thị theo đợt) và Khảo sát Bên ngoài (không cần đăng nhập, truy cập qua link/mã QR công khai).",
+      "keywords": [
+        "loại khảo sát",
+        "khảo sát nội bộ",
+        "khảo sát bên ngoài",
+        "mã qr"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0030",
+      "unit": "PCNTT",
+      "stt": "10",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục II -> 2",
+      "question": "Quy trình tham gia một phiếu Khảo sát Nội bộ như thế nào?",
+      "answer": "Bước 1: Đăng nhập https://support.uneti.edu.vn. Bước 2: Vào mục “Khảo sát” > chọn phiếu khảo sát hiển thị trên màn hình. Bước 3: Trả lời đầy đủ các câu hỏi và nhấn “Nộp khảo sát”.",
+      "keywords": [
+        "các bước khảo sát",
+        "cách làm khảo sát",
+        "nộp phiếu khảo sát nội bộ"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0031",
+      "unit": "PCNTT",
+      "stt": "11",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục II -> 2",
+      "question": "Tại sao tôi vừa đăng nhập vào Web Support đã bị chặn màn hình và bắt làm khảo sát?",
+      "answer": "Do Nhà trường đang có đợt khảo sát nội bộ bắt buộc. Hệ thống sẽ tự động chuyển hướng bạn sang phiếu khảo sát này; bạn phải hoàn thành và nộp phiếu mới có thể sử dụng tiếp các chức năng khác.",
+      "keywords": [
+        "bị chặn màn hình",
+        "lỗi khảo sát bắt buộc",
+        "không bấm được menu"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0032",
+      "unit": "PCNTT",
+      "stt": "12",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục II -> 3",
+      "question": "Đối tượng nào có thể tham gia \"Khảo sát Bên ngoài\" và truy cập bằng cách nào?",
+      "answer": "Khảo sát bên ngoài dành cho người dùng không có tài khoản UNETI hoặc đợt khảo sát mở rộng. Bạn truy cập qua liên kết do trường cung cấp qua Email, Website, Tin nhắn hoặc quét mã QR.",
+      "keywords": [
+        "quét mã qr khảo sát",
+        "link khảo sát bên ngoài",
+        "không cần đăng nhập"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0033",
+      "unit": "PCNTT",
+      "stt": "13",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục II -> 3",
+      "question": "Làm thế nào để nộp một phiếu Khảo sát Bên ngoài thành công?",
+      "answer": "Bạn truy cập link/mã QR, điền đầy đủ thông tin cá nhân theo mẫu (Họ tên, Email, Lớp, Vai trò nếu có), trả lời các câu hỏi theo hướng dẫn và nhấn nút “Nộp khảo sát”.",
+      "keywords": [
+        "nộp khảo sát ngoài",
+        "điền thông tin cá nhân",
+        "hoàn thành phiếu"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0034",
+      "unit": "PCNTT",
+      "stt": "14",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục II -> 3",
+      "question": "Sinh viên được làm một phiếu khảo sát tối đa bao nhiêu lần?",
+      "answer": "Số lần tham gia phụ thuộc hoàn toàn vào quy định riêng của từng phiếu khảo sát. Có phiếu chỉ cho phép làm 1 lần duy nhất, có phiếu cho phép chỉnh sửa hoặc làm lại nhiều lần.",
+      "keywords": [
+        "làm khảo sát mấy lần",
+        "sửa phiếu khảo sát",
+        "giới hạn số lần làm"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0035",
+      "unit": "PCNTT",
+      "stt": "15",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục III -> 1",
+      "question": "Mục đích của chức năng \"Đánh giá thủ tục hành chính đã xử lý\" là gì?",
+      "answer": "Giúp sinh viên gửi phản hồi về mức độ hài lòng đối với các dịch vụ một cửa sau khi nhận kết quả hỗ trợ, làm cơ sở để Nhà trường theo dõi và nâng cao chất lượng phục vụ của các phòng ban.",
+      "keywords": [
+        "đánh giá một cửa",
+        "phản hồi thủ tục hành chính",
+        "mức độ hài lòng"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0036",
+      "unit": "PCNTT",
+      "stt": "16",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục III -> 1",
+      "question": "Thông tin cá nhân của sinh viên có bị lộ khi thực hiện đánh giá thủ tục một cửa không?",
+      "answer": "Không. Nhà trường cam kết bảo mật hoàn toàn thông tin người đánh giá. Dữ liệu này chỉ phục vụ duy nhất cho công tác cải tiến chất lượng dịch vụ hành chính của trường.",
+      "keywords": [
+        "bảo mật thông tin",
+        "ẩn danh đánh giá",
+        "có bị lộ tên không"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0037",
+      "unit": "PCNTT",
+      "stt": "17",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục III -> 2",
+      "question": "Làm thế nào để thực hiện đánh giá một yêu cầu thủ tục hành chính đã hoàn thành?",
+      "answer": "Bước 1: Đăng nhập hệ thống. Bước 2: Chọn mục “Thủ tục hành chính\" > \"Đánh giá – Thủ tục hành chính\". Bước 3: Tìm yêu cầu, nhấn \"Đánh giá\" tại cột thao tác, chọn mức hài lòng và gửi.",
+      "keywords": [
+        "link đánh giá thủ tục",
+        "các bước đánh giá một cửa",
+        "gửi phản hồi"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0038",
+      "unit": "PCNTT",
+      "stt": "18",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục III -> 2",
+      "question": "Sinh viên có tìm kiếm phiếu thủ tục cần đánh giá dựa trên những tiêu chí nào?",
+      "answer": "Tại màn hình danh sách, bạn có thể sử dụng bộ lọc để tìm nhanh theo Nhóm thủ tục, lọc theo Tên thủ tục, lọc theo Trạng thái xử lý hoặc xem theo Ngày đề nghị đã gửi.",
+      "keywords": [
+        "tìm phiếu đánh giá",
+        "lọc nhóm thủ tục",
+        "trạng thái xử lý"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0039",
+      "unit": "PCNTT",
+      "stt": "19",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục III -> 2",
+      "question": "Chức năng đánh giá thủ tục một cửa cung cấp bao nhiêu mức độ hài lòng để sinh viên lựa chọn?",
+      "answer": "Hệ thống cung cấp chính xác 05 mức độ hài lòng để sinh viên tích chọn đánh giá phù hợp với trải nghiệm thực tế của mình đối với dịch vụ nhận được.",
+      "keywords": [
+        "5 mức hài lòng",
+        "mức độ đánh giá",
+        "tích chọn độ hài lòng"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0040",
+      "unit": "PCNTT",
+      "stt": "20",
+      "file_id": "PCNTT_FILE_02",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV",
+      "source_location": "Mục III -> 2",
+      "question": "Sinh viên có bắt buộc phải nhập ý kiến đóng góp bằng chữ khi đánh giá thủ tục không?",
+      "answer": "Không bắt buộc. Phần nhập ý kiến đóng góp, bổ sung hoặc phản ánh thêm là mục không bắt buộc, sinh viên có thể bỏ qua và chỉ cần chọn mức độ hài lòng rồi nhấn nút gửi.",
+      "keywords": [
+        "ý kiến bổ sung",
+        "viết đóng góp",
+        "mục không bắt buộc"
+      ],
+      "audience": null
+    },
+    {
+      "id": "PCNTT_MAP_0041",
+      "unit": "PCNTT",
+      "stt": "1",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.1",
+      "question": "Chức năng \"Tra cứu – Khối lượng công tác giảng viên\" dùng để làm gì?",
+      "answer": "Chức năng này giúp giảng viên tự tra cứu, theo dõi thông tin nhân sự, lớp học phần được phân công, khối lượng giảng dạy, coi/chấm thi, NCKH, khối lượng bù và tổng hợp thanh toán dự kiến.",
+      "keywords": [
+        "khối lượng giảng dạy",
+        "coi thi",
+        "chấm thi",
+        "nckh",
+        "thanh toán dự kiến"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0042",
+      "unit": "PCNTT",
+      "stt": "2",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.1",
+      "question": "Giảng viên có thể xem được dữ liệu khối lượng công tác của người khác không?",
+      "answer": "Không. Giảng viên chỉ xem được dữ liệu của chính mình. Số liệu hiển thị sẽ phụ thuộc vào năm học, học kỳ và trạng thái duyệt tại từng màn hình.",
+      "keywords": [
+        "xem điểm người khác",
+        "bảo mật dữ liệu",
+        "phạm vi hiển thị"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0043",
+      "unit": "PCNTT",
+      "stt": "3",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.2",
+      "question": "Làm thế nào để truy cập chức năng Tra cứu khối lượng công tác giảng viên?",
+      "answer": "Cách 1: Đăng nhập https://support.uneti.edu.vn, chọn menu \"Công tác giảng viên\" -> \"Tra cứu – Khối lượng công tác giảng viên\". Cách 2: Truy cập thẳng đường link hệ thống cung cấp trong văn bản hướng dẫn.",
+      "keywords": [
+        "đường dẫn tra cứu",
+        "cách vào xem khối lượng",
+        "link công tác"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0044",
+      "unit": "PCNTT",
+      "stt": "4",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.3 -> a",
+      "question": "Trên màn hình \"Thông tin nhân sự\", tôi có thể kiểm tra những thông tin nào?",
+      "answer": "Bạn có thể kiểm tra thông tin định danh cá nhân gồm: Mã cán bộ, Họ và tên, Bộ môn, Khoa/Trung tâm, Chức vụ và Học vị hiện tại của mình.",
+      "keywords": [
+        "thông tin cá nhân",
+        "mã cán bộ",
+        "học vị",
+        "chức vụ giảng viên"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0045",
+      "unit": "PCNTT",
+      "stt": "5",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.3 -> b",
+      "question": "Làm sao để xem danh sách các lớp học phần mình được phân công giảng dạy?",
+      "answer": "Tại giao diện Tra cứu, bạn chọn tab \"Lớp học phần\". Hệ thống sẽ hiển thị danh sách các lớp bạn dạy trong năm học và học kỳ đã chọn.",
+      "keywords": [
+        "lớp học phần",
+        "danh sách lớp dạy",
+        "phân công giảng dạy"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0046",
+      "unit": "PCNTT",
+      "stt": "6",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.3 -> b",
+      "question": "Tại màn hình \"Lớp học phần\", tôi có thể xem được các thông số chi tiết nào?",
+      "answer": "Bạn xem được: Mã lớp học phần, Tên môn học, Số tín chỉ, Số sinh viên, Hình thức thi (Tự luận/Trắc nghiệm/Vấn đáp/Báo cáo) và Trạng thái đồng bộ dữ liệu.",
+      "keywords": [
+        "hình thức thi",
+        "số tín chỉ",
+        "sĩ số lớp",
+        "mã lớp học phần"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0047",
+      "unit": "PCNTT",
+      "stt": "7",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.3 -> c",
+      "question": "Màn hình \"Khối lượng giảng dạy\" cung cấp thông tin gì cho giảng viên?",
+      "answer": "Cung cấp bảng tính chi tiết số tiết giảng dạy thực tế của từng lớp học phần, bao gồm số tiết lý thuyết, thảo luận, thực hành và tổng số tiết quy đổi.",
+      "keywords": [
+        "số tiết dạy",
+        "tiết quy đổi",
+        "tiết lý thuyết",
+        "thực hành"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0048",
+      "unit": "PCNTT",
+      "stt": "8",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.3 -> d",
+      "question": "Tôi muốn kiểm tra số giờ coi thi và chấm thi của mình thì xem ở đâu?",
+      "answer": "Bạn chọn tab \"Khối lượng coi, chấm thi\". Hệ thống sẽ hiển thị chi tiết số lượt coi thi, số bài chấm thi tương ứng với từng học kỳ và mức quy đổi giờ cấu trúc tương ứng.",
+      "keywords": [
+        "giờ coi thi",
+        "công chấm thi",
+        "số lượt coi thi",
+        "số bài chấm"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0049",
+      "unit": "PCNTT",
+      "stt": "9",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.3 -> e",
+      "question": "\"Khối lượng bù\" trong mục tra cứu công tác giảng viên là gì?",
+      "answer": "Là màn hình hiển thị các khoản khối lượng được cộng bù hoặc điều chỉnh phát sinh ngoài kế hoạch giảng dạy chính thức đã được phê duyệt trong kỳ.",
+      "keywords": [
+        "khối lượng cộng thêm",
+        "dạy bù",
+        "điều chỉnh khối lượng"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0050",
+      "unit": "PCNTT",
+      "stt": "10",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.3 -> f",
+      "question": "Làm thế nào để biết tổng số tiền thanh toán dự kiến cho khối lượng công việc của tôi?",
+      "answer": "Bạn vào màn hình \"Tổng hợp khối lượng và thanh toán\". Hệ thống sẽ tự động tổng hợp tổng số tiết quy đổi từ dạy, coi/chấm thi, NCKH và áp đơn giá để ra tổng số tiền dự kiến nhận.",
+      "keywords": [
+        "tổng tiền nhận",
+        "đơn giá tiết dạy",
+        "thanh toán dự kiến",
+        "tổng hợp tiết"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0051",
+      "unit": "PCNTT",
+      "stt": "11",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.3",
+      "question": "Tại sao số liệu thanh toán hoặc khối lượng công tác của tôi hiển thị bằng 0 hoặc chưa chính xác?",
+      "answer": "Do số liệu hiển thị phụ thuộc vào tiến độ cập nhật và trạng thái phê duyệt của các phòng ban chức năng. Nếu chưa được duyệt, dữ liệu sẽ chưa hiển thị đúng.",
+      "keywords": [
+        "lỗi hiển thị bằng 0",
+        "số liệu sai",
+        "chưa cập nhật khối lượng"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0052",
+      "unit": "PCNTT",
+      "stt": "12",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "II -> 1 -> 1.1",
+      "question": "Mục đích của chức năng \"Quản lý thiết bị giảng đường – Báo hỏng\" là gì?",
+      "answer": "Giúp giảng viên báo cáo nhanh các sự cố, hỏng hóc về cơ sở vật chất, thiết bị (máy tính, máy chiếu, mạng, bàn ghế) tại các phòng học để bộ phận kỹ thuật kịp thời sửa chữa.",
+      "keywords": [
+        "hỏng máy chiếu",
+        "lỗi mạng phòng học",
+        "hỏng điều hòa",
+        "cơ sở vật chất"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0053",
+      "unit": "PCNTT",
+      "stt": "13",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "II -> 1 -> 1.2",
+      "question": "Giảng viên truy cập chức năng Báo hỏng thiết bị giảng đường như thế nào?",
+      "answer": "Đăng nhập hệ thống, tại menu chính chọn \"Quản lý thiết bị giảng đường\" -> Chọn tiếp chức năng \"Báo hỏng\".",
+      "keywords": [
+        "cách báo hỏng thiết bị",
+        "lối vào mục báo hỏng"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0054",
+      "unit": "PCNTT",
+      "stt": "14",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "II -> 1 -> 1.3",
+      "question": "Có mấy hình thức chọn thiết bị khi làm phiếu báo hỏng?",
+      "answer": "Có 2 hình thức: Chọn \"Theo hiện tượng sự cố\" (nếu không biết rõ mã thiết bị) hoặc chọn \"Theo cụ thể thiết bị\" (nếu xác định được chính xác thiết bị hỏng qua mã tài sản).",
+      "keywords": [
+        "hiện tượng sự cố",
+        "mã tài sản",
+        "phân loại báo hỏng"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0055",
+      "unit": "PCNTT",
+      "stt": "15",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "II -> 1 -> 1.3 -> Bước 1",
+      "question": "Khi báo hỏng thiết bị giảng đường, bước đầu tiên tôi cần chọn thông tin gì?",
+      "answer": "Bạn cần chọn chính xác Cơ sở (Ví dụ: Minh Khai, Lĩnh Nam, Nam Định), chọn Tòa nhà (Block) và chọn số Phòng học cụ thể xảy ra sự cố.",
+      "keywords": [
+        "chọn phòng học",
+        "chọn tòa nhà",
+        "cơ sở xảy ra sự cố"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0056",
+      "unit": "PCNTT",
+      "stt": "16",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "II -> 1 -> 1.3 -> Bước 2",
+      "question": "Mục \"Lĩnh vực sự cố\" và \"Tên sự cố\" trong phiếu báo hỏng được chọn như thế nào?",
+      "answer": "Hệ thống có danh mục gợi ý sẵn. Bạn chọn Lĩnh vực (Ví dụ: Thiết bị CNTT, Điện tử, Mạng) và Tên sự cố tương ứng (Ví dụ: Máy chiếu không lên, Mất kết nối mạng, Hỏng loa).",
+      "keywords": [
+        "lĩnh vực sự cố",
+        "máy chiếu không lên",
+        "mất wifi",
+        "hỏng loa"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0057",
+      "unit": "PCNTT",
+      "stt": "17",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "II -> 1 -> 1.3 -> Bước 3",
+      "question": "Tôi có bắt buộc phải chụp ảnh thiết bị hỏng khi gửi phiếu báo hỏng không?",
+      "answer": "Hệ thống có mục \"Đính kèm hình ảnh\". Dù không ghi bắt buộc cứng, nhưng việc đính kèm hình ảnh thực tế sự cố giúp kỹ thuật viên dễ dàng nhận diện và chuẩn bị linh kiện thay thế phù hợp.",
+      "keywords": [
+        "đính kèm hình ảnh",
+        "ảnh chụp sự cố",
+        "minh chứng hỏng"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0058",
+      "unit": "PCNTT",
+      "stt": "18",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "II -> 1 -> 1.3 -> Bước 4",
+      "question": "Sau khi nhập xong mô tả sự cố thiết bị, tôi làm gì để hoàn tất gửi yêu cầu?",
+      "answer": "Bạn kiểm tra lại thông tin, tích chọn đúng thiết bị lỗi trong danh sách hiển thị phía dưới (nếu chọn theo cụ thể thiết bị) và nhấn nút \"Gửi yêu cầu\".",
+      "keywords": [
+        "nút gửi yêu cầu",
+        "hoàn tất báo hỏng",
+        "gửi phiếu sửa chữa"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0059",
+      "unit": "PCNTT",
+      "stt": "19",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "II -> 2 -> 2.1",
+      "question": "Làm thế nào để giảng viên xem lại trạng thái các phiếu báo hỏng mình đã gửi?",
+      "answer": "Bạn truy cập menu \"Quản lý thiết bị giảng đường\" -> Chọn chức năng \"Danh sách yêu cầu báo hỏng\" để theo dõi tiến độ xử lý của kỹ thuật viên.",
+      "keywords": [
+        "xem tiến độ sửa chữa",
+        "danh sách phiếu báo hỏng",
+        "kiểm tra trạng thái"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0060",
+      "unit": "PCNTT",
+      "stt": "20",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "II -> 2 -> 2.2",
+      "question": "Màn hình \"Danh sách yêu cầu báo hỏng\" hiển thị những thông tin quản lý nào?",
+      "answer": "Màn hình hiển thị: Mã yêu cầu, Ngày gửi, Vị trí phòng học, Nội dung sự cố, Người tiếp nhận xử lý và Trạng thái xử lý (Chờ tiếp nhận/Đang xử lý/Đã hoàn thành).",
+      "keywords": [
+        "người tiếp nhận",
+        "trạng thái xử lý",
+        "mã yêu cầu sửa chữa",
+        "ngày gửi"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0061",
+      "unit": "PCNTT",
+      "stt": "21",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.1",
+      "question": "Chức năng \"Thống kê một cửa\" dành cho đối tượng cán bộ nào sử dụng?",
+      "answer": "Chức năng này dành cho Cán bộ quản lý hoặc Cán bộ được phân quyền nghiệp vụ để theo dõi, thống kê số liệu và đánh giá chất lượng giải quyết thủ tục hành chính của sinh viên.",
+      "keywords": [
+        "cán bộ quản lý",
+        "theo dõi một cửa",
+        "phân quyền thống kê"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0062",
+      "unit": "PCNTT",
+      "stt": "22",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.1",
+      "question": "Chức năng \"Thống kê một cửa\" giúp cán bộ quản lý được những chỉ số gì?",
+      "answer": "Giúp theo dõi tổng số lượng hồ sơ tiếp nhận, tỷ lệ hồ sơ đã xử lý đúng hạn/quá hạn, số lượng hồ sơ chưa đánh giá và biểu đồ mức độ hài lòng của sinh viên.",
+      "keywords": [
+        "tỷ lệ đúng hạn",
+        "hồ sơ quá hạn",
+        "chỉ số hài lòng",
+        "thống kê một cửa"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0063",
+      "unit": "PCNTT",
+      "stt": "23",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.2",
+      "question": "Làm thế nào để truy cập vào màn hình Thống kê một cửa?",
+      "answer": "Đăng nhập hệ thống support, chọn menu \"Thống kê một cửa\" hoặc truy cập trực tiếp qua đường dẫn do phân hệ quản lý cung cấp.",
+      "keywords": [
+        "link thống kê một cửa",
+        "menu một cửa cán bộ"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0064",
+      "unit": "PCNTT",
+      "stt": "24",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.3 -> a",
+      "question": "Tôi có thể lọc dữ liệu thống kê một cửa theo những tiêu chí nào để xem báo cáo?",
+      "answer": "Bạn có thể lọc theo: Từ ngày - Đến ngày (Khoảng thời gian), Tên nhóm thủ tục (Ví dụ: Đào tạo, CTSV), Tên cụ thể loại thủ tục, Khoa, Ngành học hoặc Khóa học của sinh viên.",
+      "keywords": [
+        "bộ lọc dữ liệu",
+        "lọc theo ngày",
+        "lọc theo khoa",
+        "chọn khóa học"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0065",
+      "unit": "PCNTT",
+      "stt": "25",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.3 -> a",
+      "question": "Sau khi thiết lập các điều kiện lọc dữ liệu một cửa, tôi phải ấn nút nào để xem kết quả?",
+      "answer": "Sau khi chọn xong các điều kiện tại bộ lọc, bạn bắt buộc phải nhấn nút \"Tìm kiếm\" để hệ thống cập nhật và hiển thị số liệu mới tương ứng.",
+      "keywords": [
+        "nút tìm kiếm",
+        "cập nhật số liệu",
+        "áp dụng bộ lọc"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0066",
+      "unit": "PCNTT",
+      "stt": "26",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.3 -> a",
+      "question": "Làm cách nào để hủy bỏ các điều kiện lọc và đưa dữ liệu thống kê về trạng thái ban đầu?",
+      "answer": "Bạn chỉ cần nhấn vào nút \"Xóa lọc\" (hoặc Đặt lại), hệ thống sẽ tự động xóa các tiêu chí đã chọn và đưa bảng thống kê về trạng thái mặc định toàn trường.",
+      "keywords": [
+        "xóa lọc",
+        "đặt lại bộ lọc",
+        "hủy bộ lọc",
+        "xem mặc định"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0067",
+      "unit": "PCNTT",
+      "stt": "27",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.3 -> b",
+      "question": "\"Biểu đồ mức độ hài lòng của sinh viên\" trong Thống kê một cửa hiển thị những mức đánh giá nào?",
+      "answer": "Biểu đồ tổng hợp tự động 4 mức độ đánh giá từ sinh viên sau khi nhận kết quả thủ tục, bao gồm: Rất hài lòng, Hài lòng, Bình thường, và Không hài lòng.",
+      "keywords": [
+        "đánh giá sinh viên",
+        "rất hài lòng",
+        "không hài lòng",
+        "biểu đồ đánh giá"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0068",
+      "unit": "PCNTT",
+      "stt": "28",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.3 -> b",
+      "question": "Biểu đồ mức độ hài lòng của sinh viên có tự động thay đổi theo bộ lọc không?",
+      "answer": "Có. Khi cán bộ thay đổi bộ lọc (Ví dụ chọn Khoa CNTT hoặc một thủ tục cụ thể), biểu đồ sẽ tự động cập nhật số liệu tương ứng để đánh giá chất lượng theo từng giai đoạn hoặc đơn vị.",
+      "keywords": [
+        "cập nhật biểu đồ",
+        "chất lượng xử lý theo khoa",
+        "tự động cập nhật"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0069",
+      "unit": "PCNTT",
+      "stt": "29",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.3 -> c",
+      "question": "Bảng thống kê thủ tục hành chính một cửa hiển thị chi tiết những cột thông tin nào?",
+      "answer": "Hiển thị chi tiết theo từng loại thủ tục, gồm: Tên thủ tục, Tổng số lượng đề nghị, Số lượng đã đánh giá và Số lượng chưa đánh giá.",
+      "keywords": [
+        "số lượng đề nghị",
+        "số lượng đã đánh giá",
+        "cột thông tin thống kê"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0070",
+      "unit": "PCNTT",
+      "stt": "30",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.3 -> c",
+      "question": "Trên bảng thống kê, số lượng hồ sơ \"đã đánh giá\" và \"chưa đánh giá\" được phân biệt màu sắc như thế nào?",
+      "answer": "Để dễ nhận diện trực quan: Số lượng hồ sơ đã đánh giá sẽ hiển thị màu xanh, còn số lượng hồ sơ chưa đánh giá sẽ hiển thị màu đỏ.",
+      "keywords": [
+        "phân biệt màu sắc",
+        "hiển thị màu xanh",
+        "hiển thị màu đỏ"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0071",
+      "unit": "PCNTT",
+      "stt": "31",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.3 -> c",
+      "question": "Làm thế nào để tìm nhanh một thủ tục cụ thể trong bảng thống kê có quá nhiều dòng?",
+      "answer": "Bạn có thể sử dụng ô \"Tìm nhóm\" hoặc ô \"Tìm tên yêu cầu\" nằm ngay phía trên bảng để gõ từ khóa lọc nhanh thủ tục cần theo dõi.",
+      "keywords": [
+        "tìm nhóm",
+        "tìm tên yêu cầu",
+        "gõ từ khóa lọc nhanh"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0072",
+      "unit": "PCNTT",
+      "stt": "32",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.3 -> d",
+      "question": "Làm thế nào để xem danh sách chi tiết các hồ sơ thuộc một thủ tục hành chính cụ thể?",
+      "answer": "Tại dòng chứa thủ tục cần xem trên bảng thống kê, bạn nhấn vào nút \"Xem chi tiết\" tại cột thao tác. Hệ thống sẽ mở ra danh sách hồ sơ chi tiết của riêng thủ tục đó.",
+      "keywords": [
+        "nút xem chi tiết",
+        "mở danh sách hồ sơ",
+        "cột thao tác"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0073",
+      "unit": "PCNTT",
+      "stt": "33",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.3 -> e",
+      "question": "Tôi muốn tải toàn bộ dữ liệu thống kê một cửa dưới dạng file Excel thì làm thế nào?",
+      "answer": "Bạn chỉ cần nhấn vào nút \"Xuất Excel\" trên giao diện màn hình. Hệ thống sẽ tự động xuất và tải xuống máy tính file báo cáo định dạng Excel chứa toàn bộ số liệu thống kê.",
+      "keywords": [
+        "xuất excel",
+        "tải file excel báo cáo",
+        "download file thống kê"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0074",
+      "unit": "PCNTT",
+      "stt": "34",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.2",
+      "question": "Giảng viên đăng nhập vào hệ thống UNETI Online bằng tài khoản nào?",
+      "answer": "Giảng viên sử dụng tài khoản cán bộ cá nhân do Nhà trường cấp để đăng nhập và sử dụng hệ thống tại đường dẫn: https://support.uneti.edu.vn.",
+      "keywords": [
+        "tài khoản giảng viên",
+        "đăng nhập cbgv",
+        "link hệ thống"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0075",
+      "unit": "PCNTT",
+      "stt": "35",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.1",
+      "question": "Sinh viên có thể nhìn thấy module \"Công tác giảng viên\" trên tài khoản của mình không?",
+      "answer": "Không. Module \"Công tác giảng viên\" được phân quyền bảo mật, chỉ hiển thị duy nhất trên giao diện tài khoản của Cán bộ, Giảng viên; hoàn toàn ẩn đối với tài khoản sinh viên.",
+      "keywords": [
+        "sinh viên xem công tác giảng viên",
+        "ẩn tính năng",
+        "phân quyền bảo mật"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0076",
+      "unit": "PCNTT",
+      "stt": "36",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.3",
+      "question": "Tại màn hình Khối lượng công tác, làm sao để chuyển đổi xem số liệu giữa các năm học khác nhau?",
+      "answer": "Ngay phía trên góc màn hình có bộ chọn \"Năm học\" và \"Học kỳ\". Bạn nhấn chọn năm học/học kỳ cần tra cứu, hệ thống sẽ tự động tải lại dữ liệu tương ứng.",
+      "keywords": [
+        "chọn năm học",
+        "chọn học kỳ",
+        "đổi năm học tra cứu"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0077",
+      "unit": "PCNTT",
+      "stt": "37",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "I -> 1 -> 1.3 -> b",
+      "question": "Làm thế nào để nhận biết dữ liệu giảng dạy của một lớp học phần đã được đồng bộ lên hệ thống?",
+      "answer": "Tại màn hình Lớp học phần, giảng viên kiểm tra cột \"Trạng thái đồng bộ dữ liệu\". Nếu ghi nhận thành công, nghĩa là số liệu thời khóa biểu và sĩ số đã được khớp nối.",
+      "keywords": [
+        "trạng thái đồng bộ",
+        "đồng bộ dữ liệu lớp học"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0078",
+      "unit": "PCNTT",
+      "stt": "38",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "II -> 1 -> 1.3 -> Bước 4",
+      "question": "Tôi có thể báo hỏng nhiều thiết bị trong cùng một phòng học trên một phiếu không?",
+      "answer": "Có, tại bước chọn thiết bị cụ thể ở Bước 4, bạn có thể tích chọn nhiều thiết bị xảy ra hiện tượng hỏng hóc trong phòng đó trước khi nhấn nút \"Gửi yêu cầu\".",
+      "keywords": [
+        "báo hỏng nhiều thiết bị",
+        "tích chọn nhiều thiết bị lỗi"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0079",
+      "unit": "PCNTT",
+      "stt": "39",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.3 -> e",
+      "question": "Sau khi xuất file báo cáo một cửa ra Excel, file này hiển thị những gì?",
+      "answer": "File Excel tải xuống sẽ chứa toàn bộ dữ liệu bảng thống kê bao gồm tên các thủ tục, tổng số lượt đề nghị, số lượng đã/chưa đánh giá đúng theo các tiêu chí bộ lọc.",
+      "keywords": [
+        "định dạng file tải xuống",
+        "dữ liệu file excel một cửa"
+      ],
+      "audience": "Cán bộ giảng viên"
+    },
+    {
+      "id": "PCNTT_MAP_0080",
+      "unit": "PCNTT",
+      "stt": "40",
+      "file_id": "PCNTT_FILE_03",
+      "source_file": "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV",
+      "source_location": "III -> 1 -> 1.3 -> a",
+      "question": "Cán bộ quản lý có thể xem thống kê một cửa của một Khoa cụ thể trong trường không?",
+      "answer": "Có, bằng cách sử dụng bộ lọc, chọn tên Khoa cần xem (Ví dụ: Khoa Công nghệ thông tin) rồi bấm \"Tìm kiếm\", toàn bộ bảng số liệu và biểu đồ hài lòng sẽ chỉ hiển thị riêng cho Khoa đó.",
+      "keywords": [
+        "thống kê theo khoa",
+        "xem số liệu khoa",
+        "lọc dữ liệu khoa"
+      ],
+      "audience": "Cán bộ giảng viên"
+    }
+  ]
+}

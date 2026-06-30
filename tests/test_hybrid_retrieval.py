@@ -304,11 +304,19 @@ def test_missing_exact_document_number_never_falls_back(monkeypatch):
     assert debug["reranking"]["reason"] == "no_exact_document"
 
 
-def test_rule_ambiguity_routes_known_topic_directly():
+def test_rule_ambiguity_routes_known_topic_to_hyde():
     decision = ambiguity._rule_decision("camera ai quản lý")
 
-    assert decision.action == ambiguity.DIRECT_RETRIEVAL
+    assert decision.action == ambiguity.HYDE_RETRIEVAL
     assert decision.topic == "camera"
+
+
+def test_rule_ambiguity_routes_short_eligible_question_to_hyde():
+    decision = ambiguity._rule_decision("ra trường cần gì")
+
+    assert decision.action == ambiguity.HYDE_RETRIEVAL
+    assert decision.topic == "tot_nghiep"
+    assert decision.reason == "known_topic_hyde"
 
 
 def test_rule_ambiguity_routes_specific_query_direct():
@@ -332,13 +340,13 @@ def test_rule_ambiguity_routes_garbled_query_to_probe():
     assert decision.reason == "garbled_query_requires_probe"
 
 
-def test_rule_ambiguity_does_not_use_query_length():
+def test_rule_ambiguity_routes_unknown_eligible_query_to_hyde():
     decision = ambiguity._rule_decision(
         "nội dung hoàn toàn mới chưa thuộc danh sách chủ đề viết tay hiện tại"
     )
 
-    assert decision.action == ambiguity.PROBE_RETRIEVAL
-    assert decision.reason == "unknown_topic_requires_probe"
+    assert decision.action == ambiguity.HYDE_RETRIEVAL
+    assert decision.reason == "eligible_query_hyde"
 
 
 def test_hyde_cache_avoids_repeated_gemini_calls(monkeypatch):
@@ -557,6 +565,7 @@ def test_hyde_ann_is_fused_but_original_question_is_used_for_rerank(monkeypatch)
     ]
     assert rerank_questions == ["camera ai quản lý"]
     assert debug["ann_hyde_results"]
+    assert debug["hyde"]["text_preview"] == "hypothetical camera administrative document"
     assert all("hypothetical" not in doc.get("content", "") for doc in results)
     assert "text" not in debug["hyde"]
 
