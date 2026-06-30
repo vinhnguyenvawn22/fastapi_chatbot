@@ -1,6 +1,7 @@
 from collections import Counter
 from copy import deepcopy
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import math
 import re
@@ -10,7 +11,13 @@ import xml.etree.ElementTree as ET
 from pypdf import PdfReader
 
 from app.controller.document_controller import build_document_chunks, chunk_text, list_documents
-from app.core.config import BUSINESS_DOCUMENTS_DIR, BUSINESS_SEARCH_TOP_K, MIN_SEARCH_SCORE
+from app.core.config import (
+    BUSINESS_DOCUMENTS_DIR,
+    BUSINESS_INDEX_CACHE_ENABLED,
+    BUSINESS_INDEX_CACHE_FILE,
+    BUSINESS_SEARCH_TOP_K,
+    MIN_SEARCH_SCORE,
+)
 from app.data.elasticsearch_client import get_keywords, normalize_text
 
 
@@ -26,6 +33,7 @@ BUSINESS_FAQ_SOURCE_TYPE = "business_faq_mapping"
 BUSINESS_FAQ_MIN_SCORE = max(MIN_SEARCH_SCORE, 14.0)
 BUSINESS_SOURCE_TYPE = "business_document"
 BUSINESS_GUIDED_VECTOR_MIN_SCORE = 0.35
+BUSINESS_INDEX_CACHE_VERSION = 1
 
 _XLSX_NS = {
     "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
@@ -69,6 +77,88 @@ def clear_business_knowledge_cache():
 
 def _business_path() -> Path:
     return Path(BUSINESS_DOCUMENTS_DIR).resolve()
+
+
+def _business_index_cache_path() -> Path:
+    return Path(BUSINESS_INDEX_CACHE_FILE).resolve()
+
+
+def _json_safe_signature(signature):
+    return json.loads(json.dumps(signature))
+
+
+def _serialize_chunk(chunk: dict) -> dict:
+    serialized = dict(chunk)
+    token_counts = serialized.get("_token_counts")
+    token_set = serialized.get("_token_set")
+
+    if isinstance(token_counts, Counter):
+        serialized["_token_counts"] = dict(token_counts)
+    if isinstance(token_set, set):
+        serialized["_token_set"] = sorted(token_set)
+
+    return serialized
+
+
+def _deserialize_chunk(chunk: dict) -> dict:
+    deserialized = dict(chunk)
+    deserialized["_token_counts"] = Counter(deserialized.get("_token_counts") or {})
+    deserialized["_token_set"] = set(deserialized.get("_token_set") or [])
+    return deserialized
+
+
+def _load_business_index_from_disk(signature):
+    if not BUSINESS_INDEX_CACHE_ENABLED:
+        return None
+
+    cache_path = _business_index_cache_path()
+    if not cache_path.is_file():
+        return None
+
+    try:
+        with cache_path.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+    except Exception:
+        return None
+
+    if payload.get("version") != BUSINESS_INDEX_CACHE_VERSION:
+        return None
+    if payload.get("signature") != _json_safe_signature(signature):
+        return None
+
+    chunks = [
+        _deserialize_chunk(chunk)
+        for chunk in payload.get("chunks", [])
+        if isinstance(chunk, dict)
+    ]
+    doc_freq = Counter(payload.get("doc_freq") or {})
+    total_docs = int(payload.get("total_docs") or len(chunks))
+
+    return chunks, doc_freq, total_docs
+
+
+def _write_business_index_to_disk(signature, chunks, doc_freq, total_docs):
+    if not BUSINESS_INDEX_CACHE_ENABLED:
+        return
+
+    cache_path = _business_index_cache_path()
+    payload = {
+        "version": BUSINESS_INDEX_CACHE_VERSION,
+        "signature": _json_safe_signature(signature),
+        "chunks": [_serialize_chunk(chunk) for chunk in chunks],
+        "doc_freq": dict(doc_freq),
+        "total_docs": total_docs,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = cache_path.with_suffix(f"{cache_path.suffix}.tmp")
+        with temp_path.open("w", encoding="utf-8") as file:
+            json.dump(payload, file, ensure_ascii=False)
+        temp_path.replace(cache_path)
+    except Exception:
+        return
 
 
 def _supported_files() -> list[Path]:
@@ -640,6 +730,16 @@ def _load_business_index():
             _BUSINESS_INDEX_CACHE["total_docs"],
         )
 
+    disk_cache = _load_business_index_from_disk(signature)
+    if disk_cache is not None:
+        chunks, doc_freq, total_docs = disk_cache
+        _BUSINESS_INDEX_CACHE["signature"] = signature
+        _BUSINESS_INDEX_CACHE["chunks"] = chunks
+        _BUSINESS_INDEX_CACHE["doc_freq"] = doc_freq
+        _BUSINESS_INDEX_CACHE["total_docs"] = total_docs
+        _BUSINESS_SEARCH_CACHE.clear()
+        return chunks, doc_freq, total_docs
+
     chunks = []
     doc_freq = Counter()
     root = _business_path()
@@ -709,6 +809,7 @@ def _load_business_index():
     _BUSINESS_INDEX_CACHE["doc_freq"] = doc_freq
     _BUSINESS_INDEX_CACHE["total_docs"] = len(chunks)
     _BUSINESS_SEARCH_CACHE.clear()
+    _write_business_index_to_disk(signature, chunks, doc_freq, len(chunks))
 
     return chunks, doc_freq, len(chunks)
 
