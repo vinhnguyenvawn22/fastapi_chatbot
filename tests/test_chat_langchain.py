@@ -66,6 +66,47 @@ def test_document_prompt_is_preserved_through_chat_prompt_template():
     assert not prompt.startswith("Human:")
 
 
+def test_document_prompt_includes_interpreted_question_without_replacing_original():
+    prompt = build_prompt(
+        "toi muon cham lai bai thi nhu the nao",
+        "<NGUON>noi dung phuc khao</NGUON>",
+        retrieval_plan={
+            "intent": "phuc_khao",
+            "domain": "khao_thi",
+            "query": "phuc khao ket qua bai thi diem thi hoc phan sinh vien",
+            "hyde": "Sinh vien de nghi phuc khao.",
+            "must": ["phuc khao", "diem thi"],
+            "status": "rule_success",
+        },
+    )
+
+    assert "CÂU HỎI GỐC:" in prompt
+    assert "toi muon cham lai bai thi nhu the nao" in prompt
+    assert "CÁCH HỆ THỐNG ĐÃ HIỂU CÂU HỎI:" in prompt
+    assert "Intent: phuc_khao" in prompt
+    assert "Truy vấn nghiệp vụ: phuc khao ket qua bai thi diem thi hoc phan sinh vien" in prompt
+    assert "Sinh vien de nghi phuc khao." not in prompt
+
+
+def test_document_prompt_includes_fallback_interpreted_block_for_empty_plan():
+    prompt = build_prompt(
+        "Noi dung van ban?",
+        "<NGUON>noi dung</NGUON>",
+        retrieval_plan={
+            "intent": "unknown",
+            "domain": "unknown",
+            "query": "",
+            "must": [],
+            "status": "not_needed",
+        },
+    )
+
+    assert "CÁCH HỆ THỐNG ĐÃ HIỂU CÂU HỎI:" in prompt
+    assert "Intent: unknown" in prompt
+    assert "Nhóm nghiệp vụ: unknown" in prompt
+    assert "Truy vấn nghiệp vụ: Noi dung van ban?" in prompt
+
+
 @pytest.mark.parametrize(
     "question",
     [
@@ -121,6 +162,135 @@ def test_aggregate_source_deduplication():
     )
 
     assert result == [duplicate, unique]
+
+
+def test_aggregate_generation_receives_business_retrieval_plan(monkeypatch):
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Phuc khao",
+        "content": "Sinh vien gui yeu cau phuc khao ket qua bai thi.",
+        "doc_name": "support-sv.docx",
+        "relative_path": "support-sv.docx",
+        "chunk_index": 1,
+        "keyword_score": 120.0,
+    }
+    retrieval_plan = {
+        "intent": "phuc_khao",
+        "domain": "khao_thi",
+        "query": "phuc khao ket qua bai thi diem thi hoc phan sinh vien",
+        "must": ["phuc khao", "diem thi"],
+        "status": "rule_success",
+    }
+    generated_states = []
+
+    async def fake_business(state):
+        return {
+            **state,
+            "docs": [business_doc],
+            "retrieval_debug": {"retrieval_plan": retrieval_plan},
+        }
+
+    async def fake_internal(state):
+        return {**state, "docs": [], "retrieval_debug": {}}
+
+    async def fake_generate(state):
+        generated_states.append(state)
+        return {**state, "answer": "Sinh vien thuc hien phuc khao theo tai lieu."}
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_business", fake_business)
+    monkeypatch.setattr(chatbot_controller, "retrieve_internal", fake_internal)
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_has_confident_evidence",
+        lambda question, docs: (bool(docs), "mock"),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_filter_usable_sources",
+        lambda question, docs: (docs, []),
+    )
+
+    result = asyncio.run(
+        chatbot_controller._answer_with_aggregate_documents(
+            RagTrace("toi muon cham lai bai thi"),
+            "toi muon cham lai bai thi",
+            "internal_document",
+            "document_terms",
+        )
+    )
+
+    assert result["answer"] == "Sinh vien thuc hien phuc khao theo tai lieu."
+    assert generated_states
+    assert generated_states[0]["question"] == "toi muon cham lai bai thi"
+    assert generated_states[0]["retrieval_debug"]["retrieval_plan"] == retrieval_plan
+
+
+def test_aggregate_prefers_mapping_guided_business_answer(monkeypatch):
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Muc II -> 5 -> 5.3 -> a",
+        "content": "Huong dan lay lai mat khau Gmail va xu ly su co email UNETI.",
+        "doc_name": "ChatbotAI_CBGV_SV_V4.docx",
+        "relative_path": "ChatbotAI_CBGV_SV_V4.docx",
+        "chunk_index": 1,
+        "keyword_score": 123.0,
+    }
+    internal_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 16 email",
+        "content": "Ca nhan co trach nhiem doi mat khau ban dau va bao mat thong tin.",
+        "doc_name": "quy-dinh-email.pdf",
+        "relative_path": "quy-dinh-email.pdf",
+        "chunk_index": 1,
+        "keyword_score": 25.0,
+    }
+    generated_docs = []
+
+    async def fake_business(state):
+        return {
+            **state,
+            "docs": [business_doc],
+            "retrieval_debug": {
+                "mapping_selected": True,
+                "retrieval_method": "location",
+                "mapping_question": "Email nha truong quen mat khau",
+            },
+        }
+
+    async def fake_internal(state):
+        return {**state, "docs": [internal_doc], "retrieval_debug": {}}
+
+    async def fake_generate(state):
+        generated_docs.append(state["docs"])
+        return {**state, "answer": "Dung huong dan nghiep vu de lay lai mat khau Gmail."}
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_business", fake_business)
+    monkeypatch.setattr(chatbot_controller, "retrieve_internal", fake_internal)
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_has_confident_evidence",
+        lambda question, docs: (bool(docs), "mock"),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_filter_usable_sources",
+        lambda question, docs: (docs, []),
+    )
+
+    result = asyncio.run(
+        chatbot_controller._answer_with_aggregate_documents(
+            RagTrace("toi muon doi mat khau email"),
+            "toi muon doi mat khau email",
+            "internal_document",
+            "document_terms",
+        )
+    )
+
+    assert generated_docs == [[business_doc]]
+    assert result["source"] == "Muc II -> 5 -> 5.3 -> a - ChatbotAI_CBGV_SV_V4.docx"
+    assert result["answer"] == "Dung huong dan nghiep vu de lay lai mat khau Gmail."
 
 
 def test_aggregate_rejects_keyword_false_positive_and_uses_internal(monkeypatch):
@@ -345,7 +515,7 @@ def test_ambiguous_chat_returns_clarification_without_retrieval(monkeypatch):
 
     assert result["intent"] == "clarification_needed"
     assert result["sources"] == []
-    assert result["answer"] == "Bạn cần hỏi rõ ràng hơn"
+    assert result["answer"] == "Bạn muốn kiểm tra đầu ra của chức năng hoặc hệ thống nào?"
 
 
 def test_probe_failure_returns_clarification_after_retrieval(monkeypatch):

@@ -3,7 +3,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain_core.runnables import RunnableLambda
-from langsmith import tracing_context
 
 from app.data.business_knowledge import search_business_sources
 from app.data.elasticsearch_client import search_documents
@@ -78,6 +77,15 @@ async def _retrieve_internal(state: PipelineState) -> PipelineState:
 async def _retrieve_business(state: PipelineState) -> PipelineState:
     debug = {}
     docs = await asyncio.to_thread(search_business_sources, state["question"], None, debug)
+    _trace(state, "business_retrieval_plan", {
+        "retrieval_plan": debug.get("retrieval_plan"),
+        "retrieval_plan_parse_error": debug.get("retrieval_plan_parse_error"),
+        "final_search_query": debug.get("final_search_query"),
+        "fallback_reason": debug.get("fallback_reason"),
+    }, {
+        "source_route": "business_document",
+        "reason": state.get("reason"),
+    })
     _trace(state, "lcel_business_retrieval", debug, {
         "source_route": "business_document",
         "reason": state.get("reason"),
@@ -114,10 +122,11 @@ async def _retrieve_website(state: PipelineState) -> PipelineState:
 def _build_generation_prompt(state: PipelineState) -> PipelineState:
     docs = state.get("docs") or []
     context = build_context(docs)
+    retrieval_plan = (state.get("retrieval_debug") or {}).get("retrieval_plan")
     if state.get("prompt_type") == "website":
         prompt = build_website_prompt(state["question"], context)
     else:
-        prompt = build_prompt(state["question"], context)
+        prompt = build_prompt(state["question"], context, retrieval_plan=retrieval_plan)
 
     _trace(state, "context_selection", {
         "selected_source_count": len(docs),
@@ -140,8 +149,19 @@ def _build_generation_prompt(state: PipelineState) -> PipelineState:
         "prompt_chars": len(prompt),
         "source_count": len(docs),
         "prompt_type": state.get("prompt_type", "document"),
+        "retrieval_plan": retrieval_plan,
+        "interpreted_question": (retrieval_plan or {}).get("query"),
+        "has_interpreted_question_block": (
+            "CÁCH HỆ THỐNG ĐÃ HIỂU CÂU HỎI:" in prompt
+        ),
     })
-    return {**state, "context": context, "prompt": prompt}
+    return {
+        **state,
+        "context": context,
+        "prompt": prompt,
+        "retrieval_plan": retrieval_plan,
+        "interpreted_question": (retrieval_plan or {}).get("query"),
+    }
 
 
 async def _generate_answer(state: PipelineState) -> PipelineState:
@@ -185,35 +205,31 @@ async def _generate_answer(state: PipelineState) -> PipelineState:
 
 
 internal_retriever = RunnableLambda(_retrieve_internal).with_config(
-    {"run_name": "internal_document_retriever"}
+    {"run_name": "Retrieval"}
 )
 business_retriever = RunnableLambda(_retrieve_business).with_config(
-    {"run_name": "business_document_retriever"}
+    {"run_name": "Retrieval"}
 )
 website_retriever = RunnableLambda(_retrieve_website).with_config(
-    {"run_name": "website_uneti_retriever"}
+    {"run_name": "Retrieval"}
 )
 generation_chain = (
-    RunnableLambda(_build_generation_prompt).with_config({"run_name": "chat_prompt_template"})
-    | RunnableLambda(_generate_answer).with_config({"run_name": "gemini_generation"})
+    RunnableLambda(_build_generation_prompt).with_config({"run_name": "Context Builder"})
+    | RunnableLambda(_generate_answer).with_config({"run_name": "LLM Generation"})
 )
 
 
 async def retrieve_internal(state: PipelineState) -> PipelineState:
-    with tracing_context(enabled=False):
-        return await internal_retriever.ainvoke(state)
+    return await internal_retriever.ainvoke(state)
 
 
 async def retrieve_business(state: PipelineState) -> PipelineState:
-    with tracing_context(enabled=False):
-        return await business_retriever.ainvoke(state)
+    return await business_retriever.ainvoke(state)
 
 
 async def retrieve_website(state: PipelineState) -> PipelineState:
-    with tracing_context(enabled=False):
-        return await website_retriever.ainvoke(state)
+    return await website_retriever.ainvoke(state)
 
 
 async def generate_answer(state: PipelineState) -> PipelineState:
-    with tracing_context(enabled=False):
-        return await generation_chain.ainvoke(state)
+    return await generation_chain.ainvoke(state)

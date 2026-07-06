@@ -16,9 +16,12 @@ from app.core.config import (
     BUSINESS_INDEX_CACHE_ENABLED,
     BUSINESS_INDEX_CACHE_FILE,
     BUSINESS_SEARCH_TOP_K,
+    HYDE_ENABLED,
+    HYDE_MAX_WORDS,
     MIN_SEARCH_SCORE,
 )
 from app.data.elasticsearch_client import get_keywords, normalize_text
+from app.data.gemini_client import ask_gemini
 
 
 _BUSINESS_INDEX_CACHE = {
@@ -34,6 +37,7 @@ BUSINESS_FAQ_MIN_SCORE = max(MIN_SEARCH_SCORE, 14.0)
 BUSINESS_SOURCE_TYPE = "business_document"
 BUSINESS_GUIDED_VECTOR_MIN_SCORE = 0.35
 BUSINESS_INDEX_CACHE_VERSION = 1
+BUSINESS_MAPPING_MIN_TOPIC_OVERLAP = 2
 
 _XLSX_NS = {
     "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
@@ -49,6 +53,9 @@ _BUSINESS_FAQ_QUERY_EXPANSION = {
     "thoi khoa bieu": ["lich hoc", "lich thi"],
     "lich hoc": ["hoc tap", "lich hoc lich thi"],
     "lich thi": ["hoc tap", "lich hoc lich thi"],
+    "cham lai": ["phuc khao", "phuc khao bai thi", "diem thi", "ket qua thi", "hoc phan"],
+    "bai thi": ["phuc khao", "diem thi", "ket qua thi", "hoc phan"],
+    "phuc khao": ["cham lai bai thi", "diem thi", "ket qua thi", "hoc phan"],
     "bao hong": ["bao hong thiet bi", "su co thiet bi", "phong hoc", "giang duong"],
     "hong": ["bao hong", "su co", "thiet bi"],
     "may chieu": ["thiet bi", "bao hong thiet bi", "phong hoc", "giang duong"],
@@ -65,6 +72,183 @@ _BUSINESS_FAQ_QUERY_EXPANSION = {
     "danh gia thu tuc": ["muc do hai long", "thu tuc hanh chinh mot cua"],
     "tin tuc thong bao": ["module tin tuc thong bao", "thong bao tren support"],
 }
+_BUSINESS_HYDE_ERROR_MARKERS = (
+    "he thong ai tam thoi vuot gioi han",
+    "he thong ai dang ban",
+    "loi khi goi gemini api",
+    "khong tim thay can cu du ro",
+)
+_BUSINESS_GENERIC_INTENT_TERMS = {
+    "lam",
+    "the",
+    "nao",
+    "sao",
+    "nhu",
+    "dau",
+    "muon",
+    "can",
+    "hoi",
+    "cach",
+    "bai",
+    "lai",
+    "toi",
+    "em",
+    "anh",
+    "chi",
+    "duoc",
+}
+_BUSINESS_DISTINCTIVE_TERMS = {
+    "lms",
+    "email",
+    "support",
+    "password",
+    "mat",
+    "khau",
+    "may",
+    "chieu",
+}
+_BUSINESS_DOMAIN_TERMS = {
+    "exam_academic": {
+        "cham",
+        "thi",
+        "diem",
+        "phuc",
+        "khao",
+        "ket",
+        "qua",
+        "hoc",
+        "phan",
+        "sinh",
+        "vien",
+    },
+    "leave_academic": {
+        "nghi",
+        "tam",
+        "ngung",
+        "bao",
+        "luu",
+        "thoi",
+        "hoc",
+        "sinh",
+        "vien",
+    },
+    "support_equipment": {
+        "bao",
+        "hong",
+        "thiet",
+        "bi",
+        "may",
+        "chieu",
+        "phong",
+        "hoc",
+        "giang",
+        "duong",
+    },
+    "schedule_lookup": {
+        "lich",
+        "thi",
+        "hoc",
+        "thoi",
+        "khoa",
+        "bieu",
+        "tra",
+        "cuu",
+    },
+}
+_BUSINESS_DOMAIN_CORE_TERMS = {
+    "exam_academic": {
+        "cham",
+        "thi",
+        "diem",
+        "phuc",
+        "khao",
+    },
+    "leave_academic": {
+        "nghi",
+        "tam",
+        "ngung",
+        "bao",
+        "luu",
+        "thoi",
+        "hoc",
+    },
+    "support_equipment": {
+        "bao",
+        "hong",
+        "thiet",
+        "bi",
+        "may",
+        "chieu",
+    },
+    "schedule_lookup": {
+        "lich",
+        "thi",
+        "hoc",
+        "thoi",
+        "khoa",
+        "bieu",
+    },
+}
+_BUSINESS_DOMAIN_PHRASES = {
+    "exam_academic": {
+        "cham lai",
+        "bai thi",
+        "diem thi",
+        "phuc khao",
+        "ket qua thi",
+        "khieu nai diem",
+    },
+    "leave_academic": {
+        "nghi hoc",
+        "tam ngung hoc",
+        "bao luu",
+        "thoi hoc",
+    },
+    "support_equipment": {
+        "bao hong",
+        "may chieu",
+        "thiet bi",
+    },
+    "schedule_lookup": {
+        "lich thi",
+        "lich hoc",
+        "thoi khoa bieu",
+    },
+}
+_MAPPING_JUDGE_CACHE = {}
+
+
+def _empty_retrieval_plan(status: str = "not_needed", error: str | None = None) -> dict:
+    return {
+        "intent": "unknown",
+        "domain": "unknown",
+        "query": "",
+        "hyde": "",
+        "must": [],
+        "avoid": [],
+        "clarification_needed": False,
+        "clarification_question": None,
+        "status": status,
+        "error": error,
+        "parse_error": None,
+    }
+
+
+def _is_exam_regrade_query(text: str) -> bool:
+    normalized = normalize_text(text)
+    return any(
+        phrase in normalized
+        for phrase in (
+            "phuc khao",
+            "cham lai",
+            "cham lai bai thi",
+            "xem xet lai diem",
+            "khieu nai diem",
+        )
+    ) or (
+        "bai thi" in normalized
+        and any(term in normalized for term in ("diem", "cham", "ket qua"))
+    )
 
 
 def clear_business_knowledge_cache():
@@ -73,6 +257,7 @@ def clear_business_knowledge_cache():
     _BUSINESS_INDEX_CACHE["doc_freq"] = Counter()
     _BUSINESS_INDEX_CACHE["total_docs"] = 0
     _BUSINESS_SEARCH_CACHE.clear()
+    _MAPPING_JUDGE_CACHE.clear()
 
 
 def _business_path() -> Path:
@@ -310,6 +495,265 @@ def _expanded_business_faq_query(query: str) -> str:
             expanded_terms.extend(terms)
 
     return " ".join(dict.fromkeys(expanded_terms))
+
+
+def _business_hyde_debug(status: str, text: str = "", error: str | None = None) -> dict:
+    return {
+        "attempted": status not in {"disabled", "not_needed"},
+        "status": status,
+        "char_count": len(text),
+        "word_count": len(text.split()),
+        "text_preview": text[:500] if text else None,
+        "error": error,
+    }
+
+
+def _is_business_hyde_error(text: str) -> bool:
+    normalized = normalize_text(text)
+    return any(marker in normalized for marker in _BUSINESS_HYDE_ERROR_MARKERS)
+
+
+def _generate_business_hyde_query(question: str) -> dict:
+    question = " ".join(str(question or "").split())
+    if not HYDE_ENABLED:
+        return {"text": "", **_business_hyde_debug("disabled")}
+    if not question:
+        return {"text": "", **_business_hyde_debug("empty_question")}
+
+    prompt = f"""
+Bạn là bộ tạo truy vấn giả định HyDE cho hệ thống tra cứu tài liệu nghiệp vụ nội bộ của nhà trường.
+
+Đoạn bạn tạo ra chỉ dùng để tìm tài liệu khi file mapping không có kết quả phù hợp hoặc kết quả mapping bị nghi ngờ sai chủ đề. Đây không phải câu trả lời cuối cùng cho người dùng.
+
+Nhiệm vụ:
+Đọc câu hỏi gốc của người dùng, xác định đúng đối tượng nghiệp vụ chính, rồi tạo một đoạn mô tả giả định ngắn giúp hệ thống tìm được tài liệu liên quan.
+
+Yêu cầu:
+- Giữ đúng chủ đề và các danh từ chính trong câu hỏi gốc.
+- Không trả lời trực tiếp cho người dùng.
+- Không bịa tên phòng ban, thời hạn, đường dẫn, biểu mẫu, số bước, điều kiện hoặc quy định cụ thể nếu câu hỏi không nêu.
+- Chuyển cách hỏi đời thường sang thuật ngữ nghiệp vụ có khả năng xuất hiện trong tài liệu.
+- Ưu tiên thuật ngữ có khả năng xuất hiện trong hướng dẫn nghiệp vụ, quy trình, quy chế, thông báo hoặc biểu mẫu.
+- Tập trung vào quy trình nghiệp vụ, thao tác hệ thống, vai trò xử lý, biểu mẫu, hồ sơ, trạng thái, phê duyệt, tiếp nhận, kiểm tra, lưu hồ sơ, trả kết quả.
+- Nếu câu hỏi có các từ chung như “làm thế nào”, “làm sao”, “như nào”, “ở đâu”, hãy bỏ qua các từ đó khi xác định chủ đề.
+- Không tự chuyển câu hỏi sang chủ đề tìm kiếm bài viết, giao diện, website, chatbot, thanh tìm kiếm, nút bấm, danh sách, bộ lọc nếu người dùng không hỏi rõ về các nội dung đó.
+- Nếu câu hỏi liên quan sinh viên/học vụ/thi cử, dùng thuật ngữ như: sinh viên, học phần, điểm thi, kết quả thi, phúc khảo, bảo lưu, tạm ngừng học, thôi học, học lại, đăng ký học phần, học phí, hồ sơ, đơn đề nghị.
+- Nếu câu hỏi liên quan xử lý yêu cầu trên hệ thống, dùng thuật ngữ như: tạo yêu cầu, tiếp nhận, phân công, xử lý, phê duyệt, cập nhật trạng thái, tra cứu, phản hồi, hoàn tất.
+- Không quá 80 từ.
+- Không markdown, không JSON.
+
+Ví dụ:
+Câu hỏi: tôi muốn chấm lại bài thi thì làm thế nào
+Đoạn mô tả giả định: Sinh viên đề nghị phúc khảo bài thi, xem xét lại điểm thi hoặc khiếu nại kết quả thi cần thực hiện thủ tục theo quy định, hồ sơ hoặc đơn đề nghị liên quan đến kết quả thi và học phần.
+
+Câu hỏi: tôi muốn nghỉ học thì làm như nào
+Đoạn mô tả giả định: Sinh viên xin nghỉ học tạm thời, tạm ngừng học, bảo lưu kết quả học tập hoặc xin thôi học cần thực hiện thủ tục, hồ sơ hoặc đơn đề nghị theo quy định đào tạo của nhà trường.
+
+Câu hỏi: tôi muốn báo hỏng máy chiếu
+Đoạn mô tả giả định: Quy trình tiếp nhận và xử lý yêu cầu báo hỏng thiết bị phòng học, máy chiếu hoặc thiết bị giảng dạy; người dùng tạo yêu cầu, đơn vị phụ trách kiểm tra, xử lý và cập nhật trạng thái.
+
+Câu hỏi: làm sao để xem lịch thi
+Đoạn mô tả giả định: Hướng dẫn tra cứu lịch thi trên hệ thống nghiệp vụ; người dùng đăng nhập, chọn chức năng lịch thi hoặc kế hoạch thi, xem thông tin học phần, thời gian, phòng thi và trạng thái hiển thị.
+
+Câu hỏi gốc:
+{question}
+
+Đoạn mô tả giả định:
+""".strip()
+
+    try:
+        text = " ".join(ask_gemini(prompt).split()).strip()
+    except Exception as exc:
+        return {"text": "", **_business_hyde_debug("error", error=str(exc))}
+
+    if not text:
+        return {"text": "", **_business_hyde_debug("empty_response")}
+    if _is_business_hyde_error(text):
+        return {"text": "", **_business_hyde_debug("llm_error", text=text)}
+
+    text = " ".join(text.split()[: min(HYDE_MAX_WORDS, 80)])
+    return {"text": text, **_business_hyde_debug("success", text=text)}
+
+
+def _trim_phrase_list(values, max_items: int = 5) -> list[str]:
+    phrases = []
+    for value in values or []:
+        phrase = " ".join(str(value or "").split()).strip()
+        if phrase and phrase not in phrases:
+            phrases.append(phrase)
+        if len(phrases) >= max_items:
+            break
+    return phrases
+
+
+def _rule_based_retrieval_plan(question: str) -> dict | None:
+    normalized = normalize_text(question)
+    if "xem lai diem" in normalized and "thi" not in normalized:
+        return {
+            **_empty_retrieval_plan("rule_clarification"),
+            "intent": "unclear",
+            "domain": "hoc_tap_or_khao_thi",
+            "query": "xem diem hoc tap hoac phuc khao diem thi",
+            "must": ["diem"],
+            "clarification_needed": True,
+            "clarification_question": (
+                "Bạn muốn xem điểm đã công bố, hay muốn gửi yêu cầu phúc khảo điểm thi?"
+            ),
+        }
+    if _is_exam_regrade_query(question):
+        return {
+            **_empty_retrieval_plan("rule_success"),
+            "intent": "phuc_khao",
+            "domain": "khao_thi",
+            "query": "phuc khao ket qua bai thi diem thi hoc phan sinh vien",
+            "hyde": (
+                "Sinh vien de nghi phuc khao khi cho rang diem thi hoac ket qua bai thi "
+                "da cong bo chua chinh xac."
+            ),
+            "must": ["phuc khao", "diem thi", "bai thi", "hoc phan"],
+            "avoid": ["bai bao", "tap chi", "thanh tra cham thi", "hoi dong thi"],
+        }
+    return None
+
+
+def _retrieval_plan_prompt(question: str) -> str:
+    return f"""
+Bạn là bộ phân tích truy vấn cho hệ thống RAG tra cứu tài liệu nghiệp vụ nội bộ trường đại học.
+
+Nhiệm vụ của bạn KHÔNG phải trả lời người dùng. Nhiệm vụ là hiểu câu hỏi, viết lại truy vấn tìm tài liệu, và xác định cách truy hồi phù hợp.
+
+Hãy đọc câu hỏi người dùng và trả về JSON hợp lệ theo schema:
+
+{{
+  "intent": "ten_intent_ngan_gon_hoac_unclear",
+  "domain": "nhom_nghiep_vu",
+  "query": "truy vấn tìm kiếm ngắn bằng thuật ngữ nghiệp vụ",
+  "hyde": "mô tả giả định ngắn để tìm tài liệu, không bịa quy trình cụ thể",
+  "must": ["từ hoặc cụm từ nên có trong tài liệu đúng"],
+  "avoid": ["từ hoặc cụm từ thường xuất hiện trong tài liệu sai miền"],
+  "clarification_needed": true hoặc false,
+  "clarification_question": "câu hỏi làm rõ nếu cần, ngược lại null"
+}}
+
+Quy tắc:
+- Không trả lời trực tiếp câu hỏi của người dùng.
+- Không bịa tên phòng ban, đường dẫn, biểu mẫu, thời hạn, số bước, điều kiện hoặc quy định nếu câu hỏi không nêu.
+- Chuyển ngôn ngữ đời thường sang thuật ngữ nghiệp vụ có khả năng xuất hiện trong tài liệu.
+- Giữ lại ý chính của người dùng.
+- Nếu câu hỏi đủ rõ, đặt clarification_needed = false.
+- Nếu câu hỏi có nhiều cách hiểu hợp lý và có nguy cơ tìm sai tài liệu, đặt clarification_needed = true.
+- Trường "query" phải ngắn, ưu tiên danh từ và thuật ngữ nghiệp vụ.
+- Trường "hyde" tối đa 45 từ.
+- Trường "must" tối đa 5 cụm từ.
+- Trường "avoid" tối đa 5 cụm từ.
+- Chỉ trả về JSON, không markdown, không giải thích.
+
+Một số quy đổi thuật ngữ:
+- "chấm lại bài thi", "xem lại điểm thi", "khiếu nại điểm", "điểm thi sai" => "phúc khảo", domain "khao_thi"
+- "nghỉ học một thời gian", "dừng học tạm thời" => "tạm ngừng học", "bảo lưu", domain "hoc_vu"
+- "xem điểm", "điểm học tập" => "kết quả học tập", domain "hoc_tap"
+- "báo hỏng máy chiếu", "hỏng thiết bị phòng học" => "báo hỏng thiết bị", domain "thiet_bi"
+- "quên mật khẩu", "không đăng nhập được email/LMS" => "khôi phục mật khẩu", "đăng nhập", domain "tai_khoan"
+- "lịch học", "thời khóa biểu", "lịch thi" => domain "lich_hoc_lich_thi"
+
+Ví dụ 1:
+Câu hỏi: tôi muốn chấm lại bài thi như thế nào
+JSON:
+{{
+  "intent": "phuc_khao",
+  "domain": "khao_thi",
+  "query": "phúc khảo kết quả bài thi điểm thi học phần sinh viên",
+  "hyde": "Sinh viên đề nghị phúc khảo khi cho rằng điểm thi hoặc kết quả bài thi đã công bố chưa chính xác.",
+  "must": ["phúc khảo", "điểm thi", "bài thi", "học phần"],
+  "avoid": ["bài báo", "tạp chí", "thanh tra chấm thi", "hội đồng thi"],
+  "clarification_needed": false,
+  "clarification_question": null
+}}
+
+Ví dụ 2:
+Câu hỏi: em muốn xem lại điểm
+JSON:
+{{
+  "intent": "unclear",
+  "domain": "hoc_tap_or_khao_thi",
+  "query": "xem điểm học tập hoặc phúc khảo điểm thi",
+  "hyde": "",
+  "must": ["điểm"],
+  "avoid": [],
+  "clarification_needed": true,
+  "clarification_question": "Bạn muốn xem điểm đã công bố, hay muốn gửi yêu cầu phúc khảo điểm thi?"
+}}
+
+Câu hỏi người dùng:
+{question}
+
+JSON:
+""".strip()
+
+
+def _parse_retrieval_plan(raw_response: str, question: str) -> dict:
+    raw_text = str(raw_response or "").strip()
+    try:
+        parsed = json.loads(_strip_json_code_fence(raw_text))
+    except Exception as exc:
+        fallback = _empty_retrieval_plan("parse_error", error=str(exc))
+        fallback["query"] = question
+        fallback["raw_response"] = raw_text[:1000]
+        fallback["parse_error"] = str(exc)
+        return fallback
+
+    plan = _empty_retrieval_plan("success")
+    plan.update({
+        "intent": str(parsed.get("intent") or "unknown").strip() or "unknown",
+        "domain": str(parsed.get("domain") or "unknown").strip() or "unknown",
+        "query": " ".join(str(parsed.get("query") or "").split()),
+        "hyde": " ".join(str(parsed.get("hyde") or "").split()[:45]),
+        "must": _trim_phrase_list(parsed.get("must"), 5),
+        "avoid": _trim_phrase_list(parsed.get("avoid"), 5),
+        "clarification_needed": bool(parsed.get("clarification_needed")),
+        "clarification_question": (
+            " ".join(str(parsed.get("clarification_question") or "").split())
+            or None
+        ),
+        "raw_response": raw_text[:1000],
+    })
+    if plan["clarification_needed"] and not plan["clarification_question"]:
+        plan["clarification_question"] = "Bạn cần hỏi rõ ràng hơn"
+    return plan
+
+
+def _generate_business_retrieval_plan(question: str) -> dict:
+    question = " ".join(str(question or "").split())
+    if not question:
+        return _empty_retrieval_plan("empty_question")
+
+    rule_plan = _rule_based_retrieval_plan(question)
+    if rule_plan is not None:
+        return rule_plan
+
+    if not HYDE_ENABLED:
+        disabled = _empty_retrieval_plan("disabled")
+        disabled["query"] = question
+        return disabled
+
+    try:
+        raw_response = ask_gemini(_retrieval_plan_prompt(question))
+    except Exception as exc:
+        fallback = _empty_retrieval_plan("error", error=str(exc))
+        fallback["query"] = question
+        return fallback
+
+    return _parse_retrieval_plan(raw_response, question)
+
+
+def _plan_search_query(question: str, retrieval_plan: dict) -> str:
+    parts = [
+        question,
+        retrieval_plan.get("query") or "",
+        retrieval_plan.get("hyde") or "",
+        " ".join(retrieval_plan.get("must") or []),
+    ]
+    return " ".join(dict.fromkeys(" ".join(parts).split()))
 
 
 def _faq_keyword_phrases(keywords: str) -> list[str]:
@@ -635,6 +1079,25 @@ def _score_chunk(query: str, chunk: dict, doc_freq: Counter, total_docs: int) ->
     normalized_content = normalize_text(chunk.get("content", ""))
     doc_name = normalize_text(chunk.get("doc_name", ""))
 
+    if _is_exam_regrade_query(query):
+        searchable = f"{normalized_title} {normalized_content} {doc_name}"
+        if "phuc khao" in searchable:
+            score += 240.0
+        if any(term in searchable for term in ("1.2. phuc khao", "man phuc khao cho phep", "giay tiep nhan yeu cau phuc khao")):
+            score += 120.0
+        if any(term in searchable for term in ("ket qua bai thi", "ket qua hoc tap", "diem thi", "hoc phan")):
+            score += 90.0
+        if "support sv" in doc_name or "support sinh vien" in searchable:
+            score += 70.0
+        if "khao thi" in searchable and "dam bao chat luong" in searchable:
+            score += 45.0
+        if any(term in searchable for term in ("bai bao", "tap chi", "ban bien tap")):
+            score -= 220.0
+        if any(term in searchable for term in ("thanh tra", "kiem tra cong tac cham thi", "hoi dong thi")) and "phuc khao" not in searchable:
+            score -= 180.0
+        if any(term in searchable for term in ("huy dang ky thi lai", "hoan thi", "dang ky thi lai")) and "man phuc khao cho phep" not in searchable:
+            score -= 80.0
+
     if "tot nghiep" in normalized_query and "dieu kien" in normalized_query:
         if "dieu 24" in normalized_content or "dieu 24" in normalized_title:
             score += 80.0
@@ -838,6 +1301,271 @@ def _mapping_candidates(query: str, chunks: list[dict]) -> list[dict]:
 
     candidates.sort(key=lambda item: item["mapping_score"], reverse=True)
     return candidates
+
+
+def _meaningful_business_terms(text: str) -> set[str]:
+    return {
+        term
+        for term in get_keywords(text)
+        if term not in _BUSINESS_GENERIC_INTENT_TERMS
+    }
+
+
+def _mapping_topic_overlap(query: str, mapping: dict) -> int:
+    query_terms = _meaningful_business_terms(query)
+    mapping_terms = _meaningful_business_terms(
+        " ".join([
+            str(mapping.get("faq_question") or ""),
+            str(mapping.get("faq_keywords") or ""),
+            str(mapping.get("faq_answer") or ""),
+            str(mapping.get("faq_location") or ""),
+        ])
+    )
+    return len(query_terms & mapping_terms)
+
+
+def _strip_json_code_fence(text: str) -> str:
+    match = re.fullmatch(
+        r"\s*```(?:json)?\s*(.*?)\s*```\s*",
+        str(text or ""),
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return match.group(1).strip() if match else str(text or "").strip()
+
+
+def _mapping_judge_prompt(query: str, mapping: dict, topic_overlap: int) -> str:
+    return f"""
+Bạn là bộ kiểm tra độ phù hợp của mapping trong hệ thống tra cứu tài liệu nghiệp vụ nội bộ nhà trường.
+
+Nhiệm vụ:
+So sánh câu hỏi gốc của người dùng với một mapping ứng viên, rồi quyết định mapping đó có đúng chủ đề để dùng truy xuất tài liệu hay không.
+
+Nguyên tắc quan trọng:
+Mapping chỉ được chấp nhận nếu nó nói về đúng đối tượng nghiệp vụ chính trong câu hỏi gốc. Nếu mapping chỉ trùng các từ chung hoặc trùng đối tượng audience như “sinh viên”, “cán bộ”, “giảng viên” thì chưa đủ để chấp nhận.
+
+Quy tắc đánh giá:
+- Bỏ qua các từ chung khi so sánh, gồm: làm thế nào, làm sao, như nào, ở đâu, tôi muốn, em muốn, cần, hỏi, bài, lại, được, có thể.
+- Không coi audience như “sinh viên”, “cán bộ”, “giảng viên” là bằng chứng đủ để mapping đúng chủ đề.
+- Nếu câu hỏi hỏi về thi cử, điểm thi, phúc khảo, chấm lại bài thi, kết quả thi, học phần thì mapping cũng phải liên quan đến thi cử, điểm, phúc khảo, học phần hoặc kết quả thi.
+- Nếu câu hỏi hỏi về nghỉ học, tạm ngừng học, bảo lưu, thôi học thì mapping cũng phải liên quan đến nghỉ học, tạm ngừng học, bảo lưu, thôi học hoặc thủ tục học vụ.
+- Nếu câu hỏi hỏi về báo hỏng thiết bị thì mapping cũng phải liên quan đến báo hỏng, thiết bị, phòng học, máy chiếu hoặc xử lý sự cố.
+- Nếu câu hỏi hỏi về lịch học, lịch thi, thời khóa biểu thì mapping cũng phải liên quan đến tra cứu lịch học, lịch thi hoặc thời khóa biểu.
+- Nếu câu hỏi hỏi về tài khoản, email, LMS, mật khẩu thì mapping cũng phải liên quan đến tài khoản, email, LMS, đăng nhập, mật khẩu hoặc xác thực.
+- Nếu mapping chỉ nói về giao diện, tìm kiếm bài viết, thanh tìm kiếm, danh sách, bộ lọc, nút bấm, website hoặc chatbot mà câu hỏi gốc không hỏi rõ về các nội dung đó, phải reject.
+- Nếu không có thuật ngữ nghiệp vụ quan trọng nào trùng hoặc tương đương giữa câu hỏi và mapping, phải reject.
+- Nếu mapping_topic_overlap bằng 0 hoặc gần như không có liên quan nghiệp vụ, phải reject.
+- Nếu còn nghi ngờ, ưu tiên reject để chuyển sang HyDE/manual search.
+
+Không được:
+- Không trả lời câu hỏi của người dùng.
+- Không bịa thêm thông tin ngoài câu hỏi và mapping.
+- Không giải thích ngoài JSON.
+- Không dùng markdown.
+
+Chỉ trả về JSON hợp lệ theo đúng schema sau:
+
+{{
+  "decision": "accept" hoặc "reject",
+  "confidence": 0.0 đến 1.0,
+  "reason": "lý do ngắn gọn",
+  "matched_topic": "chủ đề trùng nếu accept, hoặc null",
+  "missing_topic": "chủ đề câu hỏi gốc mà mapping không đáp ứng nếu reject, hoặc null"
+}}
+
+Câu hỏi gốc:
+{query}
+
+Mapping ứng viên:
+- Câu hỏi mapping: {mapping.get("faq_question") or mapping.get("title") or ""}
+- Câu trả lời/tóm tắt mapping: {mapping.get("faq_answer") or ""}
+- Từ khóa mapping: {mapping.get("faq_keywords") or ""}
+- Vị trí mapping: {mapping.get("faq_location") or ""}
+- Đối tượng/audience: {mapping.get("audience") or ""}
+- Topic overlap đã tính bằng rule: {topic_overlap}
+
+JSON:
+""".strip()
+
+
+def _judge_mapping_with_llm(query: str, mapping: dict, topic_overlap: int) -> dict:
+    cache_key = (
+        normalize_text(query),
+        normalize_text(mapping.get("faq_question") or mapping.get("title") or ""),
+        normalize_text(mapping.get("faq_keywords") or ""),
+        topic_overlap,
+    )
+    if cache_key in _MAPPING_JUDGE_CACHE:
+        cached = deepcopy(_MAPPING_JUDGE_CACHE[cache_key])
+        cached["cache_hit"] = True
+        return cached
+
+    prompt = _mapping_judge_prompt(query, mapping, topic_overlap)
+    try:
+        raw_response = ask_gemini(prompt)
+        parsed = json.loads(_strip_json_code_fence(raw_response))
+    except Exception as exc:
+        result = {
+            "decision": "reject",
+            "confidence": 0.0,
+            "reason": "mapping_judge_error",
+            "matched_topic": None,
+            "missing_topic": "unknown",
+            "error": str(exc),
+            "cache_hit": False,
+        }
+    else:
+        decision = str(parsed.get("decision") or "").strip().lower()
+        if decision not in {"accept", "reject"}:
+            decision = "reject"
+        result = {
+            "decision": decision,
+            "confidence": parsed.get("confidence"),
+            "reason": parsed.get("reason") or "mapping_judge_decision",
+            "matched_topic": parsed.get("matched_topic"),
+            "missing_topic": parsed.get("missing_topic"),
+            "error": None,
+            "cache_hit": False,
+        }
+
+    _MAPPING_JUDGE_CACHE[cache_key] = deepcopy(result)
+    return result
+
+
+def _mapping_gate_decision(query: str, mapping: dict) -> dict:
+    topic_overlap = _mapping_topic_overlap(query, mapping)
+    if not _business_domain_matches(query, mapping):
+        return {
+            "decision": "reject",
+            "reason": "domain_mismatch",
+            "topic_overlap": topic_overlap,
+            "llm_used": False,
+        }
+
+    query_terms = _meaningful_business_terms(query)
+    mapping_terms = _meaningful_business_terms(
+        " ".join([
+            str(mapping.get("faq_question") or ""),
+            str(mapping.get("faq_keywords") or ""),
+            str(mapping.get("faq_answer") or ""),
+            str(mapping.get("faq_location") or ""),
+        ])
+    )
+    overlap_terms = query_terms & mapping_terms
+    if len(query_terms) >= 2 and topic_overlap <= 0:
+        return {
+            "decision": "reject",
+            "reason": "zero_topic_overlap",
+            "topic_overlap": topic_overlap,
+            "llm_used": False,
+        }
+    if overlap_terms & _BUSINESS_DISTINCTIVE_TERMS:
+        return {
+            "decision": "accept",
+            "reason": "distinctive_term_overlap",
+            "topic_overlap": topic_overlap,
+            "llm_used": False,
+        }
+    if len(query_terms) >= 2 and len(overlap_terms) < BUSINESS_MAPPING_MIN_TOPIC_OVERLAP:
+        judge = _judge_mapping_with_llm(query, mapping, topic_overlap)
+        return {
+            **judge,
+            "topic_overlap": topic_overlap,
+            "llm_used": True,
+        }
+    return {
+        "decision": "accept",
+        "reason": "rule_topic_overlap_passed",
+        "topic_overlap": topic_overlap,
+        "llm_used": False,
+    }
+
+
+def _text_matches_query_domain(query: str, text: str) -> bool:
+    normalized_query = normalize_text(query)
+    normalized_text = normalize_text(text)
+    text_terms = _meaningful_business_terms(normalized_text)
+
+    if any(
+        phrase in normalized_query
+        for phrase in ("phuc khao", "cham lai", "bai thi", "diem thi", "ket qua thi")
+    ):
+        return any(
+            phrase in normalized_text
+            for phrase in (
+                "phuc khao",
+                "cham lai",
+                "bai thi",
+                "diem thi",
+                "ket qua thi",
+                "khao thi",
+                "hoc phan",
+            )
+        )
+
+    for domain_name, phrases in _BUSINESS_DOMAIN_PHRASES.items():
+        if not any(phrase in normalized_query for phrase in phrases):
+            continue
+        domain_terms = _BUSINESS_DOMAIN_CORE_TERMS.get(
+            domain_name,
+            _BUSINESS_DOMAIN_TERMS.get(domain_name, set()),
+        )
+        if any(phrase in normalized_text for phrase in phrases):
+            return True
+        if len(text_terms & domain_terms) >= 2:
+            return True
+        return False
+
+    return True
+
+
+def _business_domain_matches(query: str, mapping: dict) -> bool:
+    normalized_query = normalize_text(query)
+    normalized_mapping = normalize_text(
+        " ".join([
+            str(mapping.get("faq_question") or ""),
+            str(mapping.get("faq_keywords") or ""),
+            str(mapping.get("faq_answer") or ""),
+            str(mapping.get("faq_location") or ""),
+        ])
+    )
+    for domain_name, phrases in _BUSINESS_DOMAIN_PHRASES.items():
+        if not any(phrase in normalized_query for phrase in phrases):
+            continue
+        domain_terms = _BUSINESS_DOMAIN_CORE_TERMS.get(
+            domain_name,
+            _BUSINESS_DOMAIN_TERMS.get(domain_name, set()),
+        )
+        mapping_domain_hits = _meaningful_business_terms(normalized_mapping) & domain_terms
+        if not any(phrase in normalized_mapping for phrase in phrases) and not (
+            len(mapping_domain_hits) >= 2
+        ):
+            return False
+
+    query_terms = _meaningful_business_terms(query)
+    if not query_terms:
+        return True
+
+    mapping_terms = _meaningful_business_terms(
+        " ".join([
+            str(mapping.get("faq_question") or ""),
+            str(mapping.get("faq_keywords") or ""),
+            str(mapping.get("faq_answer") or ""),
+            str(mapping.get("faq_location") or ""),
+        ])
+    )
+    for domain_terms in _BUSINESS_DOMAIN_TERMS.values():
+        query_hits = query_terms & domain_terms
+        if len(query_hits) < 2:
+            continue
+        if not mapping_terms & domain_terms:
+            return False
+    return True
+
+
+def _mapping_is_suspected_wrong_topic(query: str, mapping: dict | None) -> bool:
+    if not mapping:
+        return False
+    return _mapping_gate_decision(query, mapping)["decision"] == "reject"
 
 
 def _source_chunks_for_mapping(mapping: dict, chunks: list[dict]) -> list[dict]:
@@ -1182,10 +1910,62 @@ def _compact_guided_sources(results: list[dict]) -> list[dict]:
     ]
 
 
+def _search_generic_business_chunks(
+    query: str,
+    chunks: list[dict],
+    doc_freq: Counter,
+    total_docs: int,
+    limit: int,
+    retrieval_method: str,
+    original_query: str | None = None,
+    retrieval_plan: dict | None = None,
+) -> list[dict]:
+    generic_results = []
+    original_query = original_query or query
+    plan_must = [normalize_text(item) for item in (retrieval_plan or {}).get("must", [])]
+    plan_avoid = [normalize_text(item) for item in (retrieval_plan or {}).get("avoid", [])]
+    for chunk in chunks:
+        if chunk.get("source_type") == BUSINESS_FAQ_SOURCE_TYPE:
+            continue
+        searchable_text = " ".join([
+            str(chunk.get("title") or ""),
+            str(chunk.get("content") or ""),
+            str(chunk.get("doc_name") or ""),
+        ])
+        if not _text_matches_query_domain(original_query, searchable_text):
+            continue
+        score = _score_chunk(query, chunk, doc_freq, total_docs)
+        normalized_searchable = normalize_text(searchable_text)
+        must_hits = [phrase for phrase in plan_must if phrase and phrase in normalized_searchable]
+        avoid_hits = [phrase for phrase in plan_avoid if phrase and phrase in normalized_searchable]
+        score += len(must_hits) * 45.0
+        score -= len(avoid_hits) * 80.0
+        if score < MIN_SEARCH_SCORE:
+            continue
+        original_score = _score_chunk(original_query, chunk, doc_freq, total_docs)
+        result = _clean_index_chunk(chunk)
+        result["score"] = score
+        result["keyword_score"] = score
+        result["original_keyword_score"] = original_score
+        result["retrieval_plan_must_hits"] = must_hits
+        result["retrieval_plan_avoid_hits"] = avoid_hits
+        result["retrieval_method"] = retrieval_method
+        generic_results.append(result)
+
+    generic_results.sort(
+        key=lambda item: (
+            item.get("score") or 0,
+            item.get("original_keyword_score") or 0,
+        ),
+        reverse=True,
+    )
+    return generic_results[:limit]
+
+
 def search_business_sources(query: str, limit: int | None = None, debug: dict | None = None) -> list[dict]:
     query = str(query or "").strip()
     limit = limit or BUSINESS_SEARCH_TOP_K
-    cache_key = ("mapping_guided_v1", normalize_text(query), limit)
+    cache_key = ("retrieval_plan_v1", normalize_text(query), limit)
 
     if cache_key in _BUSINESS_SEARCH_CACHE:
         cached = deepcopy(_BUSINESS_SEARCH_CACHE[cache_key])
@@ -1194,12 +1974,62 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
             debug["cache_hit"] = True
         return cached.get("results", [])
 
+    early_plan = _rule_based_retrieval_plan(query)
+    if early_plan and early_plan.get("clarification_needed"):
+        debug_data = {
+            "cache_hit": False,
+            "business_documents_dir": str(_business_path()),
+            "indexed_chunk_count": None,
+            "candidate_count": 0,
+            "final_results_count": 0,
+            "mapping_selected": False,
+            "retrieval_method": None,
+            "retrieval_plan": early_plan,
+            "retrieval_plan_parse_error": early_plan.get("parse_error"),
+            "final_search_query": _plan_search_query(query, early_plan),
+            "fallback_reason": "retrieval_plan_requested_clarification",
+            "final_sources": [],
+        }
+        _BUSINESS_SEARCH_CACHE[cache_key] = {
+            "results": [],
+            "debug": deepcopy(debug_data),
+        }
+        if debug is not None:
+            debug.update(debug_data)
+        return []
+
     chunks, doc_freq, total_docs = _load_business_index()
     mappings = _mapping_candidates(query, chunks)
-    selected_mapping = mappings[0] if mappings else None
+    selected_mapping = None
+    mapping_rejected_reason = None
+    rejected_mapping_count = 0
+    mapping_gate_decisions = []
+    for mapping in mappings:
+        gate_decision = _mapping_gate_decision(query, mapping)
+        mapping_gate_decisions.append({
+            "question": mapping.get("faq_question"),
+            "score": mapping.get("mapping_score"),
+            "decision": gate_decision.get("decision"),
+            "reason": gate_decision.get("reason"),
+            "topic_overlap": gate_decision.get("topic_overlap"),
+            "llm_used": gate_decision.get("llm_used"),
+            "confidence": gate_decision.get("confidence"),
+            "matched_topic": gate_decision.get("matched_topic"),
+            "missing_topic": gate_decision.get("missing_topic"),
+        })
+        if gate_decision.get("decision") == "reject":
+            rejected_mapping_count += 1
+            if mapping_rejected_reason is None:
+                mapping_rejected_reason = gate_decision.get("reason") or "suspected_wrong_topic"
+            continue
+        selected_mapping = mapping
+        break
+
     final_results = []
     retrieval_method = None
     vector_error = None
+    retrieval_plan = _empty_retrieval_plan("not_needed")
+    final_search_query = query
     source_chunks = []
 
     if selected_mapping:
@@ -1230,23 +2060,37 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
                     limit,
                 )
                 retrieval_method = "vector" if final_results else None
-    else:
-        generic_results = []
-        for chunk in chunks:
-            if chunk.get("source_type") == BUSINESS_FAQ_SOURCE_TYPE:
-                continue
-            score = _score_chunk(query, chunk, doc_freq, total_docs)
-            if score < MIN_SEARCH_SCORE:
-                continue
-            result = _clean_index_chunk(chunk)
-            result["score"] = score
-            result["keyword_score"] = score
-            result["retrieval_method"] = "generic_keyword"
-            generic_results.append(result)
+    if not final_results:
+        retrieval_plan = _generate_business_retrieval_plan(query)
+        final_search_query = _plan_search_query(query, retrieval_plan)
+        if retrieval_plan.get("clarification_needed"):
+            final_results = []
+            retrieval_method = None
+        elif final_search_query:
+            final_results = _search_generic_business_chunks(
+                final_search_query,
+                chunks,
+                doc_freq,
+                total_docs,
+                limit,
+                "retrieval_plan_keyword",
+                original_query=query,
+                retrieval_plan=retrieval_plan,
+            )
+            retrieval_method = "retrieval_plan_keyword" if final_results else None
 
-        generic_results.sort(key=lambda item: item["score"], reverse=True)
-        final_results = generic_results[:limit]
-        retrieval_method = "generic_keyword" if final_results else None
+    if not final_results and not retrieval_plan.get("clarification_needed"):
+        final_results = _search_generic_business_chunks(
+            query,
+            chunks,
+            doc_freq,
+            total_docs,
+            limit,
+            "generic_keyword",
+            original_query=query,
+            retrieval_plan=retrieval_plan,
+        )
+        retrieval_method = "generic_keyword" if final_results else retrieval_method
 
     debug_data = {
         "cache_hit": False,
@@ -1255,8 +2099,18 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
         "candidate_count": len(mappings),
         "final_results_count": len(final_results),
         "mapping_selected": bool(selected_mapping),
+        "mapping_rejected_reason": mapping_rejected_reason,
+        "rejected_mapping_count": rejected_mapping_count,
         "mapping_score": selected_mapping.get("mapping_score") if selected_mapping else None,
         "mapping_question": selected_mapping.get("faq_question") if selected_mapping else None,
+        "top_mapping_score": mappings[0].get("mapping_score") if mappings else None,
+        "top_mapping_question": mappings[0].get("faq_question") if mappings else None,
+        "top_mapping_topic_overlap": (
+            _mapping_topic_overlap(query, mappings[0])
+            if mappings
+            else None
+        ),
+        "mapping_gate_decisions": mapping_gate_decisions[:5],
         "file_id": selected_mapping.get("file_id") if selected_mapping else None,
         "source_file": selected_mapping.get("doc_name") if selected_mapping else None,
         "source_file_found": bool(source_chunks) if selected_mapping else None,
@@ -1267,6 +2121,19 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
             else None
         ),
         "retrieval_method": retrieval_method,
+        "retrieval_plan": retrieval_plan,
+        "retrieval_plan_parse_error": retrieval_plan.get("parse_error"),
+        "final_search_query": final_search_query,
+        "fallback_reason": (
+            "retrieval_plan_requested_clarification"
+            if retrieval_plan.get("clarification_needed")
+            else None
+        ),
+        "business_hyde": {
+            "text": retrieval_plan.get("hyde") or retrieval_plan.get("query") or "",
+            "status": retrieval_plan.get("status"),
+            "retrieval_plan_migrated": True,
+        },
         "vector_error": vector_error,
         "final_sources": _compact_guided_sources(final_results),
     }
