@@ -1078,6 +1078,68 @@ def _score_chunk(query: str, chunk: dict, doc_freq: Counter, total_docs: int) ->
     normalized_title = normalize_text(chunk.get("title", ""))
     normalized_content = normalize_text(chunk.get("content", ""))
     doc_name = normalize_text(chunk.get("doc_name", ""))
+    combined_normalized = f"{normalized_title} {normalized_content}"
+
+    cbgv_topic_terms = (
+        "nhan su",
+        "lop hoc phan",
+        "giang vien",
+        "can bo",
+        "cbgv",
+        "dang ky muon thiet bi",
+        "muon thiet bi",
+        "thiet bi phong hoc",
+        "ho so thu tuc hanh chinh",
+        "quy trinh xu ly ho so",
+        "minh chung kiem dinh",
+        "kiem dinh",
+    )
+    student_topic_terms = ("sinh vien", "sv", "nguoi hoc")
+    asks_student_topic = any(term in normalized_query for term in student_topic_terms)
+    asks_cbgv_topic = any(term in normalized_query for term in cbgv_topic_terms)
+
+    is_cbgv_doc = "web support cbgv" in doc_name
+    is_sv_doc = "web support sv" in doc_name
+
+    if asks_cbgv_topic and is_cbgv_doc:
+        score += 65.0
+    if asks_cbgv_topic and is_sv_doc and not asks_student_topic:
+        score -= 90.0
+    if asks_student_topic and is_sv_doc:
+        score += 35.0
+
+    phrase_boosts = [
+        (
+            ("dang ky muon thiet bi", "muon thiet bi", "thiet bi phong hoc"),
+            ("man dang ky muon thiet bi", "dang ky su dung thiet bi", "chon lich day va thiet bi"),
+            220.0,
+        ),
+        (
+            ("lop hoc phan giang vien", "duong dan", "vao duong dan"),
+            ("lop hoc phan giang vien", "tra cuu/lop-hoc-phan-giang-vien"),
+            210.0,
+        ),
+        (
+            ("man nhan su", "nhan su dung de lam gi"),
+            ("man nhan su", "thong tin nhan su ca nhan", "khoi luong giam tru"),
+            190.0,
+        ),
+        (
+            ("quy trinh xu ly ho so", "ho so thu tuc hanh chinh", "gom may buoc"),
+            ("quy trinh xu ly ho so thu tuc hanh chinh", "buoc 1: nop ho so", "buoc 5. tra ket qua"),
+            240.0,
+        ),
+        (
+            ("trang thai minh chung", "minh chung kiem dinh"),
+            ("cho duyet", "da duyet", "can bo sung", "minh chung hien thi"),
+            220.0,
+        ),
+    ]
+    for query_phrases, content_phrases, boost in phrase_boosts:
+        if any(phrase in normalized_query for phrase in query_phrases) and any(
+            phrase in combined_normalized for phrase in content_phrases
+        ):
+            score += boost
 
     if _is_exam_regrade_query(query):
         searchable = f"{normalized_title} {normalized_content} {doc_name}"
@@ -1301,6 +1363,23 @@ def _mapping_candidates(query: str, chunks: list[dict]) -> list[dict]:
 
     candidates.sort(key=lambda item: item["mapping_score"], reverse=True)
     return candidates
+
+
+def _should_search_cbgv_source_directly(query: str) -> bool:
+    normalized = normalize_text(query)
+    direct_terms = (
+        "man nhan su",
+        "nhan su dung de lam gi",
+        "lop hoc phan giang vien",
+        "dang ky muon thiet bi",
+        "muon thiet bi",
+        "su dung thiet bi",
+        "quy trinh xu ly ho so",
+        "ho so thu tuc hanh chinh",
+        "trang thai minh chung",
+        "minh chung kiem dinh",
+    )
+    return any(term in normalized for term in direct_terms) and "sinh vien" not in normalized
 
 
 def _meaningful_business_terms(text: str) -> set[str]:
@@ -1998,8 +2077,9 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
             debug.update(debug_data)
         return []
 
+    force_direct_source = _should_search_cbgv_source_directly(query)
     chunks, doc_freq, total_docs = _load_business_index()
-    mappings = _mapping_candidates(query, chunks)
+    mappings = [] if force_direct_source else _mapping_candidates(query, chunks)
     selected_mapping = None
     mapping_rejected_reason = None
     rejected_mapping_count = 0
@@ -2097,6 +2177,7 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
         "business_documents_dir": str(_business_path()),
         "indexed_chunk_count": total_docs,
         "candidate_count": len(mappings),
+        "force_direct_source": force_direct_source,
         "final_results_count": len(final_results),
         "mapping_selected": bool(selected_mapping),
         "mapping_rejected_reason": mapping_rejected_reason,
