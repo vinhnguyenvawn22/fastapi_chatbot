@@ -532,3 +532,39 @@ def test_document_index_skips_one_broken_file(monkeypatch):
         "error": "invalid docx",
     }]
     document_search.clear_document_index_cache()
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_parts"),
+    [
+        (
+            "Man Nhan su dung de lam gi?",
+            ["thông tin nhân sự cá nhân", "khối lượng giảm trừ"],
+        ),
+        (
+            "Muon xem lop hoc phan giang vien thi vao duong dan nao?",
+            ["https://support.uneti.edu.vn/cong-tac-giang-vien/tra-cuu/lop-hoc-phan-giang-vien"],
+        ),
+        (
+            "Toi muon dang ky muon thiet bi phong hoc thi lam the nao?",
+            ["Đăng nhập", "Đăng ký sử dụng thiết bị", "Chọn lịch dạy", "Gửi yêu cầu"],
+        ),
+        (
+            "Quy trinh xu ly ho so thu tuc hanh chinh gom may buoc?",
+            ["5 bước", "Nộp hồ sơ", "Tiếp nhận hồ sơ", "Xử lý hồ sơ", "Phê duyệt hồ sơ", "Trả kết quả"],
+        ),
+        (
+            "Trang thai minh chung kiem dinh gom nhung gi?",
+            ["Chờ duyệt", "Đã duyệt", "Cần bổ sung"],
+        ),
+    ],
+)
+def test_business_chat_answers_cbgv_support_questions_directly(question, expected_parts):
+    result = asyncio.run(
+        chatbot_controller.handle_business_chat(ChatRequest(question=question))
+    )
+
+    assert "Thông tin tóm tắt từ các nguồn đã truy xuất" not in result["answer"]
+    assert result["source"].endswith("2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV.docx")
+    for expected in expected_parts:
+        assert expected in result["answer"]

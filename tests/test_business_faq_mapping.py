@@ -171,3 +171,21 @@ def test_mapping_summary_is_never_returned_as_direct_answer():
     }]
 
     assert build_business_faq_answer(docs) is None
+
+
+def test_cbgv_support_questions_prioritize_cbgv_source():
+    questions = [
+        "Man Nhan su dung de lam gi?",
+        "Muon xem lop hoc phan giang vien thi vao duong dan nao?",
+        "Toi muon dang ky muon thiet bi phong hoc thi lam the nao?",
+        "Quy trinh xu ly ho so thu tuc hanh chinh gom may buoc?",
+        "Trang thai minh chung kiem dinh gom nhung gi?",
+    ]
+
+    clear_business_knowledge_cache()
+
+    for question in questions:
+        docs = search_business_sources(question)
+
+        assert docs, question
+        assert docs[0]["doc_name"] == "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV.docx"
