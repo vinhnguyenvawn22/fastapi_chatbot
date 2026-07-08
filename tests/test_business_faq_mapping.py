@@ -112,15 +112,42 @@ def test_regrade_exam_question_returns_student_appeal_source():
     assert "phuc khao" in normalize_text(debug["final_search_query"])
 
 
-def test_ambiguous_review_grade_question_requests_clarification():
+def test_ambiguous_review_grade_question_continues_to_retrieval():
+    clear_business_knowledge_cache()
     debug = {}
 
     docs = search_business_sources("em muon xem lai diem", debug=debug)
 
-    assert docs == []
-    assert debug["fallback_reason"] == "retrieval_plan_requested_clarification"
-    assert debug["retrieval_plan"]["clarification_needed"] is True
-    assert "phuc khao" in normalize_text(debug["retrieval_plan"]["clarification_question"])
+    assert docs
+    assert debug["fallback_reason"] is None
+    assert debug["retrieval_method"] in {
+        "location",
+        "keyword",
+        "vector",
+        "retrieval_plan_keyword",
+        "generic_keyword",
+    }
+    assert debug["retrieval_plan"]["clarification_needed"] is False
+
+
+def test_cbgv_admin_process_steps_question_does_not_request_clarification():
+    clear_business_knowledge_cache()
+    debug = {}
+
+    docs = search_business_sources(
+        "Quy trình xử lý hồ sơ thủ tục hành chính gồm mấy bước?",
+        debug=debug,
+    )
+
+    assert docs
+    assert debug["fallback_reason"] is None
+    assert debug["retrieval_plan"]["clarification_needed"] is False
+    assert docs[0]["doc_name"] == "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV.docx"
+    combined = normalize_text(" ".join(doc["content"] for doc in docs[:3]))
+    assert "nop ho so" in combined
+    assert "tiep nhan ho so" in combined
+    assert "xu ly ho so" in combined
+    assert "tra ket qua" in combined
 
 
 def test_retrieval_plan_invalid_json_falls_back_safely(monkeypatch):

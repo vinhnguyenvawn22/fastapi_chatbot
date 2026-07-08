@@ -1076,11 +1076,8 @@ async def search_documents(
             debug.update({
                 "cache_hit": False,
                 "ambiguity": ambiguity_decision,
-                "fallback_reason": "clarification_needed_before_retrieval",
-                "final_results_count": 0,
-                "final_sources": [],
+                "fallback_reason": "clarification_bypassed_for_retrieval",
             })
-        return []
 
     metadata_filter = _metadata_filter_from_constraints(
         metadata_constraints if metadata_results else {},
