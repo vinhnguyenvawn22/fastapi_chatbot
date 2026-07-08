@@ -553,7 +553,7 @@ def test_probe_failure_returns_clarification_after_retrieval(monkeypatch):
     assert result["intent"] == "clarification_needed"
 
 
-def test_gemini_error_uses_controlled_source_summary(monkeypatch):
+def test_gemini_error_returns_unavailable_message_without_source_summary(monkeypatch):
     monkeypatch.setattr(
         langchain_pipeline,
         "ask_gemini",
@@ -573,12 +573,15 @@ def test_gemini_error_uses_controlled_source_summary(monkeypatch):
 
     result = asyncio.run(langchain_pipeline._generate_answer(state))
 
-    assert "Thông tin tóm tắt từ các nguồn đã truy xuất" in result["answer"]
-    assert "Điều kiện tốt nghiệp" in result["answer"]
+    assert result["answer"] == langchain_pipeline.GEMINI_UNAVAILABLE_ANSWER
+    assert "Thông tin tóm tắt" not in result["answer"]
+    assert "Điều kiện tốt nghiệp" not in result["answer"]
     assert traces[-1][1]["fallback_used"] is True
+    assert traces[-1][1]["fallback_reason"] == "gemini_unavailable"
+    assert "He thong AI dang ban" in traces[-1][1]["gemini_error_message"]
 
 
-def test_gemini_exception_uses_controlled_source_summary(monkeypatch):
+def test_gemini_exception_returns_unavailable_message_without_source_summary(monkeypatch):
     monkeypatch.setattr(
         langchain_pipeline,
         "ask_gemini",
@@ -594,7 +597,8 @@ def test_gemini_exception_uses_controlled_source_summary(monkeypatch):
 
     result = asyncio.run(langchain_pipeline._generate_answer(state))
 
-    assert "Quy định camera" in result["answer"]
+    assert result["answer"] == langchain_pipeline.GEMINI_UNAVAILABLE_ANSWER
+    assert "Quy định camera" not in result["answer"]
 
 
 def test_hyde_only_source_requires_rerank_score(monkeypatch):

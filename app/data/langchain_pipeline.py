@@ -13,12 +13,41 @@ from app.data.website_search_client import index_uneti_website
 
 PipelineState = dict[str, Any]
 TraceCallback = Callable[[str, dict, dict | None], None]
+GEMINI_UNAVAILABLE_ANSWER = (
+    "Hệ thống AI đang tạm thời không thể tạo câu trả lời do Gemini hết quota "
+    "hoặc gặp lỗi. Vui lòng thử lại sau."
+)
+GEMINI_ERROR_MARKERS = {
+    "gemini_quota_or_rate_limit": "He thong AI tam thoi vuot gioi han",
+    "gemini_unavailable": "He thong AI dang ban",
+    "gemini_api_error": "Loi khi goi Gemini API",
+}
 
 
 def _trace(state: PipelineState, name: str, output: dict, input_data: dict | None = None) -> None:
     callback: TraceCallback | None = state.get("trace_callback")
     if callback:
         callback(name, output, input_data)
+
+
+def _short_debug_message(value: Any, limit: int = 500) -> str | None:
+    if value is None:
+        return None
+    text = str(value).replace("\r", " ").replace("\n", " ").strip()
+    if not text:
+        return None
+    return text[:limit]
+
+
+def _gemini_error_reason(answer: Any, llm_error: str | None) -> str | None:
+    if llm_error:
+        return "gemini_exception"
+
+    answer_text = str(answer or "")
+    for reason, marker in GEMINI_ERROR_MARKERS.items():
+        if marker in answer_text:
+            return reason
+    return None
 
 
 def _trace_hybrid_retrieval(state: PipelineState, debug: dict) -> None:
@@ -171,35 +200,18 @@ async def _generate_answer(state: PipelineState) -> PipelineState:
     except Exception as exc:
         llm_error = str(exc)
         answer = ""
-    error_markers = (
-        "He thong AI tam thoi vuot gioi han",
-        "He thong AI dang ban",
-        "Loi khi goi Gemini API",
-    )
-    fallback_used = llm_error is not None or any(
-        marker in str(answer or "")
-        for marker in error_markers
-    )
+    gemini_error_reason = _gemini_error_reason(answer, llm_error)
+    fallback_used = gemini_error_reason is not None
+    gemini_error_message = _short_debug_message(llm_error or answer) if fallback_used else None
     if fallback_used:
-        summaries = []
-        for doc in (state.get("docs") or [])[:3]:
-            title = str(doc.get("title") or doc.get("doc_name") or "Nguồn tài liệu")
-            content = " ".join(str(doc.get("content") or "").split())
-            if len(content) > 360:
-                content = content[:357].rsplit(" ", 1)[0] + "..."
-            summaries.append(f"- {title}: {content}")
-        answer = (
-            "Thông tin tóm tắt từ các nguồn đã truy xuất:\n"
-            + "\n".join(summaries)
-            if summaries
-            else "Không tìm thấy căn cứ đủ rõ trong tài liệu đã cung cấp."
-        )
+        answer = GEMINI_UNAVAILABLE_ANSWER
     _trace(state, "lcel_llm_call", {
         "answer_chars": len(answer or ""),
         "llm_called": True,
         "fallback_used": fallback_used,
-        "fallback_reason": "gemini_error_source_summary" if fallback_used else None,
-        "error": llm_error,
+        "fallback_reason": gemini_error_reason,
+        "error": _short_debug_message(llm_error),
+        "gemini_error_message": gemini_error_message,
     })
     return {**state, "answer": answer}
 
