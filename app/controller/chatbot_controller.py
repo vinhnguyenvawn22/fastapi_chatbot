@@ -23,6 +23,7 @@ from app.data.langchain_pipeline import (
     retrieve_internal,
     retrieve_website,
 )
+from app.data.gemini_client import get_gemini_call_count
 from app.data.query_analyzer import QueryIntent, classify_query
 from app.data.reranker import rerank_chunks
 from app.data.trace_logger import RagTrace, load_trace
@@ -227,10 +228,65 @@ def _should_prefer_business_generation(business_state: dict, business_docs: list
     if not retrieval_debug.get("mapping_selected"):
         return False
 
+    if retrieval_debug.get("retrieval_method") == "generic_hybrid":
+        return False
+
+    gate_score = retrieval_debug.get("mapping_gate_score")
+    if gate_score is not None and float(gate_score) < 70:
+        return False
+
     return retrieval_debug.get("retrieval_method") in {
         "location",
         "keyword",
         "vector",
+    }
+
+
+def _document_intent_terms(question: str) -> list[str]:
+    normalized = normalize_text(question)
+    terms = (
+        "quyet dinh", "quy che", "thong bao", "van ban", "quy dinh",
+        "dieu", "muc", "chuong",
+    )
+    return [term for term in terms if term in normalized]
+
+
+def _internal_metadata_matched(docs: list[dict]) -> bool:
+    return any(doc.get("metadata_matched") for doc in docs or [])
+
+
+def _should_prefer_business_over_internal(
+    question: str,
+    business_state: dict,
+    business_docs: list[dict],
+    internal_docs: list[dict],
+) -> tuple[bool, dict]:
+    retrieval_debug = business_state.get("retrieval_debug") or {}
+    method = retrieval_debug.get("retrieval_method")
+    gate_score = retrieval_debug.get("mapping_gate_score")
+    gate_score_value = float(gate_score or 0)
+    document_terms = _document_intent_terms(question)
+    internal_metadata = _internal_metadata_matched(internal_docs)
+    selected = _should_prefer_business_generation(business_state, business_docs)
+    reason = "business_mapping_high_confidence" if selected else "not_high_confidence_business"
+
+    if internal_metadata:
+        selected = False
+        reason = "internal_metadata_matched"
+    elif document_terms and (method == "generic_hybrid" or gate_score_value < 70):
+        selected = False
+        reason = "document_intent_terms_prefer_internal_or_merge"
+
+    return selected, {
+        "selected": selected,
+        "reason": reason,
+        "document_intent_terms": document_terms,
+        "business_retrieval_method": method,
+        "mapping_gate_score": gate_score,
+        "business_confidence": gate_score,
+        "internal_confidence": None,
+        "internal_confidence_source": None,
+        "internal_metadata_matched": internal_metadata,
     }
 
 
@@ -469,6 +525,9 @@ def _finalize(trace: RagTrace, response: dict) -> dict:
         len(response.get("sources") or []),
     )
     response["trace_id"] = trace.trace_id
+    response["gemini_call_count"] = get_gemini_call_count()
+    response.setdefault("ambiguity_llm_called", False)
+    response.setdefault("mapping_judge_llm_called", False)
     trace.set_response(response)
     trace.save()
     return response
@@ -504,6 +563,8 @@ def _analyze_retrieval_question(trace: RagTrace, question: str) -> dict:
         "ambiguity_reason": decision.get("reason"),
         "clarification_question": decision.get("clarifying_question"),
         "analyzer": decision.get("analyzer"),
+        "llm_called": decision.get("analyzer") == "llm",
+        "ambiguity_llm_called": decision.get("analyzer") == "llm",
         "cache_hit": decision.get("cache_hit"),
     })
     return decision
@@ -791,6 +852,31 @@ async def _answer_with_aggregate_documents(
     business_docs = business_state.get("docs") or []
     internal_docs = internal_state.get("docs") or []
 
+    raw_direct_business_answer = _business_direct_answer(question, business_docs)
+    if raw_direct_business_answer and business_docs:
+        preferred_doc = next(
+            (
+                doc for doc in business_docs
+                if "web support cbgv" in normalize_text(doc.get("doc_name", ""))
+                or "web support sv" in normalize_text(doc.get("doc_name", ""))
+            ),
+            business_docs[0],
+        )
+        trace.add_step("aggregate_business_direct_answer", {
+            "used": True,
+            "stage": "raw_business_docs",
+            "doc_name": preferred_doc.get("doc_name"),
+            "title": preferred_doc.get("title"),
+            "business_source_count": len(business_docs),
+        })
+        return _finalize(trace, {
+            "question": question,
+            "answer": raw_direct_business_answer,
+            "source": f'{preferred_doc.get("title")} - {preferred_doc.get("doc_name")}',
+            "sources": _build_sources([preferred_doc], question),
+            "intent": intent,
+        })
+
     business_retrieval_clarification = _retrieval_clarification_decision(business_state)
     if business_retrieval_clarification:
         return _clarification_response(
@@ -829,7 +915,32 @@ async def _answer_with_aggregate_documents(
     selected_business = usable_business if business_has_evidence else []
     selected_internal = usable_internal if internal_has_evidence else []
 
-    if _should_prefer_business_generation(business_state, selected_business):
+    direct_business_answer = _business_direct_answer(question, selected_business)
+    if direct_business_answer and selected_business:
+        best_doc = selected_business[0]
+        trace.add_step("aggregate_business_direct_answer", {
+            "used": True,
+            "doc_name": best_doc.get("doc_name"),
+            "title": best_doc.get("title"),
+            "business_source_count": len(selected_business),
+        })
+        return _finalize(trace, {
+            "question": question,
+            "answer": direct_business_answer,
+            "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
+            "sources": _build_sources(selected_business, question),
+            "intent": intent,
+        })
+
+    prefer_business, business_priority_debug = _should_prefer_business_over_internal(
+        question,
+        business_state,
+        selected_business,
+        selected_internal,
+    )
+    trace.add_step("business_priority_decision", business_priority_debug)
+
+    if prefer_business:
         business_only_docs = _limit_document_dominance(selected_business)
         trace.add_step("aggregate_business_priority", {
             "reason": "mapping_guided_business_source",

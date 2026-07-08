@@ -85,12 +85,18 @@ def _useful_retrieval_plan(retrieval_plan):
         for item in (retrieval_plan.get("must") or [])
         if str(item or "").strip()
     ]
+    avoid = [
+        str(item or "").strip()
+        for item in (retrieval_plan.get("avoid") or [])
+        if str(item or "").strip()
+    ]
 
     return {
         "intent": intent or "chua_xac_dinh",
         "domain": domain or "chua_xac_dinh",
         "query": query,
         "must": must,
+        "avoid": avoid,
     }
 
 
@@ -105,6 +111,8 @@ def _render_interpreted_question_block(retrieval_plan, question=None):
         lines.append(f'- Truy vấn nghiệp vụ: {query}')
     if plan["must"]:
         lines.append(f'- Thuật ngữ quan trọng: {", ".join(plan["must"])}')
+    if plan["avoid"]:
+        lines.append(f'- Avoid: {", ".join(plan["avoid"])}')
     return "\n".join(lines)
 
 

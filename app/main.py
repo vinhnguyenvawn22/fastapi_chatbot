@@ -9,6 +9,7 @@ from app.routers.document_router import router as document_router
 from app.routers.health_router import router as health_router
 from app.routers.website_router import router as website_router
 from app.data.preload import preload_rag_components
+from app.data.gemini_client import reset_gemini_call_count
 
 
 @asynccontextmanager
@@ -22,6 +23,12 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def reset_gemini_counter_middleware(request, call_next):
+    reset_gemini_call_count()
+    return await call_next(request)
 
 app.include_router(health_router, prefix="/api", tags=["Health"])
 app.include_router(chat_router, prefix="/api/chat", tags=["Chat"])

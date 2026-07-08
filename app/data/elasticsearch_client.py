@@ -993,6 +993,14 @@ async def search_documents(
         "clarifying_question": None,
     }
     ambiguity_action = ambiguity_decision.get("action", DIRECT_RETRIEVAL)
+    if ambiguity_action == HYDE_RETRIEVAL:
+        ambiguity_decision = {
+            **ambiguity_decision,
+            "action": DIRECT_RETRIEVAL,
+            "original_action": HYDE_RETRIEVAL,
+            "reason": "hyde_llm_disabled_for_cap_two",
+        }
+        ambiguity_action = DIRECT_RETRIEVAL
     signature = _current_document_signature()
     cache_key = _search_cache_key(
         question,

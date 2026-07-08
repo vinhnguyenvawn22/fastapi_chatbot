@@ -11,6 +11,7 @@ from app.core.config import (
     AMBIGUITY_CACHE_MAX_ITEMS,
     AMBIGUITY_CACHE_TTL_SECONDS,
     AMBIGUITY_CLARIFY_THRESHOLD,
+    AMBIGUITY_LLM_ENABLED,
     GEMINI_API_KEY,
     HYDE_MIN_TOPIC_CONFIDENCE,
     HYDE_MODEL,
@@ -217,15 +218,46 @@ def analyze_ambiguity(question: str) -> AmbiguityDecision:
     key = normalize_text(question)
     cached = _get_cached(key)
     if cached:
+        if cached.action in {CLARIFICATION_NEEDED, HYDE_RETRIEVAL}:
+            cached.action = PROBE_RETRIEVAL if cached.action == CLARIFICATION_NEEDED else DIRECT_RETRIEVAL
+            cached.clarifying_question = None
+            cached.reason = f"{cached.reason}_retrieval_only"
         return cached
 
     rule_decision = _rule_decision(question)
     if rule_decision is not None:
+        if rule_decision.action in {CLARIFICATION_NEEDED, HYDE_RETRIEVAL}:
+            rule_decision.action = (
+                PROBE_RETRIEVAL
+                if rule_decision.action == CLARIFICATION_NEEDED
+                else DIRECT_RETRIEVAL
+            )
+            rule_decision.clarifying_question = None
+            rule_decision.reason = f"{rule_decision.reason}_retrieval_only"
         _set_cached(key, rule_decision)
         return rule_decision
 
+    if not AMBIGUITY_LLM_ENABLED:
+        decision = AmbiguityDecision(
+            DIRECT_RETRIEVAL if key else PROBE_RETRIEVAL,
+            None,
+            0.5 if key else 0.0,
+            "ambiguity_llm_disabled",
+            analyzer="rule",
+        )
+        _set_cached(key, decision)
+        return decision
+
     try:
         decision = _analyze_with_llm(question)
+        if decision.action in {CLARIFICATION_NEEDED, HYDE_RETRIEVAL}:
+            decision.action = (
+                PROBE_RETRIEVAL
+                if decision.action == CLARIFICATION_NEEDED
+                else DIRECT_RETRIEVAL
+            )
+            decision.clarifying_question = None
+            decision.reason = f"{decision.reason}_retrieval_only"
     except Exception:
         decision = AmbiguityDecision(
             DIRECT_RETRIEVAL,

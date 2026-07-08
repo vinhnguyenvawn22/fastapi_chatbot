@@ -1,6 +1,7 @@
 from collections import Counter
 from copy import deepcopy
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import math
@@ -15,6 +16,13 @@ from app.core.config import (
     BUSINESS_DOCUMENTS_DIR,
     BUSINESS_INDEX_CACHE_ENABLED,
     BUSINESS_INDEX_CACHE_FILE,
+    BUSINESS_GENERIC_FINAL_TOP_K,
+    BUSINESS_GENERIC_KEYWORD_TOP_K,
+    BUSINESS_GENERIC_VECTOR_ENABLED,
+    BUSINESS_GENERIC_VECTOR_MAX_RUNTIME_EMBED_CHUNKS,
+    BUSINESS_GENERIC_VECTOR_MIN_SCORE,
+    BUSINESS_GENERIC_VECTOR_TOP_K,
+    BUSINESS_MAPPING_LLM_JUDGE_ENABLED,
     BUSINESS_SEARCH_TOP_K,
     HYDE_ENABLED,
     HYDE_MAX_WORDS,
@@ -31,6 +39,7 @@ _BUSINESS_INDEX_CACHE = {
     "total_docs": 0,
 }
 _BUSINESS_SEARCH_CACHE = {}
+_BUSINESS_VECTOR_CACHE = {}
 FAQ_MAPPING_DOC_NAME = "PCNTT_MAPPING_FILE.docx"
 BUSINESS_FAQ_SOURCE_TYPE = "business_faq_mapping"
 BUSINESS_FAQ_MIN_SCORE = max(MIN_SEARCH_SCORE, 14.0)
@@ -231,6 +240,8 @@ def _empty_retrieval_plan(status: str = "not_needed", error: str | None = None) 
         "status": status,
         "error": error,
         "parse_error": None,
+        "llm_called": False,
+        "cache_hit": False,
     }
 
 
@@ -258,6 +269,7 @@ def clear_business_knowledge_cache():
     _BUSINESS_INDEX_CACHE["total_docs"] = 0
     _BUSINESS_SEARCH_CACHE.clear()
     _MAPPING_JUDGE_CACHE.clear()
+    _BUSINESS_VECTOR_CACHE.clear()
 
 
 def _business_path() -> Path:
@@ -637,12 +649,13 @@ def _rule_based_retrieval_plan(question: str) -> dict | None:
         }
     if "xem lai diem" in normalized and "thi" not in normalized:
         return {
-            **_empty_retrieval_plan("rule_clarification"),
-            "intent": "unclear",
-            "domain": "hoc_tap_or_khao_thi",
-            "query": "xem diem hoc tap hoac phuc khao diem thi",
+            **_empty_retrieval_plan("rule_success"),
+            "intent": "xem_diem",
+            "domain": "hoc_tap_sinh_vien",
+            "query": "xem diem ket qua hoc tap sinh vien phuc khao diem thi",
             "must": ["diem"],
-            "clarification_needed": True,
+            "avoid": ["web support cbgv", "giang vien", "can bo"],
+            "clarification_needed": False,
             "clarification_question": (
                 "Bạn muốn xem điểm đã công bố, hay muốn gửi yêu cầu phúc khảo điểm thi?"
             ),
@@ -757,11 +770,8 @@ def _parse_retrieval_plan(raw_response: str, question: str) -> dict:
         "hyde": " ".join(str(parsed.get("hyde") or "").split()[:45]),
         "must": _trim_phrase_list(parsed.get("must"), 5),
         "avoid": _trim_phrase_list(parsed.get("avoid"), 5),
-        "clarification_needed": bool(parsed.get("clarification_needed")),
-        "clarification_question": (
-            " ".join(str(parsed.get("clarification_question") or "").split())
-            or None
-        ),
+        "clarification_needed": False,
+        "clarification_question": None,
         "raw_response": raw_text[:1000],
     })
     if plan["clarification_needed"] and not plan["clarification_question"]:
@@ -788,9 +798,17 @@ def _generate_business_retrieval_plan(question: str) -> dict:
     except Exception as exc:
         fallback = _empty_retrieval_plan("error", error=str(exc))
         fallback["query"] = question
+        fallback["llm_called"] = True
         return fallback
 
-    return _parse_retrieval_plan(raw_response, question)
+    plan = _parse_retrieval_plan(raw_response, question)
+    plan["llm_called"] = True
+    if plan.get("parse_error"):
+        plan["query"] = question
+        plan["hyde"] = ""
+        plan["must"] = []
+        plan["avoid"] = []
+    return plan
 
 
 def _plan_search_query(question: str, retrieval_plan: dict) -> str:
@@ -1557,51 +1575,263 @@ def _judge_mapping_with_llm(query: str, mapping: dict, topic_overlap: int) -> di
     return result
 
 
+_AUDIENCE_GENERIC_TERMS = {
+    "sinh vien", "sv", "giang vien", "can bo", "cbgv", "thu tuc",
+    "quy trinh", "ho so", "yeu cau", "he thong", "support", "xem",
+    "dang ky", "lam the nao",
+}
+_EXPLICIT_SV_TERMS = {"sinh vien", "sv", "nguoi hoc", "em muon", "em can"}
+_EXPLICIT_CBGV_TERMS = {"giang vien", "can bo", "cbgv", "thay co", "thay", "co"}
+_SV_BUSINESS_TERMS = {
+    "diem", "hoc phan", "phuc khao", "lich hoc", "hoc phi", "dang ky hoc phan",
+}
+_CBGV_BUSINESS_TERMS = {
+    "lich day", "coi thi", "cham thi", "muon thiet bi phong hoc",
+    "ho tro thiet bi", "cong tac giang vien", "dang ky muon thiet bi",
+    "may chieu",
+}
+_DOCUMENT_INTENT_TERMS = {
+    "quyet dinh", "quy che", "thong bao", "van ban", "quy dinh",
+    "dieu", "muc", "chuong",
+}
+
+
+def _phrase_hits(text: str, phrases: set[str] | list[str]) -> list[str]:
+    normalized = normalize_text(text)
+    return [phrase for phrase in phrases if phrase and phrase in normalized]
+
+
+def _infer_audience_from_text(text: str) -> str:
+    normalized = normalize_text(text)
+    has_sv = any(term in normalized for term in ("support sv", "sinh vien", "student", " nguoi hoc"))
+    has_cbgv = any(
+        term in normalized
+        for term in ("support cbgv", "cbgv", "can bo", "giang vien", "thay co")
+    )
+    if has_sv and not has_cbgv:
+        return "sv"
+    if has_cbgv and not has_sv:
+        return "cbgv"
+    return "unknown"
+
+
+def _mapping_audience(mapping: dict) -> str:
+    text = " ".join([
+        str(mapping.get("audience") or ""),
+        str(mapping.get("doc_name") or ""),
+        str(mapping.get("source_file_name") or ""),
+        str(mapping.get("title") or ""),
+        str(mapping.get("relative_path") or ""),
+        str(mapping.get("source_relative_path") or ""),
+    ])
+    return _infer_audience_from_text(text)
+
+
+def _query_audience(query: str) -> tuple[str, dict]:
+    normalized = normalize_text(query)
+    explicit_sv = _phrase_hits(normalized, _EXPLICIT_SV_TERMS)
+    explicit_cbgv = _phrase_hits(normalized, _EXPLICIT_CBGV_TERMS)
+    sv_business = _phrase_hits(normalized, _SV_BUSINESS_TERMS)
+    cbgv_business = _phrase_hits(normalized, _CBGV_BUSINESS_TERMS)
+    if explicit_sv and explicit_cbgv:
+        audience = "mixed"
+    elif explicit_sv:
+        audience = "mixed" if cbgv_business else "sv"
+    elif explicit_cbgv:
+        audience = "mixed" if sv_business else "cbgv"
+    elif sv_business and not cbgv_business:
+        audience = "sv"
+    elif cbgv_business and not sv_business:
+        audience = "cbgv"
+    elif sv_business and cbgv_business:
+        audience = "mixed"
+    else:
+        audience = "unknown"
+    return audience, {
+        "explicit_sv": explicit_sv,
+        "explicit_cbgv": explicit_cbgv,
+        "sv_business": sv_business,
+        "cbgv_business": cbgv_business,
+    }
+
+
+def _mapping_text(mapping: dict) -> str:
+    return " ".join([
+        str(mapping.get("faq_question") or mapping.get("title") or ""),
+        str(mapping.get("faq_keywords") or ""),
+        str(mapping.get("faq_answer") or ""),
+        str(mapping.get("faq_location") or ""),
+        str(mapping.get("doc_name") or ""),
+        str(mapping.get("relative_path") or ""),
+    ])
+
+
 def _mapping_gate_decision(query: str, mapping: dict) -> dict:
     topic_overlap = _mapping_topic_overlap(query, mapping)
+    query_audience, audience_signals = _query_audience(query)
+    mapping_audience = _mapping_audience(mapping)
+    reasons = []
+    penalties = []
+    counted_signals = []
+
+    if (
+        (query_audience == "sv" and mapping_audience == "cbgv")
+        or (query_audience == "cbgv" and mapping_audience == "sv")
+    ):
+        return {
+            "decision": "reject",
+            "reason": "audience_mismatch",
+            "score": 0,
+            "confidence": 0.0,
+            "topic_overlap": topic_overlap,
+            "llm_used": False,
+            "hard_reject_reason": "audience_mismatch",
+            "reasons": reasons,
+            "penalties": penalties,
+            "counted_signals": counted_signals,
+            "query_audience": query_audience,
+            "mapping_audience": mapping_audience,
+            "explicit_role_signals": audience_signals,
+            "business_role_signals": audience_signals,
+        }
+
     if not _business_domain_matches(query, mapping):
         return {
             "decision": "reject",
             "reason": "domain_mismatch",
+            "score": 0,
+            "confidence": 0.0,
             "topic_overlap": topic_overlap,
             "llm_used": False,
+            "hard_reject_reason": "domain_mismatch",
+            "reasons": reasons,
+            "penalties": penalties,
+            "counted_signals": counted_signals,
+            "query_audience": query_audience,
+            "mapping_audience": mapping_audience,
         }
 
     query_terms = _meaningful_business_terms(query)
-    mapping_terms = _meaningful_business_terms(
+    mapping_text = _mapping_text(mapping)
+    mapping_terms = _meaningful_business_terms(mapping_text)
+    overlap_terms = query_terms & mapping_terms
+    non_generic_overlap = {
+        term for term in overlap_terms if term not in _AUDIENCE_GENERIC_TERMS
+    }
+
+    score = 0
+    normalized_mapping_text = normalize_text(mapping_text)
+    phrase_candidates = [
+        phrase
+        for phrase in _faq_keyword_phrases(query)
+        if len(get_keywords(phrase)) >= 2 and phrase not in counted_signals
+    ]
+    phrase_candidates.extend(
+        phrase
+        for phrase in _faq_keyword_phrases(mapping.get("faq_keywords", ""))
+        if phrase in normalize_text(query)
+    )
+    for phrase in dict.fromkeys(phrase_candidates):
+        if phrase and phrase in normalized_mapping_text and phrase not in _AUDIENCE_GENERIC_TERMS:
+            score += 35
+            reasons.append(f"phrase_match:{phrase}")
+            counted_signals.append(phrase)
+            break
+
+    location_text = normalize_text(
         " ".join([
-            str(mapping.get("faq_question") or ""),
-            str(mapping.get("faq_keywords") or ""),
-            str(mapping.get("faq_answer") or ""),
             str(mapping.get("faq_location") or ""),
+            str(mapping.get("title") or ""),
+            str(mapping.get("doc_name") or ""),
+            str(mapping.get("relative_path") or ""),
         ])
     )
-    overlap_terms = query_terms & mapping_terms
+    for phrase in dict.fromkeys(phrase_candidates):
+        if phrase and phrase in location_text and phrase not in counted_signals:
+            score += 25
+            reasons.append(f"location_match:{phrase}")
+            counted_signals.append(phrase)
+            break
+
+    distinctive_hits = sorted((non_generic_overlap & _BUSINESS_DISTINCTIVE_TERMS) - set(counted_signals))
+    if distinctive_hits:
+        hit_score = min(len(distinctive_hits) * 45, 70)
+        score += hit_score
+        reasons.append(f"distinctive_overlap:{','.join(distinctive_hits[:3])}")
+        counted_signals.extend(distinctive_hits[:3])
+
+    remaining_overlap = sorted(non_generic_overlap - set(counted_signals))
+    if remaining_overlap:
+        hit_score = min(len(remaining_overlap) * 10, 30)
+        score += hit_score
+        reasons.append(f"keyword_overlap:{','.join(remaining_overlap[:3])}")
+        counted_signals.extend(remaining_overlap[:3])
+
+    if query_audience in {"sv", "cbgv"} and query_audience == mapping_audience:
+        score += 20
+        reasons.append("audience_match")
+    elif query_audience == "mixed" and mapping_audience in {"sv", "cbgv"}:
+        score -= 15
+        penalties.append("mixed_audience_mapping_penalty")
+
+    if topic_overlap > 0:
+        score += 10
+        reasons.append("domain_or_topic_overlap")
+
+    if overlap_terms and not non_generic_overlap:
+        score -= 20
+        penalties.append("generic_only_overlap")
+
     if len(query_terms) >= 2 and topic_overlap <= 0:
         return {
             "decision": "reject",
             "reason": "zero_topic_overlap",
+            "score": score,
+            "confidence": 0.0,
             "topic_overlap": topic_overlap,
             "llm_used": False,
+            "hard_reject_reason": "zero_topic_overlap",
+            "reasons": reasons,
+            "penalties": penalties,
+            "counted_signals": counted_signals,
+            "query_audience": query_audience,
+            "mapping_audience": mapping_audience,
         }
-    if overlap_terms & _BUSINESS_DISTINCTIVE_TERMS:
-        return {
-            "decision": "accept",
-            "reason": "distinctive_term_overlap",
-            "topic_overlap": topic_overlap,
-            "llm_used": False,
-        }
-    if len(query_terms) >= 2 and len(overlap_terms) < BUSINESS_MAPPING_MIN_TOPIC_OVERLAP:
+
+    if len(query_terms) >= 2 and len(overlap_terms) < BUSINESS_MAPPING_MIN_TOPIC_OVERLAP and BUSINESS_MAPPING_LLM_JUDGE_ENABLED:
         judge = _judge_mapping_with_llm(query, mapping, topic_overlap)
         return {
             **judge,
             "topic_overlap": topic_overlap,
             "llm_used": True,
         }
+
+    if score < 35:
+        decision = "reject"
+        reason = "score_below_borderline"
+    elif score < 55:
+        decision = "reject"
+        reason = "borderline_score_generic_fallback"
+    else:
+        decision = "accept"
+        reason = "rule_score_passed"
+
     return {
-        "decision": "accept",
-        "reason": "rule_topic_overlap_passed",
+        "decision": decision,
+        "reason": reason,
+        "score": score,
+        "confidence": round(min(max(score / 100, 0), 1), 4),
         "topic_overlap": topic_overlap,
+        "threshold_accept": 55,
+        "threshold_borderline": 35,
+        "hard_reject_reason": None if decision == "accept" else reason,
+        "reasons": reasons,
+        "penalties": penalties,
+        "counted_signals": counted_signals,
+        "query_audience": query_audience,
+        "mapping_audience": mapping_audience,
+        "explicit_role_signals": audience_signals,
+        "business_role_signals": audience_signals,
         "llm_used": False,
     }
 
@@ -2088,10 +2318,262 @@ def _search_generic_business_chunks(
     return generic_results[:limit]
 
 
+def _chunk_vector_cache_key(chunk: dict) -> tuple:
+    content = str(chunk.get("content") or "")
+    digest = hashlib.sha1(content.encode("utf-8", errors="ignore")).hexdigest()
+    return (
+        chunk.get("source_root"),
+        chunk.get("relative_path") or chunk.get("doc_name"),
+        chunk.get("chunk_index"),
+        digest,
+    )
+
+
+def _search_generic_business_vectors(
+    query_text: str,
+    chunks: list[dict],
+    keyword_candidates: list[dict],
+    retrieval_plan: dict,
+    limit: int,
+    debug: dict,
+) -> list[dict]:
+    debug.update({
+        "vector_cache_hit_count": 0,
+        "vector_cache_miss_count": 0,
+        "runtime_embedded_chunk_count": 0,
+        "vector_disabled_reason": None,
+        "vector_error": None,
+    })
+    if not BUSINESS_GENERIC_VECTOR_ENABLED:
+        debug["vector_disabled_reason"] = "disabled"
+        return []
+    query_text = " ".join(str(query_text or "").split())
+    if not query_text:
+        debug["vector_disabled_reason"] = "empty_vector_query"
+        return []
+
+    candidate_keys = {
+        (
+            item.get("source_root"),
+            item.get("relative_path") or item.get("doc_name"),
+            item.get("chunk_index"),
+        )
+        for item in keyword_candidates
+    }
+    candidate_chunks = [
+        chunk for chunk in chunks
+        if chunk.get("source_type") != BUSINESS_FAQ_SOURCE_TYPE
+        and (
+            not candidate_keys
+            or (
+                chunk.get("source_root"),
+                chunk.get("relative_path") or chunk.get("doc_name"),
+                chunk.get("chunk_index"),
+            ) in candidate_keys
+        )
+    ]
+    if not candidate_chunks:
+        candidate_chunks = [
+            chunk for chunk in chunks
+            if chunk.get("source_type") != BUSINESS_FAQ_SOURCE_TYPE
+        ][:BUSINESS_GENERIC_VECTOR_MAX_RUNTIME_EMBED_CHUNKS]
+
+    candidate_chunks = candidate_chunks[:BUSINESS_GENERIC_VECTOR_MAX_RUNTIME_EMBED_CHUNKS]
+    try:
+        from app.data.embedding_client import embed_documents, embed_query
+
+        query_vector = embed_query(query_text)
+        missing_chunks = []
+        vectors = []
+        for chunk in candidate_chunks:
+            key = _chunk_vector_cache_key(chunk)
+            cached = _BUSINESS_VECTOR_CACHE.get(key)
+            if cached is not None:
+                debug["vector_cache_hit_count"] += 1
+                vectors.append(cached)
+            else:
+                debug["vector_cache_miss_count"] += 1
+                missing_chunks.append((key, chunk))
+                vectors.append(None)
+
+        if missing_chunks:
+            embedded = embed_documents([chunk.get("content", "") for _, chunk in missing_chunks])
+            debug["runtime_embedded_chunk_count"] = len(embedded)
+            embedded_iter = iter(embedded)
+            vectors = []
+            for chunk in candidate_chunks:
+                key = _chunk_vector_cache_key(chunk)
+                cached = _BUSINESS_VECTOR_CACHE.get(key)
+                if cached is None:
+                    cached = next(embedded_iter)
+                    _BUSINESS_VECTOR_CACHE[key] = cached
+                vectors.append(cached)
+    except Exception as exc:
+        debug["vector_error"] = str(exc)
+        return []
+
+    plan_avoid = [normalize_text(item) for item in (retrieval_plan or {}).get("avoid", [])]
+    results = []
+    for chunk, vector in zip(candidate_chunks, vectors):
+        if not vector:
+            continue
+        score = sum(left * right for left, right in zip(query_vector, vector))
+        if score < BUSINESS_GENERIC_VECTOR_MIN_SCORE:
+            continue
+        normalized_searchable = normalize_text(
+            f'{chunk.get("title", "")} {chunk.get("content", "")} {chunk.get("doc_name", "")}'
+        )
+        avoid_hits = [phrase for phrase in plan_avoid if phrase and phrase in normalized_searchable]
+        result = _clean_index_chunk(chunk)
+        result["vector_score"] = round(float(score), 4)
+        result["retrieval_plan_avoid_hits"] = avoid_hits
+        result["retrieval_method"] = "generic_vector"
+        results.append(result)
+
+    results.sort(key=lambda item: item.get("vector_score") or 0, reverse=True)
+    return results[:limit]
+
+
+def _generic_result_key(item: dict) -> tuple:
+    return (
+        item.get("source_type"),
+        item.get("relative_path") or item.get("doc_name"),
+        item.get("chunk_index"),
+        item.get("title"),
+    )
+
+
+def _merge_generic_business_results(
+    keyword_results: list[dict],
+    vector_results: list[dict],
+    query: str,
+    retrieval_plan: dict,
+) -> tuple[list[dict], dict]:
+    merged = {}
+    top_keyword_score = max(
+        [float(item.get("keyword_score") or item.get("score") or 0) for item in keyword_results] or [0.0]
+    )
+    keyword_denominator = max(top_keyword_score, MIN_SEARCH_SCORE * 4, 1)
+    weak_keyword_branch = top_keyword_score < MIN_SEARCH_SCORE
+    top_vector_score = max([float(item.get("vector_score") or 0) for item in vector_results] or [0.0])
+    for item in keyword_results + vector_results:
+        key = _generic_result_key(item)
+        existing = merged.get(key)
+        if existing is None:
+            existing = dict(item)
+            merged[key] = existing
+        else:
+            existing.update({k: v for k, v in item.items() if v is not None})
+
+    plan_avoid = [normalize_text(item) for item in (retrieval_plan or {}).get("avoid", [])]
+    query_audience, _ = _query_audience(query)
+    for item in merged.values():
+        keyword_score = float(item.get("keyword_score") or item.get("score") or 0)
+        keyword_norm = min(max(keyword_score / keyword_denominator, 0.0), 1.0)
+        if weak_keyword_branch:
+            keyword_norm = min(keyword_norm, 0.35)
+        vector_score = float(item.get("vector_score") or 0)
+        vector_norm = min(max(vector_score, 0.0), 1.0)
+        combined = 0.55 * keyword_norm + 0.45 * vector_norm
+        penalties = []
+        reasons = []
+        normalized_searchable = normalize_text(
+            f'{item.get("title", "")} {item.get("content", "")} {item.get("doc_name", "")} {item.get("relative_path", "")}'
+        )
+        avoid_hits = [phrase for phrase in plan_avoid if phrase and phrase in normalized_searchable]
+        if avoid_hits:
+            combined -= 0.25
+            penalties.append(f"avoid:{','.join(avoid_hits[:3])}")
+        item_audience = _infer_audience_from_text(normalized_searchable)
+        if (
+            (query_audience == "sv" and item_audience == "cbgv")
+            or (query_audience == "cbgv" and item_audience == "sv")
+        ):
+            combined -= 0.20
+            penalties.append("audience_mismatch")
+        combined = min(max(combined, 0.0), 1.0)
+        item["keyword_norm"] = round(keyword_norm, 4)
+        item["vector_norm"] = round(vector_norm, 4)
+        item["combined_score"] = round(combined * 100, 4)
+        item["score"] = item["combined_score"]
+        item["retrieval_method"] = "generic_hybrid"
+        item["generic_hybrid_reasons"] = reasons
+        item["generic_hybrid_penalties"] = penalties
+        item["counted_signals"] = []
+
+    ranked = sorted(merged.values(), key=lambda item: item.get("combined_score") or 0, reverse=True)
+    debug = {
+        "score_scale": "generic_hybrid_0_100",
+        "score_scope": "request_local_not_cross_request_comparable",
+        "top_keyword_score": round(top_keyword_score, 4),
+        "keyword_normalization_denominator": round(keyword_denominator, 4),
+        "weak_keyword_branch": weak_keyword_branch,
+        "top_vector_score": round(top_vector_score, 4),
+        "vector_normalization_method": "clamp_0_1",
+    }
+    return ranked[:BUSINESS_GENERIC_FINAL_TOP_K], debug
+
+
+def _search_generic_business_hybrid(
+    query: str,
+    chunks: list[dict],
+    doc_freq: Counter,
+    total_docs: int,
+    original_query: str,
+    retrieval_plan: dict,
+    debug: dict,
+) -> list[dict]:
+    keyword_results = _search_generic_business_chunks(
+        query,
+        chunks,
+        doc_freq,
+        total_docs,
+        BUSINESS_GENERIC_KEYWORD_TOP_K,
+        "generic_keyword",
+        original_query=original_query,
+        retrieval_plan=retrieval_plan,
+    )
+    vector_search_text = (
+        retrieval_plan.get("hyde")
+        or retrieval_plan.get("query")
+        or original_query
+        or query
+    )
+    vector_debug = {}
+    vector_results = _search_generic_business_vectors(
+        vector_search_text,
+        chunks,
+        keyword_results,
+        retrieval_plan,
+        BUSINESS_GENERIC_VECTOR_TOP_K,
+        vector_debug,
+    )
+    merged_results, score_debug = _merge_generic_business_results(
+        keyword_results,
+        vector_results,
+        original_query,
+        retrieval_plan,
+    )
+    debug.update(vector_debug)
+    debug.update(score_debug)
+    debug.update({
+        "generic_keyword_count": len(keyword_results),
+        "generic_vector_count": len(vector_results),
+        "generic_merged_count": len({_generic_result_key(item) for item in keyword_results + vector_results}),
+        "generic_final_count": len(merged_results),
+        "keyword_top_sources": _compact_guided_sources(keyword_results[:5]),
+        "vector_top_sources": _compact_guided_sources(vector_results[:5]),
+        "merged_top_sources": _compact_guided_sources(merged_results[:5]),
+        "vector_search_text": vector_search_text,
+        "retrieval_method": "generic_hybrid" if merged_results else None,
+    })
+    return merged_results
+
+
 def search_business_sources(query: str, limit: int | None = None, debug: dict | None = None) -> list[dict]:
     query = str(query or "").strip()
     limit = limit or BUSINESS_SEARCH_TOP_K
-    cache_key = ("retrieval_plan_v1", normalize_text(query), limit)
+    cache_key = ("retrieval_plan_v2_generic_hybrid", normalize_text(query), limit)
 
     if cache_key in _BUSINESS_SEARCH_CACHE:
         cached = deepcopy(_BUSINESS_SEARCH_CACHE[cache_key])
@@ -2112,13 +2594,19 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
         mapping_gate_decisions.append({
             "question": mapping.get("faq_question"),
             "score": mapping.get("mapping_score"),
+            "gate_score": gate_decision.get("score"),
             "decision": gate_decision.get("decision"),
             "reason": gate_decision.get("reason"),
+            "hard_reject_reason": gate_decision.get("hard_reject_reason"),
             "topic_overlap": gate_decision.get("topic_overlap"),
             "llm_used": gate_decision.get("llm_used"),
             "confidence": gate_decision.get("confidence"),
             "matched_topic": gate_decision.get("matched_topic"),
             "missing_topic": gate_decision.get("missing_topic"),
+            "query_audience": gate_decision.get("query_audience"),
+            "mapping_audience": gate_decision.get("mapping_audience"),
+            "reasons": gate_decision.get("reasons"),
+            "penalties": gate_decision.get("penalties"),
         })
         if gate_decision.get("decision") == "reject":
             rejected_mapping_count += 1
@@ -2126,11 +2614,13 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
                 mapping_rejected_reason = gate_decision.get("reason") or "suspected_wrong_topic"
             continue
         selected_mapping = mapping
+        selected_mapping["mapping_gate_score"] = gate_decision.get("score")
         break
 
     final_results = []
     retrieval_method = None
     vector_error = None
+    generic_hybrid_debug = {}
     retrieval_plan = _empty_retrieval_plan("not_needed")
     final_search_query = query
     source_chunks = []
@@ -2167,17 +2657,16 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
         retrieval_plan = _generate_business_retrieval_plan(query)
         final_search_query = _plan_search_query(query, retrieval_plan)
         if final_search_query:
-            final_results = _search_generic_business_chunks(
+            final_results = _search_generic_business_hybrid(
                 final_search_query,
                 chunks,
                 doc_freq,
                 total_docs,
-                limit,
-                "retrieval_plan_keyword",
                 original_query=query,
                 retrieval_plan=retrieval_plan,
+                debug=generic_hybrid_debug,
             )
-            retrieval_method = "retrieval_plan_keyword" if final_results else None
+            retrieval_method = "generic_hybrid" if final_results else None
 
     if not final_results:
         final_results = _search_generic_business_chunks(
@@ -2203,6 +2692,7 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
         "mapping_rejected_reason": mapping_rejected_reason,
         "rejected_mapping_count": rejected_mapping_count,
         "mapping_score": selected_mapping.get("mapping_score") if selected_mapping else None,
+        "mapping_gate_score": selected_mapping.get("mapping_gate_score") if selected_mapping else None,
         "mapping_question": selected_mapping.get("faq_question") if selected_mapping else None,
         "top_mapping_score": mappings[0].get("mapping_score") if mappings else None,
         "top_mapping_question": mappings[0].get("faq_question") if mappings else None,
@@ -2234,6 +2724,7 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
         "vector_error": vector_error,
         "final_sources": _compact_guided_sources(final_results),
     }
+    debug_data.update(generic_hybrid_debug)
 
     _BUSINESS_SEARCH_CACHE[cache_key] = {
         "results": deepcopy(final_results),

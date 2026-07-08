@@ -1,11 +1,12 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+import re
 from typing import Any
 
 from langchain_core.runnables import RunnableLambda
 
 from app.data.business_knowledge import search_business_sources
-from app.data.elasticsearch_client import search_documents
+from app.data.elasticsearch_client import get_keywords, normalize_text, search_documents
 from app.data.gemini_client import ask_gemini
 from app.data.prompt_builder import build_context, build_prompt, build_website_prompt
 from app.data.website_search_client import index_uneti_website
@@ -48,6 +49,44 @@ def _gemini_error_reason(answer: Any, llm_error: str | None) -> str | None:
         if marker in answer_text:
             return reason
     return None
+
+
+def _extractive_fallback_answer(state: PipelineState) -> str:
+    docs = state.get("docs") or []
+    if not docs:
+        return GEMINI_UNAVAILABLE_ANSWER
+    retrieval_plan = state.get("retrieval_plan") or (state.get("retrieval_debug") or {}).get("retrieval_plan") or {}
+    query_text = " ".join([
+        str(state.get("question") or ""),
+        str(retrieval_plan.get("query") or ""),
+        " ".join(str(item) for item in (retrieval_plan.get("must") or [])),
+    ])
+    query_terms = set(get_keywords(query_text))
+    ranked = []
+    for doc_index, doc in enumerate(docs[:5]):
+        content = re.sub(r"\s+", " ", str(doc.get("content") or "")).strip()
+        if not content:
+            continue
+        sentences = [
+            part.strip(" -")
+            for part in re.split(r"(?<=[.!?])\s+|(?<=;)\s+", content)
+            if len(part.strip(" -")) >= 24
+        ]
+        if not sentences and content:
+            sentences = [content[:700]]
+        for sent_index, sentence in enumerate(sentences):
+            score = len(query_terms & set(get_keywords(sentence)))
+            ranked.append((score, doc_index, sent_index, sentence))
+    if not ranked:
+        return GEMINI_UNAVAILABLE_ANSWER
+    selected = sorted(
+        sorted(ranked, key=lambda item: item[0], reverse=True)[:5],
+        key=lambda item: (item[1], item[2]),
+    )
+    lines = [f"- {sentence}" for _, _, _, sentence in selected]
+    best_doc = docs[0]
+    source = f'{best_doc.get("title") or "Nguon"} - {best_doc.get("doc_name") or "Tai lieu"}'
+    return "\n".join(lines) + f"\n(Nguon: {source})"
 
 
 def _trace_hybrid_retrieval(state: PipelineState, debug: dict) -> None:
@@ -109,8 +148,14 @@ async def _retrieve_business(state: PipelineState) -> PipelineState:
     _trace(state, "business_retrieval_plan", {
         "retrieval_plan": debug.get("retrieval_plan"),
         "retrieval_plan_parse_error": debug.get("retrieval_plan_parse_error"),
+        "retrieval_plan_llm_called": (debug.get("retrieval_plan") or {}).get("llm_called", False),
+        "retrieval_plan_cache_hit": (debug.get("retrieval_plan") or {}).get("cache_hit", False),
         "final_search_query": debug.get("final_search_query"),
         "fallback_reason": debug.get("fallback_reason"),
+        "mapping_judge_llm_called": any(
+            item.get("llm_used")
+            for item in debug.get("mapping_gate_decisions", [])
+        ),
     }, {
         "source_route": "business_document",
         "reason": state.get("reason"),
@@ -204,10 +249,11 @@ async def _generate_answer(state: PipelineState) -> PipelineState:
     fallback_used = gemini_error_reason is not None
     gemini_error_message = _short_debug_message(llm_error or answer) if fallback_used else None
     if fallback_used:
-        answer = GEMINI_UNAVAILABLE_ANSWER
+        answer = _extractive_fallback_answer(state) if state.get("docs") else GEMINI_UNAVAILABLE_ANSWER
     _trace(state, "lcel_llm_call", {
         "answer_chars": len(answer or ""),
         "llm_called": True,
+        "final_generation_llm_called": True,
         "fallback_used": fallback_used,
         "fallback_reason": gemini_error_reason,
         "error": _short_debug_message(llm_error),
