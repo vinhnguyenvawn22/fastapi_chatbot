@@ -41,6 +41,30 @@ MIN_SOURCE_CONTENT_CHARS = 80
 MAX_CHUNKS_PER_DOCUMENT = 2
 
 
+def _is_cbgv_admin_process_steps_question(question: str) -> bool:
+    normalized = normalize_text(question)
+    has_admin_process = (
+        "thu tuc hanh chinh" in normalized
+        and "ho so" in normalized
+        and any(term in normalized for term in ("quy trinh xu ly", "xu ly ho so", "quy trinh"))
+    )
+    asks_for_steps = any(
+        term in normalized
+        for term in ("gom may buoc", "bao nhieu buoc", "cac buoc", "may buoc", "nhung buoc")
+    )
+    asks_process = "giang vien" in normalized or "cbgv" in normalized or "can bo" in normalized
+    asks_student = any(term in normalized for term in ("sinh vien", "sv", "nguoi hoc"))
+    return has_admin_process and (asks_for_steps or asks_process) and not asks_student
+
+
+def _answer_has_admin_process_steps(answer: str | None) -> bool:
+    normalized = normalize_text(answer or "")
+    return all(
+        term in normalized
+        for term in ("nop ho so", "tiep nhan ho so", "xu ly ho so", "phe duyet ho so", "tra ket qua")
+    )
+
+
 def _business_direct_answer(question: str, docs: list[dict]) -> str | None:
     """Return concise answers for high-confidence business support workflows."""
     normalized = normalize_text(question)
@@ -74,11 +98,7 @@ def _business_direct_answer(question: str, docs: list[dict]) -> str | None:
             "5. Nhấn Gửi yêu cầu để hệ thống tiếp nhận."
         )
 
-    if (
-        "thu tuc hanh chinh" in normalized
-        and "ho so" in normalized
-        and any(term in normalized for term in ("may buoc", "gom", "quy trinh xu ly"))
-    ):
+    if _is_cbgv_admin_process_steps_question(question):
         return (
             "Quy trình xử lý hồ sơ thủ tục hành chính gồm 5 bước: "
             "1. Nộp hồ sơ. "
@@ -489,6 +509,18 @@ def _analyze_retrieval_question(trace: RagTrace, question: str) -> dict:
     return decision
 
 
+def _use_retrieval_for_clarification(decision: dict | None) -> dict | None:
+    if not decision or decision.get("action") != CLARIFICATION_NEEDED:
+        return decision
+    return {
+        **decision,
+        "action": "probe_retrieval",
+        "original_action": CLARIFICATION_NEEDED,
+        "clarification_bypassed": True,
+        "reason": decision.get("reason") or "clarification_bypassed_for_retrieval",
+    }
+
+
 def _clarification_response(
     trace: RagTrace,
     question: str,
@@ -510,6 +542,7 @@ def _clarification_response(
 
 
 def _retrieval_clarification_decision(state: dict) -> dict | None:
+    return None
     retrieval_debug = state.get("retrieval_debug") or {}
     fallback_reason = retrieval_debug.get("fallback_reason")
     if fallback_reason not in {
@@ -720,6 +753,14 @@ async def _answer_with_business_documents(trace: RagTrace, question: str, intent
 
     best_doc = business_docs[0]
     source = f'{best_doc.get("title")} - {best_doc.get("doc_name")}'
+    if _is_cbgv_admin_process_steps_question(question) and not _answer_has_admin_process_steps(answer):
+        answer = _business_direct_answer(question, business_docs) or answer
+        trace.add_step("business_direct_answer_override", {
+            "used": True,
+            "reason": "generated_answer_missing_admin_process_steps",
+            "doc_name": best_doc.get("doc_name"),
+            "title": best_doc.get("title"),
+        })
 
     return _finalize(trace, {
         "question": question,
@@ -926,8 +967,7 @@ async def handle_internal_chat(request):
         return _empty_question_response(trace, request.question)
 
     decision = _analyze_retrieval_question(trace, question)
-    if decision["action"] == CLARIFICATION_NEEDED:
-        return _clarification_response(trace, question, decision)
+    decision = _use_retrieval_for_clarification(decision)
 
     return await _answer_with_internal_documents(
         trace,
@@ -952,8 +992,7 @@ async def handle_business_chat(request):
         return _empty_question_response(trace, request.question)
 
     decision = _analyze_retrieval_question(trace, question)
-    if decision["action"] == CLARIFICATION_NEEDED:
-        return _clarification_response(trace, question, decision)
+    decision = _use_retrieval_for_clarification(decision)
 
     return await _answer_with_business_documents(
         trace,
@@ -1045,8 +1084,7 @@ async def handle_chat(request):
         )
 
     decision = _analyze_retrieval_question(trace, question)
-    if decision["action"] == CLARIFICATION_NEEDED:
-        return _clarification_response(trace, question, decision)
+    decision = _use_retrieval_for_clarification(decision)
 
     return await _answer_with_aggregate_documents(
         trace,

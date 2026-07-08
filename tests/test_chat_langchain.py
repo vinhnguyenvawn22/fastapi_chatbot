@@ -482,7 +482,7 @@ def test_trace_write_failure_does_not_break_chat(monkeypatch):
     assert trace.save() == trace.trace_id
 
 
-def test_ambiguous_chat_returns_clarification_without_retrieval(monkeypatch):
+def test_ambiguous_chat_continues_to_retrieval(monkeypatch):
     class Decision:
         def to_dict(self):
             return {
@@ -497,14 +497,20 @@ def test_ambiguous_chat_returns_clarification_without_retrieval(monkeypatch):
                 "cache_hit": False,
             }
 
-    async def fail_retrieval(*args, **kwargs):
-        raise AssertionError("Retrieval must not run for clarification")
+    async def fake_retrieval(trace, question, intent, reason, ambiguity_decision=None):
+        return {
+            "question": question,
+            "answer": "Khong tim thay can cu du ro trong tai lieu da cung cap.",
+            "source": None,
+            "sources": [],
+            "intent": intent,
+        }
 
     monkeypatch.setattr(chatbot_controller, "analyze_ambiguity", lambda question: Decision())
     monkeypatch.setattr(
         chatbot_controller,
         "_answer_with_aggregate_documents",
-        fail_retrieval,
+        fake_retrieval,
     )
 
     result = asyncio.run(
@@ -513,12 +519,12 @@ def test_ambiguous_chat_returns_clarification_without_retrieval(monkeypatch):
         )
     )
 
-    assert result["intent"] == "clarification_needed"
+    assert result["intent"] != "clarification_needed"
     assert result["sources"] == []
-    assert result["answer"] == "Bạn muốn kiểm tra đầu ra của chức năng hoặc hệ thống nào?"
+    assert result["answer"] == "Khong tim thay can cu du ro trong tai lieu da cung cap."
 
 
-def test_probe_failure_returns_clarification_after_retrieval(monkeypatch):
+def test_probe_failure_returns_no_evidence_after_retrieval(monkeypatch):
     async def fake_retrieve_internal(state):
         return {
             **state,
@@ -549,8 +555,8 @@ def test_probe_failure_returns_clarification_after_retrieval(monkeypatch):
         )
     )
 
-    assert result["answer"] == "Bạn cần hỏi rõ ràng hơn"
-    assert result["intent"] == "clarification_needed"
+    assert result["answer"] == chatbot_controller.NO_EVIDENCE_ANSWER
+    assert result["intent"] != "clarification_needed"
 
 
 def test_gemini_error_returns_unavailable_message_without_source_summary(monkeypatch):
@@ -725,6 +731,10 @@ def test_document_index_skips_one_broken_file(monkeypatch):
         ),
         (
             "Quy trinh xu ly ho so thu tuc hanh chinh gom may buoc?",
+            ["5 bước", "Nộp hồ sơ", "Tiếp nhận hồ sơ", "Xử lý hồ sơ", "Phê duyệt hồ sơ", "Trả kết quả"],
+        ),
+        (
+            "Quy trình xử lý hồ sơ thủ tục hành chính giảng viên",
             ["5 bước", "Nộp hồ sơ", "Tiếp nhận hồ sơ", "Xử lý hồ sơ", "Phê duyệt hồ sơ", "Trả kết quả"],
         ),
         (

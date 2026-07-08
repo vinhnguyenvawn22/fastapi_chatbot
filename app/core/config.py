@@ -28,7 +28,7 @@ BUSINESS_INDEX_CACHE_FILE = os.getenv(
 )
 
 MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "20"))
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1500"))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "2000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "500"))
 SEARCH_TOP_K = int(os.getenv("SEARCH_TOP_K", "3"))
 RRF_CANDIDATE_TOP_K = int(

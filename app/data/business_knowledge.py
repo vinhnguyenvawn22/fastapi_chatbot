@@ -586,8 +586,55 @@ def _trim_phrase_list(values, max_items: int = 5) -> list[str]:
     return phrases
 
 
+def _is_cbgv_admin_process_steps_query(question: str) -> bool:
+    normalized = normalize_text(question)
+    has_admin_process = (
+        "thu tuc hanh chinh" in normalized
+        and "ho so" in normalized
+        and (
+            "quy trinh xu ly" in normalized
+            or "xu ly ho so" in normalized
+            or "quy trinh" in normalized
+        )
+    )
+    asks_for_steps = any(
+        term in normalized
+        for term in (
+            "gom may buoc",
+            "bao nhieu buoc",
+            "cac buoc",
+            "may buoc",
+            "nhung buoc",
+        )
+    )
+    asks_process = "giang vien" in normalized or "cbgv" in normalized or "can bo" in normalized
+    asks_student = any(term in normalized for term in ("sinh vien", "sv", "nguoi hoc"))
+    return has_admin_process and (asks_for_steps or asks_process) and not asks_student
+
+
 def _rule_based_retrieval_plan(question: str) -> dict | None:
     normalized = normalize_text(question)
+    if _is_cbgv_admin_process_steps_query(question):
+        return {
+            **_empty_retrieval_plan("rule_success"),
+            "intent": "quy_trinh_xu_ly_ho_so_thu_tuc_hanh_chinh",
+            "domain": "cbgv_thu_tuc_hanh_chinh",
+            "query": "quy trinh xu ly ho so thu tuc hanh chinh 5 buoc cbgv",
+            "hyde": (
+                "Can bo giang vien tra cuu quy trinh xu ly ho so thu tuc hanh chinh "
+                "gom cac buoc nop ho so tiep nhan xu ly phe duyet tra ket qua."
+            ),
+            "must": [
+                "quy trinh xu ly ho so thu tuc hanh chinh",
+                "nop ho so",
+                "tiep nhan ho so",
+                "xu ly ho so",
+                "tra ket qua",
+            ],
+            "avoid": ["web support sv", "sinh vien"],
+            "clarification_needed": False,
+            "clarification_question": None,
+        }
     if "xem lai diem" in normalized and "thi" not in normalized:
         return {
             **_empty_retrieval_plan("rule_clarification"),
@@ -2053,30 +2100,6 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
             debug["cache_hit"] = True
         return cached.get("results", [])
 
-    early_plan = _rule_based_retrieval_plan(query)
-    if early_plan and early_plan.get("clarification_needed"):
-        debug_data = {
-            "cache_hit": False,
-            "business_documents_dir": str(_business_path()),
-            "indexed_chunk_count": None,
-            "candidate_count": 0,
-            "final_results_count": 0,
-            "mapping_selected": False,
-            "retrieval_method": None,
-            "retrieval_plan": early_plan,
-            "retrieval_plan_parse_error": early_plan.get("parse_error"),
-            "final_search_query": _plan_search_query(query, early_plan),
-            "fallback_reason": "retrieval_plan_requested_clarification",
-            "final_sources": [],
-        }
-        _BUSINESS_SEARCH_CACHE[cache_key] = {
-            "results": [],
-            "debug": deepcopy(debug_data),
-        }
-        if debug is not None:
-            debug.update(debug_data)
-        return []
-
     force_direct_source = _should_search_cbgv_source_directly(query)
     chunks, doc_freq, total_docs = _load_business_index()
     mappings = [] if force_direct_source else _mapping_candidates(query, chunks)
@@ -2143,10 +2166,7 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
     if not final_results:
         retrieval_plan = _generate_business_retrieval_plan(query)
         final_search_query = _plan_search_query(query, retrieval_plan)
-        if retrieval_plan.get("clarification_needed"):
-            final_results = []
-            retrieval_method = None
-        elif final_search_query:
+        if final_search_query:
             final_results = _search_generic_business_chunks(
                 final_search_query,
                 chunks,
@@ -2159,7 +2179,7 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
             )
             retrieval_method = "retrieval_plan_keyword" if final_results else None
 
-    if not final_results and not retrieval_plan.get("clarification_needed"):
+    if not final_results:
         final_results = _search_generic_business_chunks(
             query,
             chunks,
@@ -2205,11 +2225,7 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
         "retrieval_plan": retrieval_plan,
         "retrieval_plan_parse_error": retrieval_plan.get("parse_error"),
         "final_search_query": final_search_query,
-        "fallback_reason": (
-            "retrieval_plan_requested_clarification"
-            if retrieval_plan.get("clarification_needed")
-            else None
-        ),
+        "fallback_reason": None,
         "business_hyde": {
             "text": retrieval_plan.get("hyde") or retrieval_plan.get("query") or "",
             "status": retrieval_plan.get("status"),
