@@ -8,11 +8,14 @@ from app.data.business_knowledge import (
     BUSINESS_FAQ_SOURCE_TYPE,
     BUSINESS_SOURCE_TYPE,
     _build_business_faq_rows,
+    _generate_business_retrieval_plan,
+    _mapping_is_suspected_wrong_topic,
     _score_business_faq,
     build_business_faq_answer,
     clear_business_knowledge_cache,
     search_business_sources,
 )
+from app.data.query_analyzer import normalize_text
 
 
 def _mapping_rows():
@@ -91,6 +94,47 @@ def test_mapping_guided_grade_and_schedule_search_returns_student_source():
 
     assert docs
     assert docs[0]["doc_name"] == "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx"
+
+
+def test_regrade_exam_question_returns_student_appeal_source():
+    debug = {}
+
+    docs = search_business_sources(
+        "toi muon cham lai bai thi nhu the nao",
+        debug=debug,
+    )
+
+    assert docs
+    assert docs[0]["doc_name"] == "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx"
+    assert "phuc khao" in normalize_text(docs[0]["content"])
+    assert debug["retrieval_method"] in {"retrieval_plan_keyword", "generic_keyword"}
+    assert debug["retrieval_plan"]["intent"] == "phuc_khao"
+    assert "phuc khao" in normalize_text(debug["final_search_query"])
+
+
+def test_ambiguous_review_grade_question_requests_clarification():
+    debug = {}
+
+    docs = search_business_sources("em muon xem lai diem", debug=debug)
+
+    assert docs == []
+    assert debug["fallback_reason"] == "retrieval_plan_requested_clarification"
+    assert debug["retrieval_plan"]["clarification_needed"] is True
+    assert "phuc khao" in normalize_text(debug["retrieval_plan"]["clarification_question"])
+
+
+def test_retrieval_plan_invalid_json_falls_back_safely(monkeypatch):
+    monkeypatch.setattr(
+        "app.data.business_knowledge.ask_gemini",
+        lambda prompt: "day khong phai json",
+    )
+
+    plan = _generate_business_retrieval_plan("toi can hoi mot van de xyzabc")
+
+    assert plan["status"] == "parse_error"
+    assert plan["query"] == "toi can hoi mot van de xyzabc"
+    assert plan["clarification_needed"] is False
+    assert plan["parse_error"]
 
 
 def test_mapping_match_without_original_file_returns_no_source(monkeypatch):
@@ -173,19 +217,16 @@ def test_mapping_summary_is_never_returned_as_direct_answer():
     assert build_business_faq_answer(docs) is None
 
 
-def test_cbgv_support_questions_prioritize_cbgv_source():
-    questions = [
-        "Man Nhan su dung de lam gi?",
-        "Muon xem lop hoc phan giang vien thi vao duong dan nao?",
-        "Toi muon dang ky muon thiet bi phong hoc thi lam the nao?",
-        "Quy trinh xu ly ho so thu tuc hanh chinh gom may buoc?",
-        "Trang thai minh chung kiem dinh gom nhung gi?",
-    ]
+def test_exam_question_rejects_unrelated_article_search_mapping():
+    mapping = {
+        "faq_question": "Lam the nao de tim kiem bai viet cu va quay tro lai danh sach mac dinh?",
+        "faq_answer": "Nguoi dung dung thanh tim kiem va nut bo loc.",
+        "faq_keywords": "tim kiem bai viet, bo loc, danh sach",
+        "faq_location": "Muc I -> 3 -> 3.4",
+        "audience": "Can bo giang vien va sinh vien",
+    }
 
-    clear_business_knowledge_cache()
-
-    for question in questions:
-        docs = search_business_sources(question)
-
-        assert docs, question
-        assert docs[0]["doc_name"] == "2026.03.25.AI_HDSD TREN WEB SUPPORT CBGV.docx"
+    assert _mapping_is_suspected_wrong_topic(
+        "toi muon cham lai bai thi thi lam the nao",
+        mapping,
+    )

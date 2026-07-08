@@ -3,7 +3,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain_core.runnables import RunnableLambda
-from langsmith import tracing_context
 
 from app.data.business_knowledge import search_business_sources
 from app.data.elasticsearch_client import search_documents
@@ -14,12 +13,41 @@ from app.data.website_search_client import index_uneti_website
 
 PipelineState = dict[str, Any]
 TraceCallback = Callable[[str, dict, dict | None], None]
+GEMINI_UNAVAILABLE_ANSWER = (
+    "Hệ thống AI đang tạm thời không thể tạo câu trả lời do Gemini hết quota "
+    "hoặc gặp lỗi. Vui lòng thử lại sau."
+)
+GEMINI_ERROR_MARKERS = {
+    "gemini_quota_or_rate_limit": "He thong AI tam thoi vuot gioi han",
+    "gemini_unavailable": "He thong AI dang ban",
+    "gemini_api_error": "Loi khi goi Gemini API",
+}
 
 
 def _trace(state: PipelineState, name: str, output: dict, input_data: dict | None = None) -> None:
     callback: TraceCallback | None = state.get("trace_callback")
     if callback:
         callback(name, output, input_data)
+
+
+def _short_debug_message(value: Any, limit: int = 500) -> str | None:
+    if value is None:
+        return None
+    text = str(value).replace("\r", " ").replace("\n", " ").strip()
+    if not text:
+        return None
+    return text[:limit]
+
+
+def _gemini_error_reason(answer: Any, llm_error: str | None) -> str | None:
+    if llm_error:
+        return "gemini_exception"
+
+    answer_text = str(answer or "")
+    for reason, marker in GEMINI_ERROR_MARKERS.items():
+        if marker in answer_text:
+            return reason
+    return None
 
 
 def _trace_hybrid_retrieval(state: PipelineState, debug: dict) -> None:
@@ -78,6 +106,15 @@ async def _retrieve_internal(state: PipelineState) -> PipelineState:
 async def _retrieve_business(state: PipelineState) -> PipelineState:
     debug = {}
     docs = await asyncio.to_thread(search_business_sources, state["question"], None, debug)
+    _trace(state, "business_retrieval_plan", {
+        "retrieval_plan": debug.get("retrieval_plan"),
+        "retrieval_plan_parse_error": debug.get("retrieval_plan_parse_error"),
+        "final_search_query": debug.get("final_search_query"),
+        "fallback_reason": debug.get("fallback_reason"),
+    }, {
+        "source_route": "business_document",
+        "reason": state.get("reason"),
+    })
     _trace(state, "lcel_business_retrieval", debug, {
         "source_route": "business_document",
         "reason": state.get("reason"),
@@ -114,10 +151,11 @@ async def _retrieve_website(state: PipelineState) -> PipelineState:
 def _build_generation_prompt(state: PipelineState) -> PipelineState:
     docs = state.get("docs") or []
     context = build_context(docs)
+    retrieval_plan = (state.get("retrieval_debug") or {}).get("retrieval_plan")
     if state.get("prompt_type") == "website":
         prompt = build_website_prompt(state["question"], context)
     else:
-        prompt = build_prompt(state["question"], context)
+        prompt = build_prompt(state["question"], context, retrieval_plan=retrieval_plan)
 
     _trace(state, "context_selection", {
         "selected_source_count": len(docs),
@@ -140,8 +178,19 @@ def _build_generation_prompt(state: PipelineState) -> PipelineState:
         "prompt_chars": len(prompt),
         "source_count": len(docs),
         "prompt_type": state.get("prompt_type", "document"),
+        "retrieval_plan": retrieval_plan,
+        "interpreted_question": (retrieval_plan or {}).get("query"),
+        "has_interpreted_question_block": (
+            "CÁCH HỆ THỐNG ĐÃ HIỂU CÂU HỎI:" in prompt
+        ),
     })
-    return {**state, "context": context, "prompt": prompt}
+    return {
+        **state,
+        "context": context,
+        "prompt": prompt,
+        "retrieval_plan": retrieval_plan,
+        "interpreted_question": (retrieval_plan or {}).get("query"),
+    }
 
 
 async def _generate_answer(state: PipelineState) -> PipelineState:
@@ -151,69 +200,48 @@ async def _generate_answer(state: PipelineState) -> PipelineState:
     except Exception as exc:
         llm_error = str(exc)
         answer = ""
-    error_markers = (
-        "He thong AI tam thoi vuot gioi han",
-        "He thong AI dang ban",
-        "Loi khi goi Gemini API",
-    )
-    fallback_used = llm_error is not None or any(
-        marker in str(answer or "")
-        for marker in error_markers
-    )
+    gemini_error_reason = _gemini_error_reason(answer, llm_error)
+    fallback_used = gemini_error_reason is not None
+    gemini_error_message = _short_debug_message(llm_error or answer) if fallback_used else None
     if fallback_used:
-        summaries = []
-        for doc in (state.get("docs") or [])[:3]:
-            title = str(doc.get("title") or doc.get("doc_name") or "Nguồn tài liệu")
-            content = " ".join(str(doc.get("content") or "").split())
-            if len(content) > 360:
-                content = content[:357].rsplit(" ", 1)[0] + "..."
-            summaries.append(f"- {title}: {content}")
-        answer = (
-            "Thông tin tóm tắt từ các nguồn đã truy xuất:\n"
-            + "\n".join(summaries)
-            if summaries
-            else "Không tìm thấy căn cứ đủ rõ trong tài liệu đã cung cấp."
-        )
+        answer = GEMINI_UNAVAILABLE_ANSWER
     _trace(state, "lcel_llm_call", {
         "answer_chars": len(answer or ""),
         "llm_called": True,
         "fallback_used": fallback_used,
-        "fallback_reason": "gemini_error_source_summary" if fallback_used else None,
-        "error": llm_error,
+        "fallback_reason": gemini_error_reason,
+        "error": _short_debug_message(llm_error),
+        "gemini_error_message": gemini_error_message,
     })
     return {**state, "answer": answer}
 
 
 internal_retriever = RunnableLambda(_retrieve_internal).with_config(
-    {"run_name": "internal_document_retriever"}
+    {"run_name": "Retrieval"}
 )
 business_retriever = RunnableLambda(_retrieve_business).with_config(
-    {"run_name": "business_document_retriever"}
+    {"run_name": "Retrieval"}
 )
 website_retriever = RunnableLambda(_retrieve_website).with_config(
-    {"run_name": "website_uneti_retriever"}
+    {"run_name": "Retrieval"}
 )
 generation_chain = (
-    RunnableLambda(_build_generation_prompt).with_config({"run_name": "chat_prompt_template"})
-    | RunnableLambda(_generate_answer).with_config({"run_name": "gemini_generation"})
+    RunnableLambda(_build_generation_prompt).with_config({"run_name": "Context Builder"})
+    | RunnableLambda(_generate_answer).with_config({"run_name": "LLM Generation"})
 )
 
 
 async def retrieve_internal(state: PipelineState) -> PipelineState:
-    with tracing_context(enabled=False):
-        return await internal_retriever.ainvoke(state)
+    return await internal_retriever.ainvoke(state)
 
 
 async def retrieve_business(state: PipelineState) -> PipelineState:
-    with tracing_context(enabled=False):
-        return await business_retriever.ainvoke(state)
+    return await business_retriever.ainvoke(state)
 
 
 async def retrieve_website(state: PipelineState) -> PipelineState:
-    with tracing_context(enabled=False):
-        return await website_retriever.ainvoke(state)
+    return await website_retriever.ainvoke(state)
 
 
 async def generate_answer(state: PipelineState) -> PipelineState:
-    with tracing_context(enabled=False):
-        return await generation_chain.ainvoke(state)
+    return await generation_chain.ainvoke(state)

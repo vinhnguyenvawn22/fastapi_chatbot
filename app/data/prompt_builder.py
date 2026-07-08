@@ -1,6 +1,5 @@
 from app.core.config import MAX_CONTEXT_CHARS, MAX_CONTEXT_CHUNKS
 from langchain_core.prompts import ChatPromptTemplate
-from langsmith import tracing_context
 
 
 _DOCUMENT_CHAT_TEMPLATE = ChatPromptTemplate.from_messages([
@@ -13,8 +12,7 @@ _WEBSITE_CHAT_TEMPLATE = ChatPromptTemplate.from_messages([
 
 def _render_chat_template(template: ChatPromptTemplate, rendered_prompt: str) -> str:
     """Render through ChatPromptTemplate while preserving the legacy prompt text."""
-    with tracing_context(enabled=False):
-        prompt_value = template.invoke({"rendered_prompt": rendered_prompt})
+    prompt_value = template.invoke({"rendered_prompt": rendered_prompt})
     return str(prompt_value.messages[0].content).strip()
 
 
@@ -75,8 +73,45 @@ def build_context(docs):
     return "\n\n".join(context_parts)
 
 
-def build_prompt(question, context):
+def _useful_retrieval_plan(retrieval_plan):
+    if not isinstance(retrieval_plan, dict):
+        retrieval_plan = {}
+
+    intent = str(retrieval_plan.get("intent") or "").strip()
+    domain = str(retrieval_plan.get("domain") or "").strip()
+    query = str(retrieval_plan.get("query") or "").strip()
+    must = [
+        str(item or "").strip()
+        for item in (retrieval_plan.get("must") or [])
+        if str(item or "").strip()
+    ]
+
+    return {
+        "intent": intent or "chua_xac_dinh",
+        "domain": domain or "chua_xac_dinh",
+        "query": query,
+        "must": must,
+    }
+
+
+def _render_interpreted_question_block(retrieval_plan, question=None):
+    plan = _useful_retrieval_plan(retrieval_plan)
+    query = plan["query"] or str(question or "").strip()
+
+    lines = ["CÁCH HỆ THỐNG ĐÃ HIỂU CÂU HỎI:"]
+    lines.append(f'- Intent: {plan["intent"]}')
+    lines.append(f'- Nhóm nghiệp vụ: {plan["domain"]}')
+    if query:
+        lines.append(f'- Truy vấn nghiệp vụ: {query}')
+    if plan["must"]:
+        lines.append(f'- Thuật ngữ quan trọng: {", ".join(plan["must"])}')
+    return "\n".join(lines)
+
+
+def build_prompt(question, context, retrieval_plan=None):
     """Tao prompt cuoi cung gom huong dan, context truy xuat va cau hoi."""
+    interpreted_question = _render_interpreted_question_block(retrieval_plan, question)
+    interpreted_section = f"\n{interpreted_question}\n"
     prompt = f"""
 Bạn là trợ lý AI tư vấn dựa trên tài liệu nội bộ của nhà trường.
 
@@ -85,6 +120,10 @@ NHIỆM VỤ
 Trả lời câu hỏi của người dùng chỉ bằng những thông tin có trong phần được cung cấp.
 
 Mục tiêu là đưa ra câu trả lời chính xác, dễ hiểu, tự nhiên và nhất quán với nội dung tài liệu, đồng thời giúp người hỏi nhanh chóng nắm được thông tin cần thiết.
+Trả lời CÂU HỎI GỐC của người dùng. Nếu có phần "CÁCH HỆ THỐNG ĐÃ HIỂU CÂU HỎI", hãy dùng phần đó để hiểu đúng thuật ngữ nghiệp vụ, nhưng không thay thế hoàn toàn câu hỏi gốc.
+Nếu phần hiểu truy vấn mâu thuẫn với tài liệu truy xuất, ưu tiên tài liệu truy xuất.
+Không nhắc máy móc intent/domain trong câu trả lời nếu không cần.
+Không dùng truy vấn giả định hoặc HyDE làm câu trả lời cuối.
 
 NGUYÊN TẮC TRẢ LỜI
 Chỉ sử dụng thông tin xuất hiện trong phần .
@@ -162,8 +201,9 @@ Không tìm thấy căn cứ đủ rõ trong tài liệu đã cung cấp.
 THÔNG TIN THAM KHẢO:
 {context}
 
-CÂU HỎI:
+CÂU HỎI GỐC:
 {question}
+{interpreted_section}
 
 TRẢ LỜI:
 """

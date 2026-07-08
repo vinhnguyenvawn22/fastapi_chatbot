@@ -3,6 +3,7 @@ import re
 import time
 
 from fastapi import HTTPException
+from langsmith import traceable
 
 from app.core.config import (
     HYDE_MIN_RERANK_SCORE,
@@ -107,6 +108,23 @@ def _is_no_evidence_answer(answer: str | None) -> bool:
     return normalize_text(NO_EVIDENCE_ANSWER) in normalized
 
 
+@traceable(name="Citation Check", run_type="chain")
+def _citation_check(answer: str | None, source: str | None, source_count: int) -> dict:
+    no_evidence = _is_no_evidence_answer(answer)
+    return {
+        "no_evidence_answer": no_evidence,
+        "has_source": bool(source),
+        "source_count": source_count,
+        "citation_status": (
+            "no_source_needed"
+            if no_evidence
+            else "has_source"
+            if source or source_count > 0
+            else "missing_source"
+        ),
+    }
+
+
 def _source_search_text(doc: dict) -> str:
     return " ".join(
         str(doc.get(field) or "")
@@ -179,6 +197,21 @@ def _limit_document_dominance(docs: list[dict]) -> list[dict]:
         counts[key] = counts.get(key, 0) + 1
         selected.append(doc)
     return selected
+
+
+def _should_prefer_business_generation(business_state: dict, business_docs: list[dict]) -> bool:
+    if not business_docs:
+        return False
+
+    retrieval_debug = business_state.get("retrieval_debug") or {}
+    if not retrieval_debug.get("mapping_selected"):
+        return False
+
+    return retrieval_debug.get("retrieval_method") in {
+        "location",
+        "keyword",
+        "vector",
+    }
 
 
 def _looks_like_document_number_query(question: str) -> bool:
@@ -410,6 +443,11 @@ def _finalize(trace: RagTrace, response: dict) -> dict:
     if "answer" in response:
         response["answer"] = _clean_answer_text(response["answer"])
 
+    _citation_check(
+        response.get("answer"),
+        response.get("source"),
+        len(response.get("sources") or []),
+    )
     response["trace_id"] = trace.trace_id
     trace.set_response(response)
     trace.save()
@@ -432,8 +470,13 @@ def _pipeline_state(
     }
 
 
+@traceable(name="Query Router", run_type="chain")
+def _route_retrieval_question(question: str) -> dict:
+    return analyze_ambiguity(question).to_dict()
+
+
 def _analyze_retrieval_question(trace: RagTrace, question: str) -> dict:
-    decision = analyze_ambiguity(question).to_dict()
+    decision = _route_retrieval_question(question)
     trace.add_step("ambiguity_detection", {
         "ambiguity_action": decision.get("action"),
         "detected_topic": decision.get("topic"),
@@ -459,7 +502,7 @@ def _clarification_response(
     })
     return _finalize(trace, {
         "question": question,
-        "answer": "Bạn cần hỏi rõ ràng hơn",
+        "answer": decision.get("clarifying_question") or "Bạn cần hỏi rõ ràng hơn",
         "source": None,
         "sources": [],
         "intent": CLARIFICATION_NEEDED,
@@ -472,8 +515,10 @@ def _retrieval_clarification_decision(state: dict) -> dict | None:
     if fallback_reason not in {
         "hyde_requested_clarification",
         "probe_insufficient_evidence",
+        "retrieval_plan_requested_clarification",
     }:
         return None
+    retrieval_plan = retrieval_debug.get("retrieval_plan") or {}
     ambiguity = retrieval_debug.get("ambiguity") or {}
     return {
         **ambiguity,
@@ -481,6 +526,7 @@ def _retrieval_clarification_decision(state: dict) -> dict | None:
         "reason": fallback_reason,
         "clarifying_question": (
             ambiguity.get("clarifying_question")
+            or retrieval_plan.get("clarification_question")
             or "Bạn cần hỏi rõ ràng hơn"
         ),
     }
@@ -623,6 +669,14 @@ async def _answer_with_internal_documents(
 
 async def _answer_with_business_documents(trace: RagTrace, question: str, intent: str, reason: str):
     state = await retrieve_business(_pipeline_state(trace, question, reason))
+    retrieval_clarification = _retrieval_clarification_decision(state)
+    if retrieval_clarification:
+        return _clarification_response(
+            trace,
+            question,
+            retrieval_clarification,
+            retrieval_called=True,
+        )
     business_docs = state.get("docs") or []
 
     has_business_evidence, business_evidence_reason = _has_confident_evidence(question, business_docs)
@@ -696,6 +750,15 @@ async def _answer_with_aggregate_documents(
     business_docs = business_state.get("docs") or []
     internal_docs = internal_state.get("docs") or []
 
+    business_retrieval_clarification = _retrieval_clarification_decision(business_state)
+    if business_retrieval_clarification:
+        return _clarification_response(
+            trace,
+            question,
+            business_retrieval_clarification,
+            retrieval_called=True,
+        )
+
     usable_business, rejected_business = _filter_usable_sources(question, business_docs)
     usable_internal, rejected_internal = _filter_usable_sources(question, internal_docs)
     business_has_evidence, business_reason = _has_confident_evidence(question, usable_business)
@@ -724,6 +787,35 @@ async def _answer_with_aggregate_documents(
 
     selected_business = usable_business if business_has_evidence else []
     selected_internal = usable_internal if internal_has_evidence else []
+
+    if _should_prefer_business_generation(business_state, selected_business):
+        business_only_docs = _limit_document_dominance(selected_business)
+        trace.add_step("aggregate_business_priority", {
+            "reason": "mapping_guided_business_source",
+            "business_source_count": len(business_only_docs),
+            "internal_source_count": len(selected_internal),
+            "business_retrieval_method": (
+                (business_state.get("retrieval_debug") or {}).get("retrieval_method")
+            ),
+            "mapping_question": (
+                (business_state.get("retrieval_debug") or {}).get("mapping_question")
+            ),
+        })
+        business_generation_state = await generate_answer({
+            **base_state,
+            "docs": business_only_docs,
+            "retrieval_debug": business_state.get("retrieval_debug") or {},
+        })
+        if not _is_no_evidence_answer(business_generation_state["answer"]):
+            best_doc = business_only_docs[0]
+            return _finalize(trace, {
+                "question": question,
+                "answer": business_generation_state["answer"],
+                "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
+                "sources": _build_sources(business_only_docs, question),
+                "intent": intent,
+            })
+
     docs = _deduplicate_docs(selected_business, selected_internal)
     source_types = {doc.get("source_type") for doc in docs}
     if len(source_types) > 1:
@@ -754,7 +846,18 @@ async def _answer_with_aggregate_documents(
             "aggregate_no_confident_source",
         )
 
-    generation_state = await generate_answer({**base_state, "docs": docs})
+    business_retrieval_debug = business_state.get("retrieval_debug") or {}
+    internal_retrieval_debug = internal_state.get("retrieval_debug") or {}
+    generation_retrieval_debug = (
+        business_retrieval_debug
+        if business_retrieval_debug.get("retrieval_plan")
+        else internal_retrieval_debug
+    )
+    generation_state = await generate_answer({
+        **base_state,
+        "docs": docs,
+        "retrieval_debug": generation_retrieval_debug or {},
+    })
     answer = generation_state["answer"]
 
     if _is_no_evidence_answer(answer) and selected_internal:
@@ -771,7 +874,11 @@ async def _answer_with_aggregate_documents(
             "internal_source_count": len(internal_only),
             "reranking": internal_rerank_debug,
         })
-        retry_state = await generate_answer({**base_state, "docs": internal_only})
+        retry_state = await generate_answer({
+            **base_state,
+            "docs": internal_only,
+            "retrieval_debug": internal_retrieval_debug,
+        })
         if not _is_no_evidence_answer(retry_state["answer"]):
             docs = internal_only
             answer = retry_state["answer"]
@@ -805,6 +912,7 @@ def _empty_question_response(trace: RagTrace, original_question: str):
     })
 
 
+@traceable(name="UNETI Chat Request", run_type="chain")
 async def handle_internal_chat(request):
     question = request.question.strip()
     trace = RagTrace(question)
@@ -830,6 +938,7 @@ async def handle_internal_chat(request):
     )
 
 
+@traceable(name="UNETI Chat Request", run_type="chain")
 async def handle_business_chat(request):
     question = request.question.strip()
     trace = RagTrace(question)
@@ -854,6 +963,7 @@ async def handle_business_chat(request):
     )
 
 
+@traceable(name="UNETI Chat Request", run_type="chain")
 async def handle_website_chat(request):
     question = request.question.strip()
     trace = RagTrace(question)
@@ -874,6 +984,7 @@ async def handle_website_chat(request):
     )
 
 
+@traceable(name="UNETI Chat Request", run_type="chain")
 async def handle_chat(request):
     question = request.question.strip()
     trace = RagTrace(question)
