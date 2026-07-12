@@ -132,6 +132,15 @@ VECTOR_COLLECTION_NAME = os.getenv("VECTOR_COLLECTION_NAME", "document_chunks")
 VECTOR_SEARCH_TOP_K = int(os.getenv("VECTOR_SEARCH_TOP_K", str(SEARCH_TOP_K)))
 VECTOR_MAX_DISTANCE = float(os.getenv("VECTOR_MAX_DISTANCE", "0.75"))
 
+CHAT_DATABASE_FILE = os.getenv("CHAT_DATABASE_FILE", "storage/chat_history.sqlite3")
+CHAT_SESSION_COOKIE_NAME = os.getenv("CHAT_SESSION_COOKIE_NAME", "chat_session")
+CHAT_SESSION_MAX_AGE_SECONDS = int(os.getenv("CHAT_SESSION_MAX_AGE_SECONDS", str(30 * 24 * 60 * 60)))
+CHAT_COOKIE_SECURE = os.getenv("CHAT_COOKIE_SECURE", "false").lower() in {"1", "true", "yes", "on"}
+CHAT_COOKIE_SAMESITE = os.getenv("CHAT_COOKIE_SAMESITE", "lax")
+CHAT_HISTORY_MAX_MESSAGES = int(os.getenv("CHAT_HISTORY_MAX_MESSAGES", "10"))
+CHAT_HISTORY_MAX_CHARS = int(os.getenv("CHAT_HISTORY_MAX_CHARS", "6000"))
+CHAT_QUESTION_MAX_CHARS = int(os.getenv("CHAT_QUESTION_MAX_CHARS", "4000"))
+
 BUSINESS_MAPPING_FILE = os.getenv(
     "BUSINESS_MAPPING_FILE",
     "storage/business_mapping/pcntt_mapping.json",

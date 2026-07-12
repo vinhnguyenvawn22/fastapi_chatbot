@@ -5,6 +5,7 @@ __pycache__/
 venv/
 storage/chroma_db
 storage/traces/*.json
+storage/chat_history.sqlite3
 .sync-manifest.json
 uris.json
 data/ChatAI/service-account.json

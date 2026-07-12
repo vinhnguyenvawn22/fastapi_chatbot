@@ -198,9 +198,17 @@ def _build_generation_prompt(state: PipelineState) -> PipelineState:
     context = build_context(docs)
     retrieval_plan = (state.get("retrieval_debug") or {}).get("retrieval_plan")
     if state.get("prompt_type") == "website":
-        prompt = build_website_prompt(state["question"], context)
+        prompt = build_website_prompt(
+            state["question"], context,
+            conversation_history=state.get("conversation_history"),
+            original_question=state.get("original_question"),
+        )
     else:
-        prompt = build_prompt(state["question"], context, retrieval_plan=retrieval_plan)
+        prompt = build_prompt(
+            state["question"], context, retrieval_plan=retrieval_plan,
+            conversation_history=state.get("conversation_history"),
+            original_question=state.get("original_question"),
+        )
 
     _trace(state, "context_selection", {
         "selected_source_count": len(docs),

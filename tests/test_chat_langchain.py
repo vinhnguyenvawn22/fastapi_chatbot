@@ -48,7 +48,11 @@ def test_four_chat_endpoints_keep_response_schema(monkeypatch, path, handler_nam
     response = client.post(path, json={"question": "cau hoi test"})
 
     assert response.status_code == 200
-    assert response.json() == {
+    data = response.json()
+    assert {
+        key: data[key]
+        for key in ("question", "answer", "source", "intent", "trace_id", "sources")
+    } == {
         "question": "cau hoi test",
         "answer": "Cau tra loi test.",
         "source": None,
@@ -56,6 +60,9 @@ def test_four_chat_endpoints_keep_response_schema(monkeypatch, path, handler_nam
         "trace_id": "trace-test",
         "sources": [],
     }
+    assert data["thread_id"]
+    assert data["user_message_id"]
+    assert data["assistant_message_id"]
 
 
 def test_document_prompt_is_preserved_through_chat_prompt_template():

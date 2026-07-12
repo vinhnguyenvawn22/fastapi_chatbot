@@ -27,6 +27,7 @@ from app.data.gemini_client import get_gemini_call_count
 from app.data.query_analyzer import QueryIntent, classify_query
 from app.data.reranker import rerank_chunks
 from app.data.trace_logger import RagTrace, load_trace
+from app.data.conversation_context import get_conversation_context
 from app.data.website_search_client import index_uneti_website
 
 
@@ -540,13 +541,32 @@ def _pipeline_state(
     prompt_type: str = "document",
     ambiguity_decision: dict | None = None,
 ) -> dict:
+    conversation = get_conversation_context()
     return {
         "question": question,
+        "original_question": conversation.original_question or question,
+        "standalone_question": conversation.standalone_question or question,
+        "conversation_history": conversation.history,
         "reason": reason,
         "prompt_type": prompt_type,
         "ambiguity_decision": ambiguity_decision,
         "trace_callback": trace.add_step,
     }
+
+
+def _new_trace(question: str) -> RagTrace:
+    trace = RagTrace(question)
+    conversation = get_conversation_context()
+    if conversation.thread_id:
+        trace.payload["thread_id"] = conversation.thread_id
+        trace.payload["original_question"] = conversation.original_question or question
+        trace.payload["standalone_question"] = conversation.standalone_question or question
+        trace.add_step("contextual_question_rewriting", {
+            **conversation.rewrite_debug,
+            "original_question": conversation.original_question or question,
+            "standalone_question": conversation.standalone_question or question,
+        })
+    return trace
 
 
 @traceable(name="Query Router", run_type="chain")
@@ -1067,7 +1087,7 @@ def _empty_question_response(trace: RagTrace, original_question: str):
 @traceable(name="UNETI Chat Request", run_type="chain")
 async def handle_internal_chat(request):
     question = request.question.strip()
-    trace = RagTrace(question)
+    trace = _new_trace(question)
     trace.add_step("request_received", {
         "question": question,
         "is_empty": not bool(question),
@@ -1092,7 +1112,7 @@ async def handle_internal_chat(request):
 @traceable(name="UNETI Chat Request", run_type="chain")
 async def handle_business_chat(request):
     question = request.question.strip()
-    trace = RagTrace(question)
+    trace = _new_trace(question)
     trace.add_step("request_received", {
         "question": question,
         "is_empty": not bool(question),
@@ -1116,7 +1136,7 @@ async def handle_business_chat(request):
 @traceable(name="UNETI Chat Request", run_type="chain")
 async def handle_website_chat(request):
     question = request.question.strip()
-    trace = RagTrace(question)
+    trace = _new_trace(question)
     trace.add_step("request_received", {
         "question": question,
         "is_empty": not bool(question),
@@ -1137,7 +1157,7 @@ async def handle_website_chat(request):
 @traceable(name="UNETI Chat Request", run_type="chain")
 async def handle_chat(request):
     question = request.question.strip()
-    trace = RagTrace(question)
+    trace = _new_trace(question)
     trace.add_step("request_received", {"question": question, "is_empty": not bool(question)})
 
     if not question:

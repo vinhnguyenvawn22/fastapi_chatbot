@@ -1,10 +1,12 @@
 from pydantic import BaseModel, Field
 from typing import Any, Optional
+from app.core.config import CHAT_QUESTION_MAX_CHARS
 
 
 class ChatRequest(BaseModel):
     """Schema du lieu dau vao cho API chat."""
-    question: str
+    question: str = Field(max_length=CHAT_QUESTION_MAX_CHARS)
+    thread_id: Optional[str] = None
 
 
 class ChatSource(BaseModel):
@@ -48,7 +50,32 @@ class ChatResponse(BaseModel):
     source: Optional[str] = None
     intent: Optional[str] = None
     trace_id: Optional[str] = None
+    thread_id: Optional[str] = None
+    user_message_id: Optional[str] = None
+    assistant_message_id: Optional[str] = None
     sources: list[ChatSource] = Field(default_factory=list)
+
+
+class ThreadCreateRequest(BaseModel):
+    title: str = "Cuoc tro chuyen moi"
+
+
+class ThreadResponse(BaseModel):
+    thread_id: str
+    title: str
+    created_at: str
+    updated_at: str
+
+
+class MessageResponse(BaseModel):
+    message_id: str
+    thread_id: str
+    role: str
+    content: str
+    sources: list[ChatSource] = Field(default_factory=list)
+    status: str
+    trace_id: Optional[str] = None
+    created_at: str
 
 
 class TraceStep(BaseModel):
