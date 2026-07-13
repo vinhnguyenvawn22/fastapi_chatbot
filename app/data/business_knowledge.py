@@ -1666,10 +1666,37 @@ def _mapping_text(mapping: dict) -> str:
     ])
 
 
-def _mapping_gate_decision(query: str, mapping: dict) -> dict:
-    topic_overlap = _mapping_topic_overlap(query, mapping)
+def _context_cache_key(query_context: dict | None) -> tuple:
+    context = query_context or {}
+    return (
+        context.get("audience_hint") or "unknown",
+        context.get("audience_source") or "unknown",
+        context.get("information_need") or "unknown",
+    )
+
+
+def _query_context_audience(query: str, query_context: dict | None) -> tuple[str, dict]:
     query_audience, audience_signals = _query_audience(query)
+    context = query_context or {}
+    context_audience = context.get("audience_hint")
+    if context_audience in {"sv", "cbgv", "mixed"}:
+        return context_audience, {
+            **audience_signals,
+            "context_audience": context_audience,
+            "context_source": context.get("audience_source"),
+        }
+    return query_audience, audience_signals
+
+
+def _mapping_gate_decision(
+    query: str,
+    mapping: dict,
+    query_context: dict | None = None,
+) -> dict:
+    topic_overlap = _mapping_topic_overlap(query, mapping)
+    query_audience, audience_signals = _query_context_audience(query, query_context)
     mapping_audience = _mapping_audience(mapping)
+    information_need = (query_context or {}).get("information_need") or "unknown"
     reasons = []
     penalties = []
     counted_signals = []
@@ -1691,6 +1718,7 @@ def _mapping_gate_decision(query: str, mapping: dict) -> dict:
             "counted_signals": counted_signals,
             "query_audience": query_audience,
             "mapping_audience": mapping_audience,
+            "information_need": information_need,
             "explicit_role_signals": audience_signals,
             "business_role_signals": audience_signals,
         }
@@ -1709,6 +1737,7 @@ def _mapping_gate_decision(query: str, mapping: dict) -> dict:
             "counted_signals": counted_signals,
             "query_audience": query_audience,
             "mapping_audience": mapping_audience,
+            "information_need": information_need,
         }
 
     query_terms = _meaningful_business_terms(query)
@@ -1778,6 +1807,15 @@ def _mapping_gate_decision(query: str, mapping: dict) -> dict:
         score += 10
         reasons.append("domain_or_topic_overlap")
 
+    if (
+        information_need == "procedure_ui"
+        and query_audience == "sv"
+        and mapping_audience == "sv"
+        and topic_overlap > 0
+    ):
+        score += 35
+        reasons.append("query_context_procedure_audience_match")
+
     if overlap_terms and not non_generic_overlap:
         score -= 20
         penalties.append("generic_only_overlap")
@@ -1796,6 +1834,7 @@ def _mapping_gate_decision(query: str, mapping: dict) -> dict:
             "counted_signals": counted_signals,
             "query_audience": query_audience,
             "mapping_audience": mapping_audience,
+            "information_need": information_need,
         }
 
     if len(query_terms) >= 2 and len(overlap_terms) < BUSINESS_MAPPING_MIN_TOPIC_OVERLAP and BUSINESS_MAPPING_LLM_JUDGE_ENABLED:
@@ -1830,6 +1869,7 @@ def _mapping_gate_decision(query: str, mapping: dict) -> dict:
         "counted_signals": counted_signals,
         "query_audience": query_audience,
         "mapping_audience": mapping_audience,
+        "information_need": information_need,
         "explicit_role_signals": audience_signals,
         "business_role_signals": audience_signals,
         "llm_used": False,
@@ -1918,10 +1958,14 @@ def _business_domain_matches(query: str, mapping: dict) -> bool:
     return True
 
 
-def _mapping_is_suspected_wrong_topic(query: str, mapping: dict | None) -> bool:
+def _mapping_is_suspected_wrong_topic(
+    query: str,
+    mapping: dict | None,
+    query_context: dict | None = None,
+) -> bool:
     if not mapping:
         return False
-    return _mapping_gate_decision(query, mapping)["decision"] == "reject"
+    return _mapping_gate_decision(query, mapping, query_context)["decision"] == "reject"
 
 
 def _source_chunks_for_mapping(mapping: dict, chunks: list[dict]) -> list[dict]:
@@ -1975,6 +2019,49 @@ def _location_score(chunk: dict, location: str) -> float:
             score += 120.0 if index == 0 else 45.0
 
     return score
+
+
+def _text_ngrams(text: str, size: int) -> set[str]:
+    tokens = get_keywords(text)
+    if len(tokens) < size:
+        return set()
+    return {
+        " ".join(tokens[index:index + size])
+        for index in range(len(tokens) - size + 1)
+    }
+
+
+def _semantic_location_score(mapping: dict, chunk: dict) -> float:
+    """Validate logical FAQ locations that are not printed in the source file."""
+    location = normalize_text(mapping.get("faq_location", ""))
+    if not location.startswith("muc ") or not _location_anchors(location):
+        return 0.0
+
+    mapping_text = " ".join([
+        str(mapping.get("faq_question") or ""),
+        str(mapping.get("faq_answer") or ""),
+    ])
+    source_text = " ".join([
+        str(chunk.get("title") or ""),
+        str(chunk.get("content") or ""),
+    ])
+    mapping_tokens = set(get_keywords(mapping_text))
+    source_tokens = set(get_keywords(source_text))
+    if not mapping_tokens or not source_tokens:
+        return 0.0
+
+    token_coverage = len(mapping_tokens & source_tokens) / len(mapping_tokens)
+    trigram_matches = len(_text_ngrams(mapping_text, 3) & _text_ngrams(source_text, 3))
+    fourgram_matches = len(_text_ngrams(mapping_text, 4) & _text_ngrams(source_text, 4))
+    if token_coverage < 0.55 or (trigram_matches < 2 and fourgram_matches < 1):
+        return 0.0
+
+    return round(
+        token_coverage * 100.0
+        + trigram_matches * 8.0
+        + fourgram_matches * 12.0,
+        4,
+    )
 
 
 def _location_windows(mapping: dict, source_chunks: list[dict]) -> list[dict]:
@@ -2155,31 +2242,48 @@ def _search_location_in_source(
 ) -> list[dict]:
     ranked = []
     location_chunks = _location_windows(mapping, source_chunks)
-    candidates = location_chunks or source_chunks
+    candidates = location_chunks + source_chunks
+    seen_candidates = set()
 
     for chunk in candidates:
-        location_score = _location_score(chunk, mapping.get("faq_location", ""))
-        if location_score <= 0:
+        candidate_key = (
+            chunk.get("relative_path"),
+            chunk.get("chunk_index"),
+            hashlib.sha256(str(chunk.get("content") or "").encode("utf-8")).hexdigest(),
+        )
+        if candidate_key in seen_candidates:
+            continue
+        seen_candidates.add(candidate_key)
+
+        anchor_score = _location_score(chunk, mapping.get("faq_location", ""))
+        semantic_score = _semantic_location_score(mapping, chunk)
+        # Numeric anchors such as "1.2" can occur elsewhere in the same file.
+        # Require the surrounding source text to agree with the selected FAQ row.
+        if semantic_score <= 0:
             continue
         keyword_score = _guided_keyword_score(query, mapping, chunk)
         if keyword_score < MIN_SEARCH_SCORE:
             continue
         if _mapping_keyword_coverage(mapping, chunk) < 0.4:
             continue
-        if not _has_specific_mapping_phrase(mapping, chunk):
-            continue
-        ranked.append((location_score + keyword_score, keyword_score, chunk))
+        ranked.append((semantic_score, anchor_score, keyword_score, chunk))
 
-    ranked.sort(key=lambda item: item[0], reverse=True)
+    if ranked:
+        semantic_threshold = max(item[0] for item in ranked) * 0.82
+        ranked = [item for item in ranked if item[0] >= semantic_threshold]
+    ranked.sort(
+        key=lambda item: item[0] + min(item[1], 10.0) + item[2],
+        reverse=True,
+    )
     return [
         _decorate_guided_chunk(
             chunk,
             mapping,
             "location",
-            score,
+            semantic_score + min(anchor_score, 10.0) + keyword_score,
             keyword_score=keyword_score,
         )
-        for score, keyword_score, chunk in ranked[:limit]
+        for semantic_score, anchor_score, keyword_score, chunk in ranked[:limit]
     ]
 
 
@@ -2570,10 +2674,21 @@ def _search_generic_business_hybrid(
     return merged_results
 
 
-def search_business_sources(query: str, limit: int | None = None, debug: dict | None = None) -> list[dict]:
+def search_business_sources(
+    query: str,
+    limit: int | None = None,
+    debug: dict | None = None,
+    query_context: dict | None = None,
+) -> list[dict]:
     query = str(query or "").strip()
     limit = limit or BUSINESS_SEARCH_TOP_K
-    cache_key = ("retrieval_plan_v2_generic_hybrid", normalize_text(query), limit)
+    context_key = _context_cache_key(query_context)
+    cache_key = (
+        "retrieval_plan_v2_generic_hybrid",
+        normalize_text(query),
+        limit,
+        context_key,
+    )
 
     if cache_key in _BUSINESS_SEARCH_CACHE:
         cached = deepcopy(_BUSINESS_SEARCH_CACHE[cache_key])
@@ -2582,7 +2697,12 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
             debug["cache_hit"] = True
         return cached.get("results", [])
 
-    force_direct_source = _should_search_cbgv_source_directly(query)
+    context_audience = (query_context or {}).get("audience_hint")
+    context_information_need = (query_context or {}).get("information_need")
+    force_direct_source = _should_search_cbgv_source_directly(query) or (
+        context_audience == "cbgv"
+        and context_information_need == "procedure_ui"
+    )
     chunks, doc_freq, total_docs = _load_business_index()
     mappings = [] if force_direct_source else _mapping_candidates(query, chunks)
     selected_mapping = None
@@ -2590,7 +2710,7 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
     rejected_mapping_count = 0
     mapping_gate_decisions = []
     for mapping in mappings:
-        gate_decision = _mapping_gate_decision(query, mapping)
+        gate_decision = _mapping_gate_decision(query, mapping, query_context)
         mapping_gate_decisions.append({
             "question": mapping.get("faq_question"),
             "score": mapping.get("mapping_score"),
@@ -2605,8 +2725,10 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
             "missing_topic": gate_decision.get("missing_topic"),
             "query_audience": gate_decision.get("query_audience"),
             "mapping_audience": gate_decision.get("mapping_audience"),
+            "information_need": gate_decision.get("information_need"),
             "reasons": gate_decision.get("reasons"),
             "penalties": gate_decision.get("penalties"),
+            "score_components": gate_decision.get("reasons") or [],
         })
         if gate_decision.get("decision") == "reject":
             rejected_mapping_count += 1
@@ -2624,6 +2746,16 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
     retrieval_plan = _empty_retrieval_plan("not_needed")
     final_search_query = query
     source_chunks = []
+    mapping_ambiguous = False
+
+    if (
+        query_context
+        and not selected_mapping
+        and (query_context.get("information_need") or "unknown") == "unknown"
+        and len(_meaningful_business_terms(query)) <= 1
+    ):
+        mapping_ambiguous = True
+        mapping_rejected_reason = "overly_generic_query"
 
     if selected_mapping:
         source_chunks = _source_chunks_for_mapping(selected_mapping, chunks)
@@ -2653,7 +2785,7 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
                     limit,
                 )
                 retrieval_method = "vector" if final_results else None
-    if not final_results:
+    if not final_results and not mapping_ambiguous:
         retrieval_plan = _generate_business_retrieval_plan(query)
         final_search_query = _plan_search_query(query, retrieval_plan)
         if final_search_query:
@@ -2668,7 +2800,7 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
             )
             retrieval_method = "generic_hybrid" if final_results else None
 
-    if not final_results:
+    if not final_results and not mapping_ambiguous:
         final_results = _search_generic_business_chunks(
             query,
             chunks,
@@ -2683,12 +2815,18 @@ def search_business_sources(query: str, limit: int | None = None, debug: dict | 
 
     debug_data = {
         "cache_hit": False,
+        "audience_hint": (query_context or {}).get("audience_hint"),
+        "audience_source": (query_context or {}).get("audience_source"),
+        "audience_confidence": (query_context or {}).get("audience_confidence"),
+        "information_need": (query_context or {}).get("information_need"),
+        "query_context": deepcopy(query_context or {}),
         "business_documents_dir": str(_business_path()),
         "indexed_chunk_count": total_docs,
         "candidate_count": len(mappings),
         "force_direct_source": force_direct_source,
         "final_results_count": len(final_results),
         "mapping_selected": bool(selected_mapping),
+        "mapping_ambiguous": mapping_ambiguous,
         "mapping_rejected_reason": mapping_rejected_reason,
         "rejected_mapping_count": rejected_mapping_count,
         "mapping_score": selected_mapping.get("mapping_score") if selected_mapping else None,

@@ -144,7 +144,13 @@ async def _retrieve_internal(state: PipelineState) -> PipelineState:
 
 async def _retrieve_business(state: PipelineState) -> PipelineState:
     debug = {}
-    docs = await asyncio.to_thread(search_business_sources, state["question"], None, debug)
+    docs = await asyncio.to_thread(
+        search_business_sources,
+        state["question"],
+        None,
+        debug,
+        state.get("query_context"),
+    )
     _trace(state, "business_retrieval_plan", {
         "retrieval_plan": debug.get("retrieval_plan"),
         "retrieval_plan_parse_error": debug.get("retrieval_plan_parse_error"),

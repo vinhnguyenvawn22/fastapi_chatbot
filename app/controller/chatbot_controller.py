@@ -25,6 +25,7 @@ from app.data.langchain_pipeline import (
 )
 from app.data.gemini_client import get_gemini_call_count
 from app.data.query_analyzer import QueryIntent, classify_query
+from app.data.query_context import analyze_query_context
 from app.data.reranker import rerank_chunks
 from app.data.trace_logger import RagTrace, load_trace
 from app.data.conversation_context import get_conversation_context
@@ -288,7 +289,22 @@ def _should_prefer_business_over_internal(
         "internal_confidence": None,
         "internal_confidence_source": None,
         "internal_metadata_matched": internal_metadata,
+        "information_need": retrieval_debug.get("information_need"),
+        "audience_hint": retrieval_debug.get("audience_hint"),
+        "audience_source": retrieval_debug.get("audience_source"),
     }
+
+
+def _allow_aggregate_direct_business_answer(
+    business_state: dict,
+    internal_docs: list[dict],
+) -> tuple[bool, str]:
+    retrieval_debug = business_state.get("retrieval_debug") or {}
+    if retrieval_debug.get("information_need") == "policy_document":
+        return False, "policy_document"
+    if _internal_metadata_matched(internal_docs):
+        return False, "internal_metadata_matched"
+    return True, "allowed"
 
 
 def _looks_like_document_number_query(question: str) -> bool:
@@ -542,11 +558,13 @@ def _pipeline_state(
     ambiguity_decision: dict | None = None,
 ) -> dict:
     conversation = get_conversation_context()
+    query_context = analyze_query_context(question, conversation.history)
     return {
         "question": question,
         "original_question": conversation.original_question or question,
         "standalone_question": conversation.standalone_question or question,
         "conversation_history": conversation.history,
+        "query_context": query_context,
         "reason": reason,
         "prompt_type": prompt_type,
         "ambiguity_decision": ambiguity_decision,
@@ -873,7 +891,11 @@ async def _answer_with_aggregate_documents(
     internal_docs = internal_state.get("docs") or []
 
     raw_direct_business_answer = _business_direct_answer(question, business_docs)
-    if raw_direct_business_answer and business_docs:
+    direct_allowed, direct_reason = _allow_aggregate_direct_business_answer(
+        business_state,
+        internal_docs,
+    )
+    if raw_direct_business_answer and business_docs and direct_allowed:
         preferred_doc = next(
             (
                 doc for doc in business_docs
@@ -888,6 +910,7 @@ async def _answer_with_aggregate_documents(
             "doc_name": preferred_doc.get("doc_name"),
             "title": preferred_doc.get("title"),
             "business_source_count": len(business_docs),
+            "allow_reason": direct_reason,
         })
         return _finalize(trace, {
             "question": question,

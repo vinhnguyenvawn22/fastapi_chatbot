@@ -96,6 +96,31 @@ def test_mapping_guided_grade_and_schedule_search_returns_student_source():
     assert docs[0]["doc_name"] == "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx"
 
 
+def test_mapping_location_selects_learning_results_in_original_file():
+    clear_business_knowledge_cache()
+    debug = {}
+
+    docs = search_business_sources(
+        "cách xem kết quả học tập theo kì",
+        debug=debug,
+        query_context={
+            "audience_hint": "sv",
+            "audience_source": "query",
+            "information_need": "procedure_ui",
+        },
+    )
+
+    assert docs
+    assert debug["mapping_selected"] is True
+    assert debug["requested_location"] == "Mục I -> 1 -> 1.2"
+    assert debug["retrieval_method"] == "location"
+    assert docs[0]["doc_name"] == "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx"
+    assert docs[0]["chunk_index"] == 1
+    content = normalize_text(docs[0]["content"])
+    assert "/hoc-tap/ket-qua-hoc-tap" in content
+    assert "du kien ket qua hoc tap" not in content
+
+
 def test_regrade_exam_question_returns_student_appeal_source():
     debug = {}
 
@@ -107,7 +132,11 @@ def test_regrade_exam_question_returns_student_appeal_source():
     assert docs
     assert docs[0]["doc_name"] == "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx"
     assert "phuc khao" in normalize_text(docs[0]["content"])
-    assert debug["retrieval_method"] in {"retrieval_plan_keyword", "generic_keyword"}
+    assert debug["retrieval_method"] in {
+        "retrieval_plan_keyword",
+        "generic_keyword",
+        "generic_hybrid",
+    }
     assert debug["retrieval_plan"]["intent"] == "phuc_khao"
     assert "phuc khao" in normalize_text(debug["final_search_query"])
 
@@ -126,6 +155,7 @@ def test_ambiguous_review_grade_question_continues_to_retrieval():
         "vector",
         "retrieval_plan_keyword",
         "generic_keyword",
+        "generic_hybrid",
     }
     assert debug["retrieval_plan"]["clarification_needed"] is False
 
