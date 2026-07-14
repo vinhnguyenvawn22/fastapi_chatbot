@@ -1,781 +1,689 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>UNETI P.CNTT Chatbot</title>
-
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trợ lý AI UNETI</title>
   <style>
-    * {
-      box-sizing: border-box;
-      font-family: "Segoe UI", Arial, sans-serif;
+    :root {
+      --blue: #155bd7;
+      --blue-dark: #0b398e;
+      --blue-soft: #eef5ff;
+      --cyan: #18a7c7;
+      --green: #12a56a;
+      --red: #dc3545;
+      --ink: #172033;
+      --muted: #6d7789;
+      --line: #e5eaf1;
+      --surface: #ffffff;
+      --page: #f6f8fc;
+      --shadow: 0 8px 24px rgba(24, 48, 88, 0.08);
     }
 
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
-      background: #f4f6fb;
-      color: #111827;
+      color: var(--ink);
+      background: var(--page);
+      font-family: "Segoe UI", Arial, sans-serif;
+      overflow: hidden;
+    }
+    button, input, textarea, select { font: inherit; }
+    button { border: 0; cursor: pointer; }
+    button:disabled, textarea:disabled { cursor: not-allowed; opacity: .62; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 78px 286px minmax(460px, 1fr) 308px;
+      height: 100vh;
+      background: var(--surface);
     }
 
-    .layout {
+    .nav-rail {
       display: flex;
-      min-height: 100vh;
+      flex-direction: column;
+      align-items: center;
+      min-height: 0;
+      padding: 18px 10px;
+      color: #fff;
+      background: #0757a7;
+      border-right: 1px solid rgba(255,255,255,.16);
+      z-index: 30;
     }
-
-    .sidebar {
-      width: 250px;
-      background: #ffffff;
-      border-right: 1px solid #e5e7eb;
-      padding: 24px 18px;
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 56px;
+      margin-bottom: 26px;
+      border: 2px solid rgba(255,255,255,.92);
+      border-radius: 7px 7px 16px 16px;
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: 0;
     }
+    .rail-nav { display: grid; gap: 10px; width: 100%; }
+    .rail-button {
+      display: grid;
+      place-items: center;
+      gap: 5px;
+      width: 100%;
+      min-height: 68px;
+      padding: 8px 2px;
+      color: rgba(255,255,255,.82);
+      background: transparent;
+      border-radius: 8px;
+      font-size: 11px;
+    }
+    .rail-button:hover, .rail-button.active { color: #fff; background: rgba(255,255,255,.14); }
+    .rail-icon { font-size: 21px; font-weight: 700; line-height: 1; }
+    .rail-spacer { flex: 1; }
 
-    .brand {
+    .history-panel {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      background: #fff;
+      border-right: 1px solid var(--line);
+    }
+    .history-brand {
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 34px;
+      gap: 10px;
+      height: 78px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--line);
     }
-
-    .brand-icon {
-      width: 44px;
-      height: 44px;
-      border-radius: 14px;
-      background: #2563eb;
-      color: white;
+    .history-brand strong { display: block; color: #0b4a91; font-size: 20px; }
+    .history-brand small { color: var(--muted); font-size: 10px; }
+    .mobile-close { display: none; margin-left: auto; width: 36px; height: 36px; border-radius: 6px; background: var(--page); }
+    .new-chat {
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 20px;
-      font-weight: 900;
-    }
-
-    .brand-title {
-      font-weight: 800;
-      font-size: 16px;
-    }
-
-    .brand-subtitle {
-      color: #6b7280;
-      font-size: 13px;
-      margin-top: 3px;
-    }
-
-    .menu-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 13px 14px;
-      margin-bottom: 10px;
-      border-radius: 12px;
-      color: #374151;
-      font-size: 15px;
-    }
-
-    .menu-item.active {
-      background: #eff6ff;
-      color: #1d4ed8;
+      gap: 10px;
+      min-height: 52px;
+      margin: 18px 16px 14px;
+      padding: 0 14px;
+      color: #fff;
+      background: var(--blue);
+      border-radius: 8px;
       font-weight: 700;
+      box-shadow: 0 7px 16px rgba(21,91,215,.2);
     }
+    .new-chat:hover { background: #0f4fc2; }
+    .new-chat-plus { font-size: 23px; font-weight: 400; }
+    .thread-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 14px 18px; }
+    .thread-group-title {
+      margin: 18px 5px 8px;
+      color: #8a93a2;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .thread-item {
+      display: grid;
+      grid-template-columns: 32px minmax(0,1fr) 30px;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-height: 64px;
+      margin-bottom: 7px;
+      padding: 9px 8px;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      text-align: left;
+    }
+    .thread-item:hover, .thread-item.active { background: var(--blue-soft); border-color: #bed5fa; }
+    .thread-badge { display: grid; place-items: center; width: 30px; height: 30px; color: var(--blue); background: #fff; border: 1px solid #dbe7f7; border-radius: 50%; font-weight: 800; }
+    .thread-copy { min-width: 0; }
+    .thread-title { overflow: hidden; color: #263248; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+    .thread-time { margin-top: 5px; color: #8a93a2; font-size: 11px; }
+    .delete-thread { width: 30px; height: 30px; color: #8a93a2; background: transparent; border-radius: 5px; font-size: 17px; }
+    .delete-thread:hover { color: var(--red); background: #fff0f1; }
+    .thread-empty { padding: 24px 8px; color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; }
+    .history-help { margin: 0 16px 16px; padding: 15px; background: #eff5ff; border-radius: 7px; font-size: 12px; line-height: 1.5; }
+    .history-help strong { display: block; margin-bottom: 4px; font-size: 13px; }
 
-    .main {
-      flex: 1;
-      padding: 32px 42px;
+    .workspace {
+      display: flex;
+      flex-direction: column;
       min-width: 0;
+      min-height: 0;
+      background: #fff;
     }
-
     .topbar {
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      gap: 20px;
-      margin-bottom: 28px;
-    }
-
-    .title {
-      font-size: 28px;
-      font-weight: 900;
-      margin-bottom: 6px;
-    }
-
-    .subtitle {
-      color: #6b7280;
-      font-size: 16px;
-      line-height: 1.5;
-    }
-
-    .time {
-      background: white;
-      border: 1px solid #e5e7eb;
-      padding: 11px 18px;
-      border-radius: 999px;
-      color: #6b7280;
-      white-space: nowrap;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: 360px minmax(0, 1fr);
-      gap: 24px;
-    }
-
-    .card {
-      background: white;
-      border-radius: 18px;
-      border: 1px solid #eef0f4;
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
-      padding: 22px;
-    }
-
-    .card-title {
-      font-size: 20px;
-      font-weight: 800;
-      margin-bottom: 18px;
-    }
-
-    label {
-      display: block;
-      color: #6b7280;
-      margin-bottom: 8px;
-      font-size: 14px;
-    }
-
-    textarea {
-      width: 100%;
-      min-height: 150px;
-      border: 1px solid #d1d5db;
-      border-radius: 14px;
-      padding: 13px;
-      resize: vertical;
-      outline: none;
-      font-size: 15px;
-      line-height: 1.5;
-    }
-
-    textarea:focus {
-      border-color: #2563eb;
-      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
-    }
-
-    .form-group {
-      margin-bottom: 18px;
-    }
-
-    .actions {
-      display: flex;
       gap: 12px;
-      margin-top: 20px;
+      flex: 0 0 78px;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--line);
     }
-
-    button {
-      border: none;
-      border-radius: 12px;
-      padding: 13px 16px;
-      font-weight: 800;
-      cursor: pointer;
-      font-size: 15px;
-      transition: opacity 0.15s ease, transform 0.15s ease;
+    .mobile-menu { display: none; width: 40px; height: 40px; color: var(--blue); background: var(--blue-soft); border-radius: 7px; font-size: 20px; }
+    .global-search { position: relative; width: min(560px, 72%); margin: 0 auto; }
+    .global-search input { width: 100%; height: 42px; padding: 0 52px 0 42px; color: var(--ink); background: #f8fafc; border: 1px solid var(--line); border-radius: 7px; outline: none; }
+    .global-search input:focus { border-color: #8eb5ef; box-shadow: 0 0 0 3px #edf4ff; }
+    .search-symbol { position: absolute; left: 15px; top: 10px; color: #8a93a2; }
+    .search-key { position: absolute; right: 10px; top: 9px; padding: 3px 6px; color: #8a93a2; background: #fff; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; }
+    .mobile-info { display: none; width: 40px; height: 40px; color: var(--blue); background: var(--blue-soft); border-radius: 7px; font-weight: 800; }
+    .chat-main { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 20px 24px 16px; }
+    .hero {
+      position: relative;
+      flex: 0 0 210px;
+      overflow: hidden;
+      padding: 28px 32px;
+      background: #edf4ff;
+      border-radius: 8px;
+      transition: flex-basis .2s ease, padding .2s ease;
     }
+    .hero.compact { flex-basis: 118px; padding-top: 20px; padding-bottom: 18px; }
+    .hero-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; opacity: .56; }
+    .hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(237,244,255,.98) 0%, rgba(237,244,255,.86) 46%, rgba(237,244,255,.18) 78%); }
+    .hero-content { position: relative; z-index: 1; max-width: 600px; }
+    .hero-title { margin: 0; font-size: 34px; line-height: 1.15; letter-spacing: 0; }
+    .online { display: inline-flex; align-items: center; gap: 7px; margin: 8px 0 12px; padding: 4px 10px; color: #087c52; background: #dff8ec; border-radius: 20px; font-size: 12px; font-weight: 700; }
+    .online-dot { width: 7px; height: 7px; background: var(--green); border-radius: 50%; }
+    .hero-description { margin: 0 0 14px; color: #455066; font-size: 14px; line-height: 1.5; }
+    .hero.compact .hero-description, .hero.compact .suggestion-row { display: none; }
+    .suggestion-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .suggestion-chip { min-height: 34px; padding: 0 12px; color: #33435d; background: rgba(255,255,255,.9); border: 1px solid #dce6f4; border-radius: 6px; font-size: 12px; }
+    .suggestion-chip:hover { color: var(--blue); border-color: #a9c5ee; }
 
-    button:hover:not(:disabled) {
-      transform: translateY(-1px);
+    .conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    .date-divider { display: flex; align-items: center; gap: 12px; margin: 12px 0 4px; color: #8a93a2; font-size: 11px; }
+    .date-divider::before, .date-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+    .messages { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 6px 12px; scroll-behavior: smooth; }
+    .empty-state { display: grid; place-items: center; height: 100%; min-height: 110px; color: var(--muted); text-align: center; }
+    .empty-state strong { display: block; margin-bottom: 5px; color: #354158; }
+    .message-row { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 16px; }
+    .message-row.user { justify-content: flex-end; }
+    .avatar { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; color: #fff; background: #1469bc; border-radius: 50%; font-size: 11px; font-weight: 900; }
+    .message-stack { max-width: min(76%, 720px); }
+    .bubble { padding: 12px 15px; color: #263248; background: #fff; border: 1px solid var(--line); border-radius: 7px; font-size: 14px; line-height: 1.58; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 2px 8px rgba(28,48,78,.04); }
+    .message-row.user .bubble { background: #e7f0ff; border-color: #cbdcf7; }
+    .message-meta { margin-top: 5px; color: #8a93a2; font-size: 10px; }
+    .message-row.user .message-meta { text-align: right; }
+    .source-inline { margin-top: 8px; padding-top: 8px; color: #607088; border-top: 1px solid var(--line); font-size: 11px; }
+    .source-inline a { color: var(--blue); text-decoration: none; }
+    .typing { display: flex; gap: 5px; padding: 4px 0; }
+    .typing i { width: 7px; height: 7px; background: #91a0b4; border-radius: 50%; animation: pulse 1s infinite; }
+    .typing i:nth-child(2) { animation-delay: .14s; }
+    .typing i:nth-child(3) { animation-delay: .28s; }
+    @keyframes pulse { 0%, 70%, 100% { opacity: .35; transform: translateY(0); } 35% { opacity: 1; transform: translateY(-3px); } }
+
+    .error-box { display: none; margin-bottom: 8px; padding: 9px 12px; color: #a31e2a; background: #fff0f1; border: 1px solid #ffd1d5; border-radius: 6px; font-size: 12px; }
+    .composer { display: grid; grid-template-columns: minmax(0,1fr) 164px 48px; gap: 9px; align-items: end; padding: 10px; background: #fff; border: 1px solid #abc6ec; border-radius: 8px; box-shadow: 0 6px 20px rgba(30,70,130,.08); }
+    .question-input { width: 100%; min-height: 48px; max-height: 120px; padding: 13px 10px; color: var(--ink); border: 0; resize: none; outline: none; line-height: 1.45; }
+    .question-input::placeholder { color: #9aa3b2; }
+    .model-select { height: 46px; padding: 0 12px; color: #3f4d62; background: #fff; border: 1px solid var(--line); border-radius: 7px; outline: none; }
+    .send-button { display: grid; place-items: center; width: 48px; height: 46px; color: #fff; background: var(--blue); border-radius: 7px; font-size: 23px; line-height: 1; }
+    .send-button:hover:not(:disabled) { background: #0e4fc5; }
+
+    .info-panel { min-width: 0; min-height: 0; overflow-y: auto; padding: 18px 16px; background: #fbfcff; border-left: 1px solid var(--line); }
+    .user-card { display: flex; align-items: center; gap: 10px; min-height: 42px; margin: 0 2px 20px; }
+    .user-avatar { display: grid; place-items: center; width: 38px; height: 38px; color: #fff; background: #1e66b1; border-radius: 50%; font-weight: 800; }
+    .user-card strong { display: block; font-size: 13px; }
+    .user-card small { color: var(--muted); font-size: 11px; }
+    .side-section { margin-bottom: 16px; padding: 14px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+    .side-heading { display: flex; align-items: center; justify-content: space-between; margin: 0 0 11px; font-size: 14px; }
+    .side-heading span { color: var(--blue); font-size: 11px; font-weight: 500; }
+    .quick-list, .document-list, .status-list { display: grid; gap: 8px; }
+    .quick-button, .document-item, .status-item { display: grid; grid-template-columns: 30px minmax(0,1fr) auto; align-items: center; gap: 8px; min-height: 44px; padding: 7px 8px; color: #354158; background: #fff; border: 1px solid var(--line); border-radius: 6px; text-align: left; }
+    .quick-button:hover { color: var(--blue); border-color: #b7cff2; background: #f8fbff; }
+    .side-icon { display: grid; place-items: center; width: 28px; height: 28px; color: var(--blue); background: var(--blue-soft); border-radius: 5px; font-size: 11px; font-weight: 900; }
+    .side-label { min-width: 0; overflow: hidden; font-size: 12px; line-height: 1.3; text-overflow: ellipsis; }
+    .side-arrow { color: #8a93a2; }
+    .document-item { grid-template-columns: 30px minmax(0,1fr); }
+    .document-copy { min-width: 0; }
+    .document-title { display: block; overflow: hidden; color: #354158; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .document-meta { display: block; margin-top: 3px; color: #8791a2; font-size: 10px; }
+    .document-link { color: inherit; text-decoration: none; }
+    .status-item { grid-template-columns: minmax(0,1fr) auto; min-height: 38px; font-size: 11px; }
+    .status-value { display: flex; align-items: center; gap: 5px; color: var(--green); }
+    .status-dot { width: 6px; height: 6px; background: currentColor; border-radius: 50%; }
+    .no-sources { padding: 8px 2px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+    .backdrop { display: none; position: fixed; inset: 0; z-index: 40; background: rgba(12,25,48,.42); }
+    @media (max-width: 1320px) {
+      .app-shell { grid-template-columns: 72px 264px minmax(420px,1fr); }
+      .info-panel { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; width: min(340px, 90vw); transform: translateX(105%); transition: transform .2s ease; box-shadow: -12px 0 28px rgba(18,38,70,.14); }
+      body.info-open .info-panel { transform: translateX(0); }
+      body.info-open .backdrop { display: block; }
+      .mobile-info { display: block; }
     }
-
-    button:disabled {
-      opacity: 0.65;
-      cursor: not-allowed;
-      transform: none;
+    @media (max-width: 960px) {
+      .app-shell { grid-template-columns: 66px minmax(0,1fr); }
+      .history-panel { position: fixed; top: 0; bottom: 0; left: 66px; z-index: 50; width: min(300px, calc(100vw - 66px)); transform: translateX(-110%); transition: transform .2s ease; box-shadow: 12px 0 28px rgba(18,38,70,.14); }
+      body.history-open .history-panel { transform: translateX(0); }
+      body.history-open .backdrop { display: block; }
+      .mobile-menu, .mobile-close { display: block; }
+      .chat-main { padding: 16px; }
+      .hero { flex-basis: 190px; }
     }
-
-    .btn-secondary {
-      flex: 1;
-      background: #f3f4f6;
-      color: #374151;
-    }
-
-    .btn-primary {
-      flex: 1;
-      background: #2563eb;
-      color: white;
-    }
-
-    .chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 9px;
-      margin-top: 18px;
-    }
-
-    .chip {
-      background: #f3f4f6;
-      color: #374151;
-      padding: 8px 11px;
-      border-radius: 999px;
-      font-size: 13px;
-      cursor: pointer;
-      border: 1px solid transparent;
-    }
-
-    .chip:hover {
-      border-color: #bfdbfe;
-      background: #eff6ff;
-      color: #1d4ed8;
-    }
-
-    .banner {
-      background: linear-gradient(120deg, #0f766e, #059669);
-      color: white;
-      border-radius: 18px;
-      padding: 28px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 22px;
-      margin-bottom: 22px;
-      min-height: 135px;
-    }
-
-    .banner-small {
-      font-size: 15px;
-      opacity: 0.95;
-    }
-
-    .banner-title {
-      font-size: 34px;
-      font-weight: 900;
-      margin: 8px 0;
-    }
-
-    .banner-desc {
-      font-size: 17px;
-      line-height: 1.45;
-    }
-
-    .status-pill {
-      min-width: 150px;
-      text-align: center;
-      border-radius: 999px;
-      padding: 12px 16px;
-      background: rgba(255, 255, 255, 0.16);
-      border: 1px solid rgba(255, 255, 255, 0.26);
-      font-weight: 800;
-    }
-
-    .topic {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      margin-bottom: 22px;
-    }
-
-    .topic-icon {
-      width: 62px;
-      height: 62px;
-      border-radius: 18px;
-      background: #eff6ff;
-      color: #1d4ed8;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 20px;
-      font-weight: 900;
-      flex: 0 0 auto;
-    }
-
-    .topic-name {
-      font-size: 20px;
-      font-weight: 900;
-    }
-
-    .topic-question {
-      color: #6b7280;
-      margin-top: 4px;
-      font-size: 14px;
-      line-height: 1.5;
-      overflow-wrap: anywhere;
-    }
-
-    .tag {
-      display: inline-block;
-      margin-top: 8px;
-      margin-right: 6px;
-      padding: 5px 9px;
-      background: #f3e8ff;
-      color: #7e22ce;
-      border-radius: 999px;
-      font-size: 12px;
-    }
-
-    .metrics {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-      margin-bottom: 22px;
-    }
-
-    .metric {
-      background: white;
-      border-radius: 18px;
-      padding: 18px;
-      border: 1px solid #eef0f4;
-    }
-
-    .metric-label {
-      color: #6b7280;
-      font-size: 14px;
-      margin-bottom: 8px;
-    }
-
-    .metric-value {
-      color: #f97316;
-      font-size: 26px;
-      font-weight: 900;
-      overflow-wrap: anywhere;
-    }
-
-    .metric-desc {
-      color: #6b7280;
-      font-size: 13px;
-      line-height: 1.45;
-      margin-top: 8px;
-    }
-
-    .answer {
-      white-space: pre-wrap;
-      line-height: 1.7;
-      font-size: 16px;
-      overflow-wrap: anywhere;
-    }
-
-    .source {
-      border-top: 1px solid #e5e7eb;
-      padding: 14px 0;
-    }
-
-    .source:first-child {
-      border-top: none;
-      padding-top: 0;
-    }
-
-    .source-title {
-      font-weight: 800;
-      margin-bottom: 5px;
-    }
-
-    .source-preview {
-      color: #4b5563;
-      font-size: 14px;
-      line-height: 1.55;
-      overflow-wrap: anywhere;
-    }
-
-    .loading {
-      color: #6b7280;
-      margin-top: 14px;
-      font-size: 14px;
-      min-height: 20px;
-    }
-
-    .error-box {
-      display: none;
-      margin-top: 12px;
-      color: #991b1b;
-      background: #fee2e2;
-      border: 1px solid #fecaca;
-      border-radius: 12px;
-      padding: 10px 12px;
-      font-size: 14px;
-      line-height: 1.5;
-    }
-
-    .empty-text {
-      color: #6b7280;
-      line-height: 1.6;
-    }
-
-    @media (max-width: 1000px) {
-      .sidebar {
-        display: none;
-      }
-
-      .grid {
-        grid-template-columns: 1fr;
-      }
-
-      .metrics {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
-
     @media (max-width: 640px) {
-      .main {
-        padding: 18px;
-      }
-
-      .topbar {
-        align-items: flex-start;
-        flex-direction: column;
-      }
-
-      .time {
-        width: 100%;
-        border-radius: 12px;
-        white-space: normal;
-      }
-
-      .banner {
-        flex-direction: column;
-        align-items: flex-start;
-        padding: 22px;
-      }
-
-      .banner-title {
-        font-size: 28px;
-      }
-
-      .status-pill {
-        width: 100%;
-      }
-
-      .metrics {
-        grid-template-columns: 1fr;
-      }
-
-      .actions {
-        flex-direction: column;
-      }
-
-      .topic {
-        align-items: flex-start;
-      }
-
-      .title {
-        font-size: 24px;
-      }
+      .app-shell { display: block; }
+      .nav-rail { display: none; }
+      .history-panel { left: 0; width: min(310px, 88vw); }
+      .topbar { height: 62px; flex-basis: 62px; padding: 0 12px; }
+      .global-search { flex: 1; min-width: 0; width: auto; }
+      .search-key { display: none; }
+      .global-search input { padding-right: 12px; font-size: 13px; }
+      .chat-main { padding: 10px; }
+      .hero { flex-basis: 170px; padding: 20px; }
+      .hero.compact { display: none; }
+      .hero-title { font-size: 25px; }
+      .hero-description { font-size: 12px; }
+      .suggestion-row { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 3px; }
+      .suggestion-chip { flex: 0 0 auto; }
+      .message-stack { max-width: 85%; }
+      .conversation { min-width: 0; }
+      .composer { min-width: 0; grid-template-columns: minmax(0,1fr) 48px; }
+      .question-input { grid-column: 1 / -1; min-height: 42px; padding: 8px; }
+      .model-select { min-width: 0; height: 42px; }
+      .send-button { height: 42px; }
     }
   </style>
 </head>
-
 <body>
-  <div class="layout">
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-icon">AI</div>
-        <div>
-          <div class="brand-title">UNETI Chatbot</div>
-          <div class="brand-subtitle">P.CNTT Assistant</div>
-        </div>
-      </div>
-
-      <div class="menu-item active">Tra cứu tài liệu</div>
-      <div class="menu-item">Lịch sử câu hỏi</div>
-      <div class="menu-item">Nguồn tài liệu</div>
-      <div class="menu-item">Chunk đã truy xuất</div>
-      <div class="menu-item">Cấu hình hệ thống</div>
+  <div class="app-shell">
+    <aside class="nav-rail" aria-label="Điều hướng chính">
+      <div class="brand-mark" title="UNETI">U</div>
+      <nav class="rail-nav">
+        <button class="rail-button active" type="button" data-action="chat"><span class="rail-icon">□</span><span>Chat</span></button>
+        <button class="rail-button" type="button" data-action="faq"><span class="rail-icon">?</span><span>FAQ</span></button>
+        <button class="rail-button" type="button" data-action="documents"><span class="rail-icon">▤</span><span>Tài liệu</span></button>
+        <button class="rail-button" type="button" data-action="history"><span class="rail-icon">◷</span><span>Lịch sử</span></button>
+      </nav>
+      <div class="rail-spacer"></div>
+      <button class="rail-button" type="button" data-action="settings"><span class="rail-icon">⚙</span><span>Cài đặt</span></button>
     </aside>
 
-    <main class="main">
-      <div class="topbar">
-        <div>
-          <div class="title">Chatbot AI Phòng CNTT</div>
-          <div class="subtitle">Tra cứu tài liệu, quy trình, quy định và hướng dẫn nội bộ</div>
+    <aside class="history-panel" id="historyPanel" aria-label="Lịch sử chat">
+      <div class="history-brand">
+        <div><strong>UNETI</strong><small>ĐẠI HỌC KINH TẾ - KỸ THUẬT CÔNG NGHIỆP</small></div>
+        <button class="mobile-close" id="closeHistoryButton" type="button" aria-label="Đóng lịch sử">×</button>
+      </div>
+      <button class="new-chat" id="newChatButton" type="button"><span class="new-chat-plus">+</span> Cuộc trò chuyện mới</button>
+      <div class="thread-list" id="threadList"></div>
+      <div class="history-help"><strong>Bạn cần hỗ trợ nhanh?</strong>Gửi câu hỏi và Trợ lý AI UNETI sẽ trả lời ngay.</div>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <button class="mobile-menu" id="openHistoryButton" type="button" aria-label="Mở lịch sử">☰</button>
+        <label class="global-search">
+          <span class="sr-only">Tìm kiếm</span><span class="search-symbol">⌕</span>
+          <input id="globalSearch" type="search" placeholder="Tìm kiếm thông tin, quy định, tài liệu...">
+          <span class="search-key">Ctrl K</span>
+        </label>
+        <button class="mobile-info" id="openInfoButton" type="button" aria-label="Mở bảng thông tin">i</button>
+      </header>
+
+      <main class="chat-main">
+        <section class="hero" id="hero">
+          <img class="hero-image" src="/static/uneti-ai-hero.png" alt="Robot trợ lý AI cùng sách và mũ tốt nghiệp">
+          <div class="hero-content">
+            <h1 class="hero-title">Trợ lý AI UNETI</h1>
+            <div class="online"><span class="online-dot"></span>Đang trực tuyến</div>
+            <p class="hero-description">Hỗ trợ tra cứu quy chế, quy định, học vụ và câu hỏi thường gặp.</p>
+            <div class="suggestion-row" id="heroSuggestions"></div>
+          </div>
+        </section>
+
+        <section class="conversation" aria-label="Cuộc trò chuyện">
+          <div class="date-divider">Hôm nay</div>
+          <div class="messages" id="messages" aria-live="polite"></div>
+          <div class="error-box" id="errorBox" role="alert"></div>
+          <form class="composer" id="composerForm">
+            <textarea class="question-input" id="questionInput" rows="1" maxlength="5000" placeholder="Nhập câu hỏi về quy chế, học vụ, học bổng..." aria-label="Câu hỏi"></textarea>
+            <select class="model-select" aria-label="Chọn mô hình"><option>Gemini</option></select>
+            <button class="send-button" id="sendButton" type="submit" title="Gửi câu hỏi" aria-label="Gửi câu hỏi">➤</button>
+          </form>
+        </section>
+      </main>
+    </section>
+
+    <aside class="info-panel" id="infoPanel" aria-label="Thông tin hỗ trợ">
+      <div class="user-card"><div class="user-avatar">SV</div><div><strong>Người dùng UNETI</strong><small>Sinh viên</small></div></div>
+      <section class="side-section" id="quickSection">
+        <h2 class="side-heading">Gợi ý nhanh <span>Chọn để hỏi</span></h2>
+        <div class="quick-list" id="quickList"></div>
+      </section>
+      <section class="side-section" id="documentSection">
+        <h2 class="side-heading">Tài liệu nổi bật <span id="sourceCount"></span></h2>
+        <div class="document-list" id="documentList"></div>
+      </section>
+      <section class="side-section">
+        <h2 class="side-heading">Trạng thái hệ thống</h2>
+        <div class="status-list">
+          <div class="status-item"><span>Gemini AI</span><span class="status-value"><i class="status-dot"></i>Hoạt động</span></div>
+          <div class="status-item"><span>Tài liệu hệ thống</span><span class="status-value"><i class="status-dot"></i>Đồng bộ</span></div>
+          <div class="status-item"><span>Hỗ trợ kỹ thuật</span><span class="status-value"><i class="status-dot"></i>Sẵn sàng</span></div>
         </div>
-
-        <div class="time" id="timeBox"></div>
-      </div>
-
-      <div class="grid">
-        <section class="card">
-          <div class="card-title">Tra cứu tài liệu</div>
-
-          <div class="form-group">
-            <label for="questionInput">Câu hỏi</label>
-            <textarea id="questionInput" spellcheck="false">Phòng Tổ hợp STUDIO ở đâu?</textarea>
-          </div>
-
-          <div class="actions">
-            <button id="previewButton" class="btn-secondary" type="button">Xem trước</button>
-            <button id="askButton" class="btn-primary" type="button">Hỏi chatbot</button>
-          </div>
-
-          <div class="chips" aria-label="Câu hỏi mẫu">
-            <button class="chip" type="button" data-question="Phòng Tổ hợp STUDIO ở đâu?">STUDIO ở đâu?</button>
-            <button class="chip" type="button" data-question="Muốn đề nghị sử dụng STUDIO thì cần chuẩn bị hồ sơ gì?">Hồ sơ STUDIO</button>
-            <button class="chip" type="button" data-question="Cần báo hỏng hệ thống mạng LAN WIFI thì làm thế nào?">Báo hỏng WIFI</button>
-            <button class="chip" type="button" data-question="Quy định khai thác hệ thống camera giám sát như thế nào?">Camera</button>
-          </div>
-
-          <div id="loading" class="loading" aria-live="polite"></div>
-          <div id="errorBox" class="error-box" aria-live="polite"></div>
-        </section>
-
-        <section>
-          <div class="banner" id="banner">
-            <div>
-              <div class="banner-small">KẾT QUẢ TRA CỨU</div>
-              <div class="banner-title" id="bannerTitle">SẴN SÀNG</div>
-              <div class="banner-desc" id="bannerDesc">Nhập câu hỏi và bấm Hỏi chatbot.</div>
-            </div>
-            <div class="status-pill" id="sourceStatus">Chưa có nguồn</div>
-          </div>
-
-          <div class="card topic" id="topicCard">
-            <div class="topic-icon" id="topicIcon">TL</div>
-            <div>
-              <div class="topic-name" id="topicName">Chưa có chủ đề</div>
-              <div class="topic-question" id="topicQuestion">Chưa có câu hỏi</div>
-              <span class="tag">RAG</span>
-              <span class="tag">PDF</span>
-              <span class="tag">FastAPI</span>
-              <span class="tag">Chatbot</span>
-            </div>
-          </div>
-
-          <div class="metrics">
-            <div class="metric">
-              <div class="metric-label">Số nguồn truy xuất</div>
-              <div class="metric-value" id="sourceCount">0</div>
-              <div class="metric-desc">Nguồn hoặc chunk liên quan được trả về từ API</div>
-            </div>
-
-            <div class="metric">
-              <div class="metric-label">Điểm nguồn tốt nhất</div>
-              <div class="metric-value" id="bestScore">N/A</div>
-              <div class="metric-desc">Score của nguồn liên quan nhất nếu backend trả về</div>
-            </div>
-
-            <div class="metric">
-              <div class="metric-label">Chế độ trả lời</div>
-              <div class="metric-value">API</div>
-              <div class="metric-desc">Gọi endpoint POST /api/chat/</div>
-            </div>
-          </div>
-
-          <div class="card" style="margin-bottom: 22px;">
-            <div class="card-title">Câu trả lời</div>
-            <div class="answer" id="answerBox">Chưa có câu trả lời.</div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">Nguồn tài liệu được sử dụng</div>
-            <div id="sourcesBox" class="empty-text">Chưa có nguồn.</div>
-          </div>
-        </section>
-      </div>
-    </main>
+      </section>
+    </aside>
+    <div class="backdrop" id="backdrop"></div>
   </div>
 
   <script>
-    const API_URL = "/api/chat/";
+    const API = { chat: "/api/chat/", threads: "/api/chat/threads" };
+    const suggestions = [
+      { label: "Điều kiện tốt nghiệp", question: "Điều kiện xét tốt nghiệp là gì?", icon: "TN" },
+      { label: "Thi cải thiện điểm", question: "Điều kiện để được thi cải thiện điểm là gì?", icon: "Đ" },
+      { label: "Học bổng", question: "Điều kiện xét học bổng là gì?", icon: "HB" },
+      { label: "Số tín chỉ tối thiểu", question: "Quy định về số tín chỉ tối thiểu mỗi học kỳ?", icon: "TC" }
+    ];
+    const staticDocuments = [
+      { title: "Quy chế đào tạo UNETI", meta: "Tài liệu hệ thống" },
+      { title: "Sổ tay sinh viên UNETI", meta: "Hướng dẫn sinh viên" },
+      { title: "Quy định học bổng UNETI", meta: "Quy định học vụ" }
+    ];
+    const state = { currentThreadId: null, threads: [], latestSources: [], isSending: false };
 
-    const questionInput = document.getElementById("questionInput");
-    const askButton = document.getElementById("askButton");
-    const previewButton = document.getElementById("previewButton");
-    const loading = document.getElementById("loading");
-    const errorBox = document.getElementById("errorBox");
-    const confidenceMetric = document.getElementById("bestScore");
+    const el = id => document.getElementById(id);
+    const threadList = el("threadList");
+    const messages = el("messages");
+    const hero = el("hero");
+    const questionInput = el("questionInput");
+    const composerForm = el("composerForm");
+    const sendButton = el("sendButton");
+    const errorBox = el("errorBox");
 
-    confidenceMetric.previousElementSibling.textContent = "\u0110\u1ed9 tin c\u1eady cao nh\u1ea5t";
-    confidenceMetric.nextElementSibling.textContent = "M\u1ee9c tin c\u1eady c\u1ee7a ngu\u1ed3n li\u00ean quan nh\u1ea5t do backend t\u00ednh";
-
-    document.getElementById("timeBox").textContent =
-      new Date().toLocaleString("vi-VN");
-
-    function setQuestion(text) {
-      questionInput.value = text;
-      clearError();
+    function cleanTitle(value) {
+      const title = String(value || "").trim();
+      return title && title.toLowerCase() !== "cuoc tro chuyen moi" ? title : "Cuộc trò chuyện mới";
     }
 
-    function showError(message) {
+    function parseDate(value) {
+      if (!value) return null;
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function dateKey(value) {
+      const date = parseDate(value);
+      if (!date) return "older";
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      const days = Math.round((start - target) / 86400000);
+      if (days === 0) return "today";
+      if (days === 1) return "yesterday";
+      return "older";
+    }
+
+    function formatTime(value) {
+      const date = parseDate(value);
+      return date ? date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "";
+    }
+
+    function formatDateTime(value) {
+      const date = parseDate(value);
+      return date ? date.toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }) : "";
+    }
+
+    function setError(message = "") {
       errorBox.textContent = message;
-      errorBox.style.display = "block";
+      errorBox.style.display = message ? "block" : "none";
     }
 
-    function clearError() {
-      errorBox.textContent = "";
-      errorBox.style.display = "none";
+    async function responseData(response) {
+      if (response.ok) return response.status === 204 ? null : response.json();
+      let message = `Yêu cầu thất bại (${response.status}).`;
+      try { const body = await response.json(); message = body.detail || message; } catch (_) {}
+      throw new Error(message);
     }
 
-    function setLoading(isLoading) {
-      askButton.disabled = isLoading;
-      previewButton.disabled = isLoading;
-      askButton.textContent = isLoading ? "Đang hỏi..." : "Hỏi chatbot";
-      loading.textContent = isLoading ? "Đang gọi API chatbot..." : "";
+    function closeDrawers() { document.body.classList.remove("history-open", "info-open"); }
+    function scrollToBottom() { requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; }); }
+    function autoResize() { questionInput.style.height = "auto"; questionInput.style.height = `${Math.min(questionInput.scrollHeight, 120)}px`; }
+
+    function setSending(value) {
+      state.isSending = value;
+      questionInput.disabled = value;
+      sendButton.disabled = value;
     }
 
-    function guessTopic(question) {
-      const q = question.toLowerCase();
-
-      if (q.includes("studio")) return { name: "STUDIO", icon: "ST" };
-      if (q.includes("mạng") || q.includes("wifi") || q.includes("lan")) {
-        return { name: "Hệ thống mạng", icon: "NET" };
-      }
-      if (q.includes("camera")) return { name: "Camera giám sát", icon: "CAM" };
-      if (q.includes("thiết bị") || q.includes("phòng học")) {
-        return { name: "Thiết bị phòng học", icon: "TB" };
-      }
-
-      return { name: "Tài liệu P.CNTT", icon: "TL" };
+    function showEmptyChat() {
+      messages.replaceChildren();
+      const box = document.createElement("div");
+      box.className = "empty-state";
+      box.innerHTML = "<div><strong>Bắt đầu cuộc trò chuyện mới</strong>Chọn một gợi ý hoặc nhập câu hỏi của bạn.</div>";
+      messages.append(box);
+      hero.classList.remove("compact");
     }
 
-    function normalizeAnswer(data) {
-      if (data.answer) return data.answer;
-      if (data.message) return data.message;
-      if (data.response) return data.response;
-      return JSON.stringify(data, null, 2);
-    }
-
-    function normalizeSources(data) {
-      if (Array.isArray(data.sources)) return data.sources;
-
-      if (data.source) {
-        return [{
-          title: data.source,
-          doc_name: data.source,
-          preview: ""
-        }];
-      }
-
-      if (data.source_panel && Array.isArray(data.source_panel.items)) {
-        return data.source_panel.items;
-      }
-
-      return [];
-    }
-
-    function renderBanner(hasSources) {
-      document.getElementById("bannerTitle").textContent =
-        hasSources ? "ĐÃ TÌM THẤY" : "ĐÃ TRẢ LỜI";
-      document.getElementById("bannerDesc").textContent =
-        hasSources
-          ? "Có nguồn tài liệu phù hợp để tham khảo."
-          : "API đã phản hồi, nhưng chưa có danh sách nguồn chi tiết.";
-      document.getElementById("sourceStatus").textContent =
-        hasSources ? "Có nguồn" : "Chưa có nguồn";
-    }
-
-    function renderTopic(question) {
-      const topic = guessTopic(question);
-
-      document.getElementById("topicIcon").textContent = topic.icon;
-      document.getElementById("topicName").textContent = topic.name;
-      document.getElementById("topicQuestion").textContent = question;
-    }
-
-    function renderMetrics(sources) {
-      const bestConfidenceValue = sources.length > 0 && sources[0].confidence_percent !== undefined && sources[0].confidence_percent !== null
-        ? `${sources[0].confidence_percent}%`
-        : "N/A";
-
-      document.getElementById("sourceCount").textContent = String(sources.length);
-      document.getElementById("bestScore").textContent = bestConfidenceValue;
-    }
-
-    function appendTextElement(parent, className, text) {
-      const element = document.createElement("div");
-      element.className = className;
-      element.textContent = text || "";
-      parent.appendChild(element);
-    }
-
-    function renderSources(sources) {
-      const box = document.getElementById("sourcesBox");
-      box.textContent = "";
-      box.classList.toggle("empty-text", sources.length === 0);
-
-      if (!sources.length) {
-        box.textContent = "API chưa trả danh sách nguồn.";
+    function renderThreads() {
+      threadList.replaceChildren();
+      if (!state.threads.length) {
+        const empty = document.createElement("div");
+        empty.className = "thread-empty";
+        empty.textContent = "Chưa có cuộc trò chuyện nào.";
+        threadList.append(empty);
         return;
       }
+      const groups = [
+        ["today", "Hôm nay"], ["yesterday", "Hôm qua"], ["older", "Trước đó"]
+      ];
+      groups.forEach(([key, label]) => {
+        const items = state.threads.filter(thread => dateKey(thread.updated_at) === key);
+        if (!items.length) return;
+        const heading = document.createElement("div");
+        heading.className = "thread-group-title";
+        heading.textContent = label;
+        threadList.append(heading);
+        items.forEach(thread => {
+          const item = document.createElement("div");
+          item.className = `thread-item${thread.thread_id === state.currentThreadId ? " active" : ""}`;
+          item.dataset.threadId = thread.thread_id;
+          item.tabIndex = 0;
+          item.setAttribute("role", "button");
 
-      sources.forEach((source, index) => {
-        const item = document.createElement("div");
-        item.className = "source";
-
-        const title = source.title || source.source || source.source_id || `Nguồn ${index + 1}`;
-        const fileName = source.doc_name || source.file_name || "";
-        const preview = source.preview || source.content || "";
-
-        appendTextElement(item, "source-title", title);
-
-        if (fileName && fileName !== title) {
-          appendTextElement(item, "source-preview", fileName);
-        }
-
-        if (preview) {
-          appendTextElement(item, "source-preview", preview);
-        }
-
-        box.appendChild(item);
-      });
-    }
-
-    function previewQuestion() {
-      const question = questionInput.value.trim();
-
-      clearError();
-
-      if (!question) {
-        showError("Bạn chưa nhập câu hỏi.");
-        return;
-      }
-
-      renderTopic(question);
-      document.getElementById("answerBox").textContent = "Câu hỏi sẽ gửi: " + question;
-    }
-
-    async function askChatbot() {
-      const question = questionInput.value.trim();
-
-      clearError();
-
-      if (!question) {
-        showError("Bạn chưa nhập câu hỏi.");
-        return;
-      }
-
-      setLoading(true);
-
-      try {
-        const res = await fetch(API_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            question: question
-          })
+          const badge = document.createElement("span");
+          badge.className = "thread-badge";
+          badge.textContent = "...";
+          const copy = document.createElement("span");
+          copy.className = "thread-copy";
+          const title = document.createElement("span");
+          title.className = "thread-title";
+          title.textContent = cleanTitle(thread.title);
+          const time = document.createElement("span");
+          time.className = "thread-time";
+          time.textContent = formatTime(thread.updated_at);
+          copy.append(title, time);
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "delete-thread";
+          remove.title = "Xóa cuộc trò chuyện";
+          remove.setAttribute("aria-label", `Xóa ${cleanTitle(thread.title)}`);
+          remove.textContent = "×";
+          remove.addEventListener("click", event => { event.stopPropagation(); deleteThread(thread.thread_id); });
+          item.append(badge, copy, remove);
+          item.addEventListener("click", () => selectThread(thread.thread_id));
+          item.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              selectThread(thread.thread_id);
+            }
+          });
+          threadList.append(item);
         });
+      });
+    }
 
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(text || "API trả về lỗi không xác định.");
-        }
-
-        const data = await res.json();
-        const answer = normalizeAnswer(data);
-        const sources = normalizeSources(data);
-
-        renderBanner(sources.length > 0);
-        renderTopic(question);
-        renderMetrics(sources);
-        renderSources(sources);
-
-        document.getElementById("answerBox").textContent = answer;
+    async function loadThreads() {
+      try {
+        const data = await responseData(await fetch(API.threads));
+        state.threads = Array.isArray(data) ? data : [];
+        state.threads.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+        renderThreads();
       } catch (error) {
-        showError("Lỗi gọi API: " + error.message);
-      } finally {
-        setLoading(false);
+        threadList.innerHTML = `<div class="thread-empty">Không thể tải lịch sử: ${escapeHtml(error.message)}</div>`;
       }
     }
 
-    document.querySelectorAll(".chip").forEach((chip) => {
-      chip.addEventListener("click", () => {
-        setQuestion(chip.dataset.question || "");
-      });
-    });
+    function sourceName(source, index) {
+      return source.title || source.ten_van_ban || source.doc_name || source.so_van_ban || `Tài liệu ${index + 1}`;
+    }
 
-    previewButton.addEventListener("click", previewQuestion);
-    askButton.addEventListener("click", askChatbot);
+    function sourceUrl(source) { return source.url || source.attachment_url || ""; }
+
+    function renderMessage(message) {
+      const empty = messages.querySelector(".empty-state");
+      if (empty) empty.remove();
+      const role = message.role === "user" ? "user" : "assistant";
+      const row = document.createElement("div");
+      row.className = `message-row ${role}`;
+      if (role === "assistant") {
+        const avatar = document.createElement("div"); avatar.className = "avatar"; avatar.textContent = "AI"; row.append(avatar);
+      }
+      const stack = document.createElement("div"); stack.className = "message-stack";
+      const bubble = document.createElement("div"); bubble.className = "bubble";
+      const content = document.createElement("div"); content.textContent = message.content || ""; bubble.append(content);
+      const sources = Array.isArray(message.sources) ? message.sources : [];
+      if (role === "assistant" && sources.length) {
+        const sourceLine = document.createElement("div"); sourceLine.className = "source-inline"; sourceLine.append("Nguồn: ");
+        sources.slice(0, 2).forEach((source, index) => {
+          if (index) sourceLine.append(" · ");
+          const url = sourceUrl(source);
+          if (url) { const link = document.createElement("a"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = sourceName(source, index); sourceLine.append(link); }
+          else sourceLine.append(sourceName(source, index));
+        });
+        bubble.append(sourceLine);
+      }
+      const meta = document.createElement("div"); meta.className = "message-meta"; meta.textContent = formatDateTime(message.created_at) || "Vừa xong";
+      stack.append(bubble, meta); row.append(stack); messages.append(row); hero.classList.add("compact"); scrollToBottom();
+    }
+
+    function renderTyping() {
+      const row = document.createElement("div"); row.className = "message-row assistant"; row.id = "typingRow";
+      const avatar = document.createElement("div"); avatar.className = "avatar"; avatar.textContent = "AI";
+      const stack = document.createElement("div"); stack.className = "message-stack";
+      const bubble = document.createElement("div"); bubble.className = "bubble"; bubble.innerHTML = '<div class="typing"><i></i><i></i><i></i></div>';
+      stack.append(bubble); row.append(avatar, stack); messages.append(row); scrollToBottom();
+    }
+
+    function removeTyping() { el("typingRow")?.remove(); }
+
+    async function selectThread(threadId) {
+      if (state.isSending) return;
+      state.currentThreadId = threadId;
+      setError(); renderThreads(); closeDrawers();
+      messages.innerHTML = '<div class="empty-state"><div>Đang tải cuộc trò chuyện...</div></div>';
+      try {
+        const data = await responseData(await fetch(`${API.threads}/${encodeURIComponent(threadId)}/messages`));
+        if (state.currentThreadId !== threadId) return;
+        messages.replaceChildren();
+        const list = Array.isArray(data) ? data : [];
+        list.forEach(renderMessage);
+        const lastAssistant = [...list].reverse().find(item => item.role === "assistant" && Array.isArray(item.sources));
+        state.latestSources = lastAssistant?.sources || [];
+        renderDocuments();
+        if (!list.length) showEmptyChat();
+      } catch (error) { setError(error.message); showEmptyChat(); }
+    }
+
+    async function deleteThread(threadId) {
+      if (!confirm("Bạn có chắc muốn xóa cuộc trò chuyện này?")) return;
+      try {
+        await responseData(await fetch(`${API.threads}/${encodeURIComponent(threadId)}`, { method: "DELETE" }));
+        if (state.currentThreadId === threadId) startNewChat();
+        await loadThreads();
+      } catch (error) { setError(error.message); }
+    }
+
+    function startNewChat() {
+      state.currentThreadId = null;
+      state.latestSources = [];
+      setError(); showEmptyChat(); renderThreads(); renderDocuments(); closeDrawers();
+      questionInput.value = ""; autoResize(); questionInput.focus();
+    }
+
+    function renderSuggestions() {
+      const heroList = el("heroSuggestions"); const quickList = el("quickList");
+      heroList.replaceChildren(); quickList.replaceChildren();
+      suggestions.forEach(item => {
+        const chip = document.createElement("button"); chip.type = "button"; chip.className = "suggestion-chip"; chip.textContent = item.label; chip.addEventListener("click", () => askSuggestion(item.question)); heroList.append(chip);
+        const quick = document.createElement("button"); quick.type = "button"; quick.className = "quick-button";
+        quick.innerHTML = `<span class="side-icon">${escapeHtml(item.icon)}</span><span class="side-label">${escapeHtml(item.label)}</span><span class="side-arrow">›</span>`;
+        quick.addEventListener("click", () => askSuggestion(item.question)); quickList.append(quick);
+      });
+    }
+
+    function renderDocuments() {
+      const list = el("documentList"); list.replaceChildren();
+      const sources = state.latestSources.length ? state.latestSources : staticDocuments;
+      el("sourceCount").textContent = state.latestSources.length ? `${state.latestSources.length} nguồn` : "";
+      if (!sources.length) { list.innerHTML = '<div class="no-sources">Nguồn tài liệu của câu trả lời mới nhất sẽ hiển thị tại đây.</div>'; return; }
+      sources.slice(0, 5).forEach((source, index) => {
+        const item = document.createElement(sourceUrl(source) ? "a" : "div");
+        item.className = "document-item";
+        if (item.tagName === "A") { item.classList.add("document-link"); item.href = sourceUrl(source); item.target = "_blank"; item.rel = "noopener noreferrer"; }
+        const icon = document.createElement("span"); icon.className = "side-icon"; icon.textContent = source.source_type ? String(source.source_type).slice(0, 3).toUpperCase() : "TL";
+        const copy = document.createElement("span"); copy.className = "document-copy";
+        const title = document.createElement("span"); title.className = "document-title"; title.textContent = sourceName(source, index);
+        const meta = document.createElement("span"); meta.className = "document-meta"; meta.textContent = source.preview || source.meta || source.phong_ban || "Tài liệu tham khảo";
+        copy.append(title, meta); item.append(icon, copy); list.append(item);
+      });
+    }
+
+    function askSuggestion(question) {
+      if (state.isSending) return;
+      questionInput.value = question; autoResize(); closeDrawers(); sendQuestion();
+    }
+
+    async function sendQuestion() {
+      const question = questionInput.value.trim();
+      if (!question || state.isSending) return;
+      setError(); setSending(true); hero.classList.add("compact");
+      renderMessage({ role: "user", content: question, created_at: new Date().toISOString(), sources: [] });
+      questionInput.value = ""; autoResize(); renderTyping();
+      const payload = { question };
+      if (state.currentThreadId) payload.thread_id = state.currentThreadId;
+      try {
+        const data = await responseData(await fetch(API.chat, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }));
+        removeTyping();
+        state.currentThreadId = data.thread_id || state.currentThreadId;
+        state.latestSources = Array.isArray(data.sources) ? data.sources : [];
+        renderMessage({ role: "assistant", content: data.answer || "Không có nội dung trả lời.", sources: state.latestSources, created_at: new Date().toISOString() });
+        renderDocuments(); await loadThreads();
+      } catch (error) {
+        removeTyping(); setError(error.message || "Không thể kết nối đến chatbot. Vui lòng thử lại.");
+        renderMessage({ role: "assistant", content: "Có lỗi xảy ra khi truy xuất dữ liệu, vui lòng thử lại.", sources: [], created_at: new Date().toISOString() });
+      } finally { setSending(false); questionInput.focus(); }
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+    }
+
+    composerForm.addEventListener("submit", event => { event.preventDefault(); sendQuestion(); });
+    questionInput.addEventListener("input", autoResize);
+    questionInput.addEventListener("keydown", event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendQuestion(); } });
+    el("newChatButton").addEventListener("click", startNewChat);
+    el("openHistoryButton").addEventListener("click", () => document.body.classList.add("history-open"));
+    el("closeHistoryButton").addEventListener("click", closeDrawers);
+    el("openInfoButton").addEventListener("click", () => document.body.classList.add("info-open"));
+    el("backdrop").addEventListener("click", closeDrawers);
+    el("globalSearch").addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); askSuggestion(event.currentTarget.value); event.currentTarget.value = ""; } });
+    document.addEventListener("keydown", event => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); el("globalSearch").focus(); }
+      if (event.key === "Escape") closeDrawers();
+    });
+    document.querySelectorAll(".rail-button").forEach(button => button.addEventListener("click", () => {
+      const action = button.dataset.action;
+      if (action === "history") document.body.classList.add("history-open");
+      if (action === "faq" || action === "documents") document.body.classList.add("info-open");
+      if (action === "chat") questionInput.focus();
+    }));
+
+    renderSuggestions(); renderDocuments(); showEmptyChat(); loadThreads(); autoResize();
   </script>
 </body>
 </html>

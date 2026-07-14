@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 
 from app.routers.page_router import router as page_router
 from app.routers.business_router import router as business_router
@@ -31,6 +33,12 @@ app = FastAPI(
     description="Chatbot RAG using FastAPI and Gemini",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+app.mount(
+    "/static",
+    StaticFiles(directory=str(Path(__file__).resolve().parent / "static")),
+    name="static",
 )
 
 
