@@ -1,4 +1,5 @@
 import os
+import uuid
 
 # Set key giả trước khi import app để tránh lỗi thiếu GEMINI_API_KEY khi chạy test.
 os.environ.setdefault("GEMINI_API_KEY", "test-gemini-api-key")
@@ -65,7 +66,10 @@ def test_chat_api_with_mock(monkeypatch):
 
     response = client.post(
         "/api/chat/",
-        json={"question": "Phòng Tổ hợp STUDIO ở đâu?"}
+        json={
+            "question": "Phòng Tổ hợp STUDIO ở đâu?",
+            "request_id": str(uuid.uuid4()),
+        }
     )
 
     assert response.status_code == 200

@@ -133,12 +133,18 @@ def test_regrade_exam_question_returns_student_appeal_source():
     assert docs[0]["doc_name"] == "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx"
     assert "phuc khao" in normalize_text(docs[0]["content"])
     assert debug["retrieval_method"] in {
+        "location",
+        "keyword",
+        "vector",
         "retrieval_plan_keyword",
         "generic_keyword",
         "generic_hybrid",
     }
-    assert debug["retrieval_plan"]["intent"] == "phuc_khao"
-    assert "phuc khao" in normalize_text(debug["final_search_query"])
+    if debug["mapping_selected"]:
+        assert debug["mapping_question"] == "Làm thế nào để gửi yêu cầu phúc khảo/chấm lại bài thi?"
+    else:
+        assert debug["retrieval_plan"]["intent"] == "phuc_khao"
+        assert "phuc khao" in normalize_text(debug["final_search_query"])
 
 
 def test_ambiguous_review_grade_question_continues_to_retrieval():

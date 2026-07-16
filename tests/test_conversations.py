@@ -42,7 +42,9 @@ def test_session_thread_history_and_sources(monkeypatch, tmp_path):
         return _fake_result(request, sources=[source])
 
     monkeypatch.setattr(chat_router, "handle_chat", fake_handle)
-    response = client.post("/api/chat/", json={"question": "Cau hoi dau tien"})
+    response = client.post(
+        "/api/chat/", json={"question": "Cau hoi dau tien", "request_id": "req-first"}
+    )
 
     assert response.status_code == 200
     assert "HttpOnly" in response.headers["set-cookie"]
@@ -82,10 +84,17 @@ def test_second_turn_uses_standalone_question_and_history(monkeypatch, tmp_path)
 
     monkeypatch.setattr(conversation_service, "contextualize_question", fake_contextualize)
     monkeypatch.setattr(chat_router, "handle_chat", fake_handle)
-    first = client.post("/api/chat/", json={"question": "Quy trinh cap lai mat khau?"}).json()
+    first = client.post(
+        "/api/chat/",
+        json={"question": "Quy trinh cap lai mat khau?", "request_id": "req-turn-1"},
+    ).json()
     second = client.post(
         "/api/chat/",
-        json={"question": "Can giay to gi?", "thread_id": first["thread_id"]},
+        json={
+            "question": "Can giay to gi?",
+            "thread_id": first["thread_id"],
+            "request_id": "req-turn-2",
+        },
     )
 
     assert second.status_code == 200
@@ -101,12 +110,16 @@ def test_two_sessions_cannot_access_same_thread(monkeypatch, tmp_path):
         return _fake_result(request)
 
     monkeypatch.setattr(chat_router, "handle_chat", fake_handle)
-    thread_id = owner.post("/api/chat/", json={"question": "Noi dung rieng"}).json()["thread_id"]
+    thread_id = owner.post(
+        "/api/chat/", json={"question": "Noi dung rieng", "request_id": "req-private"}
+    ).json()["thread_id"]
 
+    assert other.get(f"/api/chat/threads/{thread_id}").status_code == 404
     assert other.get(f"/api/chat/threads/{thread_id}/messages").status_code == 404
     assert other.delete(f"/api/chat/threads/{thread_id}").status_code == 404
     assert other.post(
-        "/api/chat/", json={"question": "Doc thu", "thread_id": thread_id}
+        "/api/chat/",
+        json={"question": "Doc thu", "thread_id": thread_id, "request_id": "req-other"},
     ).status_code == 404
 
 
@@ -119,7 +132,9 @@ def test_pipeline_failure_marks_user_message_failed(monkeypatch, tmp_path):
 
     monkeypatch.setattr(chat_router, "handle_chat", broken_handler)
     try:
-        client.post("/api/chat/", json={"question": "Cau hoi loi"})
+        client.post(
+            "/api/chat/", json={"question": "Cau hoi loi", "request_id": "req-failure"}
+        )
     except RuntimeError:
         pass
 
@@ -161,6 +176,10 @@ def test_trace_records_conversation_questions_without_session_secret():
         original_question="Can giay to gi?",
         standalone_question="Can giay to gi khi cap lai mat khau?",
         rewrite_debug={"llm_called": True, "fallback": False},
+        history_message_count=2,
+        history_chars=42,
+        user_message_id="00000000-0000-0000-0000-000000000011",
+        assistant_message_id="00000000-0000-0000-0000-000000000012",
     ))
     try:
         payload = _new_trace("Can giay to gi khi cap lai mat khau?").payload
@@ -169,6 +188,121 @@ def test_trace_records_conversation_questions_without_session_secret():
 
     assert payload["original_question"] == "Can giay to gi?"
     assert payload["standalone_question"].endswith("cap lai mat khau?")
+    assert payload["history_message_count"] == 2
+    assert payload["history_chars"] == 42
+    assert payload["rewrite_debug"]["llm_called"] is True
+    assert payload["user_message_id"].endswith("11")
+    assert payload["assistant_message_id"].endswith("12")
     serialized = str(payload).lower()
     assert "session_hash" not in serialized
     assert "chat_session" not in serialized
+
+
+def test_duplicate_request_replays_response_without_calling_handler_twice(monkeypatch, tmp_path):
+    client, repository = _client_with_repository(tmp_path)
+    calls = 0
+
+    async def fake_handle(request):
+        nonlocal calls
+        calls += 1
+        return _fake_result(request)
+
+    monkeypatch.setattr(chat_router, "handle_chat", fake_handle)
+    payload = {"question": "Khong gui trung", "request_id": "req-idempotent"}
+    first = client.post("/api/chat/", json=payload)
+    second = client.post("/api/chat/", json=payload)
+
+    assert first.status_code == second.status_code == 200
+    assert second.json() == first.json()
+    assert calls == 1
+
+    owner_id = repository.get_or_create_owner(
+        conversation_service.session_hash(client.cookies.get("chat_session"))
+    )
+    messages = repository.list_messages(owner_id, first.json()["thread_id"])
+    assert len(messages) == 2
+
+
+def test_soft_delete_hides_thread_but_keeps_database_row(monkeypatch, tmp_path):
+    client, repository = _client_with_repository(tmp_path)
+
+    async def fake_handle(request):
+        return _fake_result(request)
+
+    monkeypatch.setattr(chat_router, "handle_chat", fake_handle)
+    result = client.post(
+        "/api/chat/",
+        json={"question": "Thread se xoa", "request_id": "req-delete"},
+    ).json()
+    thread_id = result["thread_id"]
+
+    assert client.delete(f"/api/chat/threads/{thread_id}").status_code == 204
+    assert all(item["thread_id"] != thread_id for item in client.get("/api/chat/threads").json())
+    assert client.get(f"/api/chat/threads/{thread_id}").status_code == 404
+    assert client.get(f"/api/chat/threads/{thread_id}/messages").status_code == 404
+    assert client.post(
+        "/api/chat/",
+        json={
+            "question": "Khong duoc chat tiep",
+            "thread_id": thread_id,
+            "request_id": "req-deleted-thread",
+        },
+    ).status_code == 404
+    assert client.post(
+        "/api/chat/",
+        json={"question": "Thread se xoa", "request_id": "req-delete"},
+    ).status_code == 404
+
+    owner_id = repository.get_or_create_owner(
+        conversation_service.session_hash(client.cookies.get("chat_session"))
+    )
+    deleted = repository.get_thread(owner_id, thread_id, include_deleted=True)
+    assert deleted["status"] == "deleted"
+    assert deleted["deleted_at"]
+
+
+def test_thread_detail_and_rewrite_metadata_are_persisted(monkeypatch, tmp_path):
+    client, repository = _client_with_repository(tmp_path)
+
+    async def fake_contextualize(question, history):
+        return "Cau hoi doc lap", {
+            "history_present": bool(history),
+            "llm_called": True,
+            "fallback": False,
+            "reason": "rewritten",
+        }
+
+    async def fake_handle(request):
+        return _fake_result(request)
+
+    monkeypatch.setattr(conversation_service, "contextualize_question", fake_contextualize)
+    monkeypatch.setattr(chat_router, "handle_chat", fake_handle)
+    result = client.post(
+        "/api/chat/",
+        json={
+            "question": "  Cau hoi\n  nhieu dong  ",
+            "request_id": "req-metadata",
+        },
+    ).json()
+
+    detail = client.get(f'/api/chat/threads/{result["thread_id"]}')
+    assert detail.status_code == 200
+    assert detail.json()["title"] == "Cau hoi nhieu dong"
+    assert detail.json()["message_count"] == 2
+    assert detail.json()["last_message"] == "Tra loi test"
+
+    owner_id = repository.get_or_create_owner(
+        conversation_service.session_hash(client.cookies.get("chat_session"))
+    )
+    user_message = repository.list_messages(owner_id, result["thread_id"])[0]
+    assert user_message["metadata"] == {
+        "original_question": "Cau hoi\n  nhieu dong",
+        "standalone_question": "Cau hoi doc lap",
+        "rewrite_debug": {
+            "history_present": False,
+            "llm_called": True,
+            "fallback": False,
+            "reason": "rewritten",
+        },
+        "history_message_count": 0,
+    }

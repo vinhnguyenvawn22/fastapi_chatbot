@@ -644,7 +644,9 @@
       setError(); setSending(true); hero.classList.add("compact");
       renderMessage({ role: "user", content: question, created_at: new Date().toISOString(), sources: [] });
       questionInput.value = ""; autoResize(); renderTyping();
-      const payload = { question };
+      const requestId = globalThis.crypto?.randomUUID?.()
+        || `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const payload = { question, request_id: requestId };
       if (state.currentThreadId) payload.thread_id = state.currentThreadId;
       try {
         const data = await responseData(await fetch(API.chat, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }));

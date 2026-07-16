@@ -9,7 +9,7 @@ from app.controller.chatbot_controller import (
 )
 from app.schemas.chat_schema import (
     ChatRequest, ChatResponse, MessageResponse, ThreadCreateRequest,
-    ThreadResponse, TraceResponse,
+    ThreadDetailResponse, ThreadResponse, TraceResponse,
 )
 from app.services.conversation_service import ConversationService
 
@@ -65,6 +65,15 @@ async def create_thread(payload: ThreadCreateRequest, request: Request):
 @router.get("/threads", response_model=list[ThreadResponse])
 async def list_threads(request: Request):
     return request.app.state.conversation_repository.list_threads(request.state.chat_owner_id)
+
+
+@router.get("/threads/{thread_id}", response_model=ThreadDetailResponse)
+async def thread_detail(thread_id: str, request: Request):
+    service = ConversationService(request.app.state.conversation_repository)
+    thread = service.require_thread(request.state.chat_owner_id, thread_id)
+    return request.app.state.conversation_repository.get_thread_detail(
+        request.state.chat_owner_id, thread["thread_id"]
+    )
 
 
 @router.get("/threads/{thread_id}/messages", response_model=list[MessageResponse])

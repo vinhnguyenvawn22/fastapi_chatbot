@@ -7,6 +7,7 @@ class ChatRequest(BaseModel):
     """Schema du lieu dau vao cho API chat."""
     question: str = Field(max_length=CHAT_QUESTION_MAX_CHARS)
     thread_id: Optional[str] = None
+    request_id: str = Field(min_length=1, max_length=128)
 
 
 class ChatSource(BaseModel):
@@ -67,6 +68,11 @@ class ThreadResponse(BaseModel):
     updated_at: str
 
 
+class ThreadDetailResponse(ThreadResponse):
+    message_count: int
+    last_message: Optional[str] = None
+
+
 class MessageResponse(BaseModel):
     message_id: str
     thread_id: str
@@ -75,6 +81,7 @@ class MessageResponse(BaseModel):
     sources: list[ChatSource] = Field(default_factory=list)
     status: str
     trace_id: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str
 
 
@@ -92,5 +99,13 @@ class TraceResponse(BaseModel):
     question: str
     created_at: str
     updated_at: str
+    thread_id: Optional[str] = None
+    original_question: Optional[str] = None
+    standalone_question: Optional[str] = None
+    history_message_count: Optional[int] = None
+    history_chars: Optional[int] = None
+    rewrite_debug: dict[str, Any] = Field(default_factory=dict)
+    user_message_id: Optional[str] = None
+    assistant_message_id: Optional[str] = None
     steps: list[TraceStep] = Field(default_factory=list)
     response: dict[str, Any] | None = None

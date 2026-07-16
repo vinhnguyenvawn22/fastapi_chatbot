@@ -244,11 +244,19 @@ def _should_prefer_business_generation(business_state: dict, business_docs: list
     }
 
 
+def _has_web_support_source(docs: list[dict]) -> bool:
+    return any(
+        "web support sv" in normalize_text(doc.get("doc_name", ""))
+        or "web support cbgv" in normalize_text(doc.get("doc_name", ""))
+        for doc in docs or []
+    )
+
+
 def _document_intent_terms(question: str) -> list[str]:
     normalized = normalize_text(question)
     terms = (
         "quyet dinh", "quy che", "thong bao", "van ban", "quy dinh",
-        "dieu", "muc", "chuong",
+        "dieu", "muc", "chuong", "can cu",
     )
     return [term for term in terms if term in normalized]
 
@@ -269,15 +277,35 @@ def _should_prefer_business_over_internal(
     gate_score_value = float(gate_score or 0)
     document_terms = _document_intent_terms(question)
     internal_metadata = _internal_metadata_matched(internal_docs)
+    information_need = retrieval_debug.get("information_need")
+    has_web_support_source = _has_web_support_source(business_docs)
+    mapping_selected = bool(retrieval_debug.get("mapping_selected"))
     selected = _should_prefer_business_generation(business_state, business_docs)
     reason = "business_mapping_high_confidence" if selected else "not_high_confidence_business"
 
     if internal_metadata:
         selected = False
         reason = "internal_metadata_matched"
+    elif information_need == "policy_document":
+        selected = False
+        reason = "policy_document"
     elif document_terms and (method == "generic_hybrid" or gate_score_value < 70):
         selected = False
         reason = "document_intent_terms_prefer_internal_or_merge"
+    elif (
+        not selected
+        and information_need == "procedure_ui"
+        and business_docs
+        and (has_web_support_source or mapping_selected)
+        and not document_terms
+        and not (
+            method in {"generic_hybrid", "generic_keyword"}
+            and not has_web_support_source
+            and not mapping_selected
+        )
+    ):
+        selected = True
+        reason = "procedure_ui_web_support_business_source"
 
     return selected, {
         "selected": selected,
@@ -286,10 +314,12 @@ def _should_prefer_business_over_internal(
         "business_retrieval_method": method,
         "mapping_gate_score": gate_score,
         "business_confidence": gate_score,
+        "has_web_support_source": has_web_support_source,
+        "mapping_selected": mapping_selected,
         "internal_confidence": None,
         "internal_confidence_source": None,
         "internal_metadata_matched": internal_metadata,
-        "information_need": retrieval_debug.get("information_need"),
+        "information_need": information_need,
         "audience_hint": retrieval_debug.get("audience_hint"),
         "audience_source": retrieval_debug.get("audience_source"),
     }
@@ -542,6 +572,11 @@ def _finalize(trace: RagTrace, response: dict) -> dict:
         len(response.get("sources") or []),
     )
     response["trace_id"] = trace.trace_id
+    conversation = get_conversation_context()
+    if conversation.thread_id:
+        response.setdefault("thread_id", conversation.thread_id)
+        response.setdefault("user_message_id", conversation.user_message_id)
+        response.setdefault("assistant_message_id", conversation.assistant_message_id)
     response["gemini_call_count"] = get_gemini_call_count()
     response.setdefault("ambiguity_llm_called", False)
     response.setdefault("mapping_judge_llm_called", False)
@@ -579,6 +614,11 @@ def _new_trace(question: str) -> RagTrace:
         trace.payload["thread_id"] = conversation.thread_id
         trace.payload["original_question"] = conversation.original_question or question
         trace.payload["standalone_question"] = conversation.standalone_question or question
+        trace.payload["history_message_count"] = conversation.history_message_count
+        trace.payload["history_chars"] = conversation.history_chars
+        trace.payload["rewrite_debug"] = conversation.rewrite_debug
+        trace.payload["user_message_id"] = conversation.user_message_id
+        trace.payload["assistant_message_id"] = conversation.assistant_message_id
         trace.add_step("contextual_question_rewriting", {
             **conversation.rewrite_debug,
             "original_question": conversation.original_question or question,

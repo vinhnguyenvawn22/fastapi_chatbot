@@ -1,5 +1,6 @@
 import asyncio
 import os
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -45,7 +46,9 @@ def test_four_chat_endpoints_keep_response_schema(monkeypatch, path, handler_nam
         }
 
     monkeypatch.setattr(chat_router, handler_name, fake_handler)
-    response = client.post(path, json={"question": "cau hoi test"})
+    response = client.post(
+        path, json={"question": "cau hoi test", "request_id": str(uuid.uuid4())}
+    )
 
     assert response.status_code == 200
     data = response.json()
@@ -143,7 +146,9 @@ def test_document_number_queries_are_forced_to_internal_retrieval(monkeypatch, q
     monkeypatch.setattr(chatbot_controller, "_answer_with_internal_documents", fake_internal)
     monkeypatch.setattr(chatbot_controller, "_answer_with_aggregate_documents", fail_aggregate)
 
-    result = asyncio.run(chatbot_controller.handle_chat(ChatRequest(question=question)))
+    result = asyncio.run(chatbot_controller.handle_chat(
+        ChatRequest(question=question, request_id="controller-document-number")
+    ))
 
     assert result["answer"] == "internal"
     assert calls == [(question, "document_number_query")]
@@ -345,7 +350,10 @@ def test_aggregate_rejects_keyword_false_positive_and_uses_internal(monkeypatch)
 
     result = asyncio.run(
         chatbot_controller.handle_chat(
-            ChatRequest(question="đối tượng được miễn giảm học phí")
+            ChatRequest(
+                question="đối tượng được miễn giảm học phí",
+                request_id="controller-false-positive",
+            )
         )
     )
 
@@ -410,7 +418,10 @@ def test_aggregate_retries_internal_when_combined_generation_has_no_evidence(mon
 
     result = asyncio.run(
         chatbot_controller.handle_chat(
-            ChatRequest(question="miễn giảm học phí")
+            ChatRequest(
+                question="miễn giảm học phí",
+                request_id="controller-retry-internal",
+            )
         )
     )
 
@@ -454,7 +465,10 @@ def test_aggregate_no_evidence_does_not_return_misleading_sources(monkeypatch):
 
     result = asyncio.run(
         chatbot_controller.handle_chat(
-            ChatRequest(question="đối tượng được miễn giảm học phí")
+            ChatRequest(
+                question="đối tượng được miễn giảm học phí",
+                request_id="controller-no-evidence",
+            )
         )
     )
 
@@ -522,7 +536,10 @@ def test_ambiguous_chat_continues_to_retrieval(monkeypatch):
 
     result = asyncio.run(
         chatbot_controller.handle_chat(
-            ChatRequest(question="xtet đầu ra ta4 kiểu gì")
+            ChatRequest(
+                question="xtet đầu ra ta4 kiểu gì",
+                request_id="controller-ambiguous",
+            )
         )
     )
 
@@ -664,7 +681,10 @@ def test_business_chat_generates_from_original_source_not_mapping_summary(monkey
 
     result = asyncio.run(
         chatbot_controller.handle_business_chat(
-            ChatRequest(question="How do I reset my password?")
+            ChatRequest(
+                question="How do I reset my password?",
+                request_id="controller-business-reset",
+            )
         )
     )
 
@@ -752,7 +772,9 @@ def test_document_index_skips_one_broken_file(monkeypatch):
 )
 def test_business_chat_answers_cbgv_support_questions_directly(question, expected_parts):
     result = asyncio.run(
-        chatbot_controller.handle_business_chat(ChatRequest(question=question))
+        chatbot_controller.handle_business_chat(
+            ChatRequest(question=question, request_id="controller-business-direct")
+        )
     )
 
     assert "Thông tin tóm tắt từ các nguồn đã truy xuất" not in result["answer"]

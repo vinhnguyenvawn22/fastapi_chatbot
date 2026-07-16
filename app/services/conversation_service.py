@@ -1,4 +1,6 @@
+import asyncio
 from hashlib import sha256
+import json
 import secrets
 import uuid
 
@@ -50,7 +52,8 @@ class ConversationService:
         return self.repository.get_or_create_owner(session_hash(token))
 
     def create_thread(self, owner_id: str, title: str = "Cuoc tro chuyen moi") -> dict:
-        return self.repository.create_thread(owner_id, (title.strip() or "Cuoc tro chuyen moi")[:120])
+        normalized_title = " ".join(title.split()) or "Cuoc tro chuyen moi"
+        return self.repository.create_thread(owner_id, normalized_title[:120])
 
     def require_thread(self, owner_id: str, thread_id: str) -> dict:
         thread_id = validate_uuid(thread_id)
@@ -61,45 +64,95 @@ class ConversationService:
 
     async def chat(self, owner_id: str, request, handler) -> dict:
         original = request.question.strip()
-        if request.thread_id:
-            thread = self.require_thread(owner_id, request.thread_id)
-        else:
-            thread = self.create_thread(owner_id, original)
+        request_id = request.request_id.strip()
+        if not request_id:
+            raise HTTPException(status_code=422, detail="request_id khong duoc de trong")
+        requested_thread_id = (
+            validate_uuid(request.thread_id) if request.thread_id else None
+        )
+        fingerprint = sha256(json.dumps(
+            {"question": original, "thread_id": requested_thread_id},
+            sort_keys=True, ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        title = (" ".join(original.split()) or "Cuoc tro chuyen moi")[:120]
+        claim = self.repository.claim_chat_request(
+            owner_id, request_id, fingerprint, original, title, requested_thread_id
+        )
+        if claim["claim_status"] == "thread_not_found":
+            raise HTTPException(status_code=404, detail="Khong tim thay cuoc tro chuyen")
+        if claim["claim_status"] == "conflict":
+            raise HTTPException(
+                status_code=409,
+                detail="request_id da duoc dung cho mot noi dung khac",
+            )
+        if claim["claim_status"] == "existing":
+            return await self._existing_response(owner_id, request_id, claim)
 
-        all_history = self.repository.list_messages(owner_id, thread["thread_id"], completed_only=True) or []
+        thread_id = claim["thread_id"]
+        user_message_id = claim["user_message_id"]
+        assistant_message_id = claim["assistant_message_id"]
+        all_history = self.repository.list_messages(
+            owner_id, thread_id, completed_only=True
+        ) or []
         history = limit_history(all_history, CHAT_HISTORY_MAX_MESSAGES, CHAT_HISTORY_MAX_CHARS)
-        user_message = self.repository.create_message(
-            thread["thread_id"], "user", original, "processing"
-        )
-        standalone, rewrite_debug = await contextualize_question(original, history)
-        context = ConversationContext(
-            thread_id=thread["thread_id"], original_question=original,
-            standalone_question=standalone, history=history, rewrite_debug=rewrite_debug,
-        )
-        token = set_conversation_context(context)
         try:
-            result = await handler(_ControllerRequest(question=standalone))
+            standalone, rewrite_debug = await contextualize_question(original, history)
+            history_chars = sum(len(str(item.get("content") or "")) for item in history)
+            metadata = {
+                "original_question": original,
+                "standalone_question": standalone,
+                "rewrite_debug": rewrite_debug,
+                "history_message_count": len(history),
+            }
+            self.repository.update_message_metadata(user_message_id, metadata)
+            context = ConversationContext(
+                thread_id=thread_id,
+                original_question=original,
+                standalone_question=standalone,
+                history=history,
+                rewrite_debug=rewrite_debug,
+                history_message_count=len(history),
+                history_chars=history_chars,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+            )
+            token = set_conversation_context(context)
+            try:
+                result = await handler(_ControllerRequest(question=standalone))
+            finally:
+                reset_conversation_context(token)
             answer = str(result.get("answer") or "")
             if not answer or any(marker in answer for marker in SYSTEM_FAILURE_MARKERS):
-                self.repository.update_message_status(user_message["message_id"], "failed")
                 raise HTTPException(status_code=503, detail="He thong AI tam thoi khong the tra loi")
-            assistant = self.repository.create_message(
-                thread["thread_id"], "assistant", answer, "completed",
-                sources=result.get("sources") or [], trace_id=result.get("trace_id"),
-            )
-            self.repository.update_message_status(user_message["message_id"], "completed")
-            return {
+            response = {
                 **result,
                 "question": original,
-                "thread_id": thread["thread_id"],
-                "user_message_id": user_message["message_id"],
-                "assistant_message_id": assistant["message_id"],
+                "thread_id": thread_id,
+                "user_message_id": user_message_id,
+                "assistant_message_id": assistant_message_id,
             }
-        except HTTPException:
-            self.repository.update_message_status(user_message["message_id"], "failed")
+            return self.repository.complete_chat_request(
+                owner_id, request_id, answer, result.get("sources") or [],
+                result.get("trace_id"), metadata, response,
+            )
+        except HTTPException as exc:
+            self.repository.fail_chat_request(owner_id, request_id, str(exc.detail))
             raise
-        except Exception:
-            self.repository.update_message_status(user_message["message_id"], "failed")
+        except Exception as exc:
+            self.repository.fail_chat_request(owner_id, request_id, str(exc))
             raise
-        finally:
-            reset_conversation_context(token)
+
+    async def _existing_response(self, owner_id: str, request_id: str, row: dict) -> dict:
+        for _ in range(600):
+            if row["status"] == "completed":
+                return json.loads(row["response_json"])
+            if row["status"] == "failed":
+                raise HTTPException(
+                    status_code=503,
+                    detail=row.get("error_detail") or "Request truoc da xu ly that bai",
+                )
+            await asyncio.sleep(0.05)
+            row = self.repository.get_chat_request(owner_id, request_id)
+            if not row:
+                break
+        raise HTTPException(status_code=409, detail="Request dang duoc xu ly")

@@ -6,16 +6,29 @@ EXPLICIT_CBGV_TERMS = ("giang vien", "can bo", "cbgv", "thay co", "toi la thay",
 SV_BUSINESS_TERMS = (
     "xem diem", "tra cuu diem", "ket qua hoc tap", "lich hoc",
     "thoi khoa bieu", "hoc phi", "phuc khao", "dang ky hoc phan",
+    "cham lai bai thi", "xem lai diem thi", "khieu nai diem",
+    "diem thi sai", "gui yeu cau phuc khao", "don phuc khao",
+    "ket qua bai thi",
+    "diem danh", "tra cuu diem danh", "chuyen can", "diem chuyen can",
+    "so buoi vang", "so tiet vang", "ty le vang", "nghi co phep",
+    "nghi khong phep", "ren luyen", "chuong trinh dao tao",
 )
 CBGV_BUSINESS_TERMS = (
     "lich day", "khoi luong giang day", "cong tac giang vien", "coi thi",
-    "cham thi", "muon thiet bi phong hoc", "nhan su giang vien",
+    "cham thi", "khoi luong cong tac", "khoi luong", "muon thiet bi phong hoc",
+    "nhan su giang vien", "khoi luong coi thi", "khoi luong cham thi",
+    "lop hoc phan giang vien", "lich coi thi", "minh chung kiem dinh",
+    "ho so thu tuc hanh chinh", "muon thiet bi", "bao hong thiet bi",
 )
 PROCEDURE_SIGNALS = (
     "xem o dau", "o dau", "vao dau", "bam vao dau", "thuc hien the nao",
     "cac buoc", "duong dan", "link", "man hinh", "chuc nang", "tra cuu",
     "dang nhap", "dang ky tren he thong", "truy cap", "chon muc nao",
     "xem diem", "xem lich hoc", "thoi khoa bieu xem", "xem lop hoc phan",
+    "cach xem", "cach tra cuu", "cach truy cap", "cach lam",
+    "lam the nao de", "chon hoc ky", "theo hoc ky", "xem chi tiet",
+    "truy cap nhanh", "lam the nao", "cach gui", "cach thuc hien",
+    "gui yeu cau", "nop don", "thuc hien phuc khao",
 )
 POLICY_SIGNALS = (
     "quy dinh", "quy che", "quyet dinh", "thong bao", "van ban",

@@ -45,7 +45,7 @@ BUSINESS_FAQ_SOURCE_TYPE = "business_faq_mapping"
 BUSINESS_FAQ_MIN_SCORE = max(MIN_SEARCH_SCORE, 14.0)
 BUSINESS_SOURCE_TYPE = "business_document"
 BUSINESS_GUIDED_VECTOR_MIN_SCORE = 0.35
-BUSINESS_INDEX_CACHE_VERSION = 1
+BUSINESS_INDEX_CACHE_VERSION = 3
 BUSINESS_MAPPING_MIN_TOPIC_OVERLAP = 2
 
 _XLSX_NS = {
@@ -59,6 +59,8 @@ _BUSINESS_FAQ_QUERY_EXPANSION = {
     "support": ["web support", "support uneti", "support.uneti.edu.vn"],
     "xem diem": ["ket qua hoc tap", "diem hoc ky", "diem thanh phan"],
     "diem": ["ket qua hoc tap", "diem hoc ky", "diem thanh phan"],
+    "diem danh": ["tra cuu diem danh", "chuyen can", "so buoi vang", "ty le vang"],
+    "chuyen can": ["diem danh", "so tiet vang", "nghi co phep", "nghi khong phep"],
     "thoi khoa bieu": ["lich hoc", "lich thi"],
     "lich hoc": ["hoc tap", "lich hoc lich thi"],
     "lich thi": ["hoc tap", "lich hoc lich thi"],
@@ -115,6 +117,10 @@ _BUSINESS_DISTINCTIVE_TERMS = {
     "khau",
     "may",
     "chieu",
+    "danh",
+    "chuyen",
+    "can",
+    "vang",
 }
 _BUSINESS_DOMAIN_TERMS = {
     "exam_academic": {
@@ -163,6 +169,23 @@ _BUSINESS_DOMAIN_TERMS = {
         "tra",
         "cuu",
     },
+    "attendance_lookup": {
+        "diem",
+        "danh",
+        "chuyen",
+        "can",
+        "vang",
+        "nghi",
+        "phep",
+        "tiet",
+        "buoi",
+        "ty",
+        "le",
+        "hoc",
+        "ky",
+        "tra",
+        "cuu",
+    },
 }
 _BUSINESS_DOMAIN_CORE_TERMS = {
     "exam_academic": {
@@ -197,6 +220,14 @@ _BUSINESS_DOMAIN_CORE_TERMS = {
         "khoa",
         "bieu",
     },
+    "attendance_lookup": {
+        "diem",
+        "danh",
+        "chuyen",
+        "can",
+        "vang",
+        "nghi",
+    },
 }
 _BUSINESS_DOMAIN_PHRASES = {
     "exam_academic": {
@@ -222,6 +253,15 @@ _BUSINESS_DOMAIN_PHRASES = {
         "lich thi",
         "lich hoc",
         "thoi khoa bieu",
+    },
+    "attendance_lookup": {
+        "diem danh",
+        "tra cuu diem danh",
+        "chuyen can",
+        "diem chuyen can",
+        "so buoi vang",
+        "so tiet vang",
+        "ty le vang",
     },
 }
 _MAPPING_JUDGE_CACHE = {}
@@ -895,6 +935,136 @@ def _build_business_faq_rows(file_path: Path, root: Path) -> list[dict]:
                 "ten_van_ban": source_file_name,
             })
 
+    rows.extend(_supplemental_business_faq_rows(file_path, root, file_map, rows))
+    return rows
+
+
+def _supplemental_business_faq_rows(
+    file_path: Path,
+    root: Path,
+    file_map: dict[str, dict],
+    existing_rows: list[dict],
+) -> list[dict]:
+    existing_questions = {
+        normalize_text(row.get("faq_question") or row.get("title") or "")
+        for row in existing_rows
+    }
+    supplemental = [
+        {
+            "file_id": "PCNTT_FILE_02",
+            "question": "Làm thế nào để xem điểm danh theo học kỳ?",
+            "answer": (
+                "Sinh viên đăng nhập https://support.uneti.edu.vn, chọn Tra cứu -> Điểm danh, "
+                "chọn học kỳ cần xem, theo dõi bảng thông tin điểm danh và nhấn Xem chi tiết "
+                "để xem từng buổi học."
+            ),
+            "location": "Tra cứu -> Điểm danh",
+            "keywords": (
+                "điểm danh, tra cứu điểm danh, chuyên cần, học kỳ, số buổi vắng, "
+                "số tiết vắng, tỷ lệ vắng, nghỉ có phép, nghỉ không phép, xem chi tiết"
+            ),
+        },
+        {
+            "file_id": "PCNTT_FILE_02",
+            "question": "Tôi muốn chấm lại bài thi thì làm thế nào?",
+            "answer": (
+                "Sinh viên đăng nhập https://support.uneti.edu.vn, chọn Thủ tục hành chính -> "
+                "Một cửa -> Khảo thí -> Phúc khảo, điền thông tin yêu cầu phúc khảo và gửi hồ sơ."
+            ),
+            "location": "Thủ tục hành chính -> Một cửa -> Khảo thí -> Phúc khảo",
+            "keywords": (
+                "phúc khảo, chấm lại bài thi, điểm thi, bài thi, gửi yêu cầu phúc khảo, "
+                "đơn phúc khảo, kết quả bài thi, khảo thí"
+            ),
+        },
+        {
+            "file_id": "PCNTT_FILE_02",
+            "question": "Làm thế nào để gửi yêu cầu phúc khảo/chấm lại bài thi?",
+            "answer": (
+                "Sinh viên đăng nhập https://support.uneti.edu.vn, chọn Thủ tục hành chính -> "
+                "Một cửa -> Khảo thí -> Phúc khảo, điền thông tin yêu cầu phúc khảo và gửi hồ sơ."
+            ),
+            "location": "Thủ tục hành chính -> Một cửa -> Khảo thí -> Phúc khảo",
+            "keywords": (
+                "phúc khảo, chấm lại bài thi, điểm thi, bài thi, gửi yêu cầu phúc khảo, "
+                "đơn phúc khảo, kết quả bài thi, khảo thí"
+            ),
+        },
+        {
+            "file_id": "PCNTT_FILE_03",
+            "question": "Giảng viên xem khối lượng coi thi/chấm thi ở đâu?",
+            "answer": (
+                "Giảng viên đăng nhập https://support.uneti.edu.vn, chọn Công tác giảng viên -> "
+                "Tra cứu -> Khối lượng công tác giảng viên, sau đó chọn tab Khối lượng coi, chấm thi."
+            ),
+            "location": "Công tác giảng viên -> Tra cứu -> Khối lượng công tác giảng viên",
+            "keywords": (
+                "khối lượng coi thi, khối lượng chấm thi, công tác giảng viên, "
+                "tra cứu khối lượng, học kỳ, giờ cấu trúc"
+            ),
+        },
+        {
+            "file_id": "PCNTT_FILE_03",
+            "question": "Giảng viên xem lớp học phần giảng viên ở đâu?",
+            "answer": (
+                "Giảng viên đăng nhập https://support.uneti.edu.vn, chọn Công tác giảng viên -> "
+                "Tra cứu -> Khối lượng công tác giảng viên -> Lớp học phần giảng viên."
+            ),
+            "location": "Công tác giảng viên -> Tra cứu -> Lớp học phần giảng viên",
+            "keywords": (
+                "lớp học phần giảng viên, công tác giảng viên, tra cứu lớp học phần, "
+                "lịch dạy, học kỳ"
+            ),
+        },
+    ]
+
+    rows = []
+    next_index = max(
+        [int(row.get("chunk_index") or 0) for row in existing_rows if str(row.get("chunk_index") or "").isdigit()]
+        or [0]
+    ) + 1
+    for item in supplemental:
+        if normalize_text(item["question"]) in existing_questions:
+            continue
+
+        source_info = file_map.get(item["file_id"], {})
+        source_file_name = source_info.get("source_file_name") or item["file_id"]
+        doc_name = _doc_name_with_extension(source_file_name) or file_path.name
+        source_relative_path = _resolve_relative_path(root, source_file_name)
+        relative_path = source_relative_path or source_file_name
+        audience = source_info.get("audience") or ""
+        content = "\n".join([
+            f"Cau hoi thuong gap: {item['question']}",
+            f"Cau tra loi chuan: {item['answer']}",
+            f"Vi tri chinh xac trong file goc: {item['location']}",
+            f"Tu khoa tim kiem: {item['keywords']}",
+            f"Doi tuong: {audience}",
+        ]).strip()
+
+        rows.append({
+            "doc_name": doc_name,
+            "relative_path": relative_path,
+            "source_relative_path": source_relative_path,
+            "source_file_found": bool(source_relative_path),
+            "mapping_relative_path": file_path.relative_to(root).as_posix(),
+            "source_root": root.name,
+            "title": item["question"],
+            "content": content,
+            "chunk_index": next_index,
+            "source_type": BUSINESS_FAQ_SOURCE_TYPE,
+            "file_path": str(root / relative_path),
+            "updated_at": datetime.fromtimestamp(file_path.stat().st_mtime, timezone.utc).isoformat(),
+            "file_id": item["file_id"],
+            "faq_question": item["question"],
+            "faq_answer": item["answer"],
+            "faq_location": item["location"],
+            "faq_keywords": item["keywords"],
+            "audience": audience,
+            "mapping_table_index": "supplemental",
+            "ten_van_ban": source_file_name,
+        })
+        next_index += 1
+
     return rows
 
 
@@ -1447,6 +1617,17 @@ def _should_search_cbgv_source_directly(query: str) -> bool:
     return any(term in normalized for term in direct_terms) and "sinh vien" not in normalized
 
 
+def _should_keep_cbgv_mapping_candidates(query: str) -> bool:
+    normalized = normalize_text(query)
+    workload_terms = (
+        "khoi luong cong tac",
+        "khoi luong giang day",
+        "tra cuu khoi luong",
+        "cong tac giang vien",
+    )
+    return any(term in normalized for term in workload_terms) and "sinh vien" not in normalized
+
+
 def _meaningful_business_terms(text: str) -> set[str]:
     return {
         term
@@ -1584,11 +1765,20 @@ _EXPLICIT_SV_TERMS = {"sinh vien", "sv", "nguoi hoc", "em muon", "em can"}
 _EXPLICIT_CBGV_TERMS = {"giang vien", "can bo", "cbgv", "thay co", "thay", "co"}
 _SV_BUSINESS_TERMS = {
     "diem", "hoc phan", "phuc khao", "lich hoc", "hoc phi", "dang ky hoc phan",
+    "cham lai bai thi", "xem lai diem thi", "khieu nai diem",
+    "diem thi sai", "gui yeu cau phuc khao", "don phuc khao",
+    "ket qua bai thi",
+    "diem danh", "tra cuu diem danh", "chuyen can", "diem chuyen can",
+    "so buoi vang", "so tiet vang", "ty le vang", "ren luyen",
+    "thoi khoa bieu", "chuong trinh dao tao",
 }
 _CBGV_BUSINESS_TERMS = {
     "lich day", "coi thi", "cham thi", "muon thiet bi phong hoc",
     "ho tro thiet bi", "cong tac giang vien", "dang ky muon thiet bi",
-    "may chieu",
+    "may chieu", "khoi luong", "khoi luong cong tac", "khoi luong giang day",
+    "khoi luong coi thi", "khoi luong cham thi", "lop hoc phan giang vien",
+    "lich coi thi", "nhan su giang vien", "minh chung kiem dinh",
+    "ho so thu tuc hanh chinh", "muon thiet bi", "bao hong thiet bi",
 }
 _DOCUMENT_INTENT_TERMS = {
     "quyet dinh", "quy che", "thong bao", "van ban", "quy dinh",
@@ -1700,6 +1890,31 @@ def _mapping_gate_decision(
     reasons = []
     penalties = []
     counted_signals = []
+    normalized_query = normalize_text(query)
+    normalized_mapping = normalize_text(_mapping_text(mapping))
+
+    if (
+        "khoi luong" in normalized_query
+        and any(term in normalized_mapping for term in ("coi thi", "cham thi"))
+        and not any(term in normalized_query for term in ("coi thi", "cham thi"))
+    ):
+        return {
+            "decision": "reject",
+            "reason": "specific_exam_workload_without_query_signal",
+            "score": 0,
+            "confidence": 0.0,
+            "topic_overlap": topic_overlap,
+            "llm_used": False,
+            "hard_reject_reason": "specific_exam_workload_without_query_signal",
+            "reasons": reasons,
+            "penalties": penalties,
+            "counted_signals": counted_signals,
+            "query_audience": query_audience,
+            "mapping_audience": mapping_audience,
+            "information_need": information_need,
+            "explicit_role_signals": audience_signals,
+            "business_role_signals": audience_signals,
+        }
 
     if (
         (query_audience == "sv" and mapping_audience == "cbgv")
@@ -2702,6 +2917,7 @@ def search_business_sources(
     force_direct_source = _should_search_cbgv_source_directly(query) or (
         context_audience == "cbgv"
         and context_information_need == "procedure_ui"
+        and not _should_keep_cbgv_mapping_candidates(query)
     )
     chunks, doc_freq, total_docs = _load_business_index()
     mappings = [] if force_direct_source else _mapping_candidates(query, chunks)

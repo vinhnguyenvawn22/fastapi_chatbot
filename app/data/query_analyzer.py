@@ -35,10 +35,19 @@ BUSINESS_SUPPORT_TERMS = {
     "module tin tuc thong bao", "tin tuc thong bao",
     "ket qua hoc tap", "xem diem", "diem thanh phan",
     "lich hoc lich thi", "thoi khoa bieu",
+    "phuc khao", "cham lai bai thi", "xem lai diem thi", "khieu nai diem",
+    "diem thi sai", "gui yeu cau phuc khao", "don phuc khao",
+    "ket qua bai thi",
+    "diem danh", "tra cuu diem danh", "chuyen can", "diem chuyen can",
+    "so buoi vang", "so tiet vang", "ty le vang", "ren luyen",
+    "chuong trinh dao tao",
     "bao hong", "bao hong thiet bi", "su co thiet bi",
     "khoi luong cong tac", "cong tac giang vien", "khoi luong giang day",
-    "coi thi", "cham thi", "khao sat noi bo", "khao sat bat buoc",
-    "danh gia thu tuc", "thong ke mot cua", "email google workspace",
+    "khoi luong coi thi", "khoi luong cham thi", "lop hoc phan giang vien",
+    "lich day", "lich coi thi", "coi thi", "cham thi", "khao sat noi bo",
+    "khao sat bat buoc", "minh chung kiem dinh", "ho so thu tuc hanh chinh",
+    "muon thiet bi", "danh gia thu tuc", "thong ke mot cua",
+    "email google workspace",
 }
 
 DOCUMENT_TERMS = {
@@ -46,6 +55,12 @@ DOCUMENT_TERMS = {
     "tai lieu", "noi bo", "dieu", "muc", "chuong", "ban hanh",
     "hieu luc", "hoc vu", "dang ky hoc phan", "tot nghiep", "tin chi",
     "hoc phi", "thi", "phong hoc", "email", "lms",
+}
+
+DOCUMENT_PRIORITY_TERMS = {
+    "quy dinh", "quy che", "quyet dinh", "thong bao", "van ban",
+    "tai lieu", "noi bo", "dieu", "muc", "chuong", "ban hanh",
+    "hieu luc", "can cu",
 }
 
 GENERAL_TERMS = {
@@ -131,9 +146,6 @@ def classify_query(question: str) -> QueryAnalysis:
     if not normalized:
         return QueryAnalysis(QueryIntent.OUT_OF_SCOPE, reason="empty_question")
 
-    if any(term in normalized for term in BUSINESS_SUPPORT_TERMS):
-        return QueryAnalysis(QueryIntent.INTERNAL_DOCUMENT, metadata, "business_support_terms")
-
     if any(term in normalized for term in WEBSITE_TERMS):
         return QueryAnalysis(QueryIntent.WEBSITE_UNETI, metadata, "website_terms")
 
@@ -145,6 +157,12 @@ def classify_query(question: str) -> QueryAnalysis:
 
     if any(term in normalized for term in OUT_OF_SCOPE_TERMS):
         return QueryAnalysis(QueryIntent.OUT_OF_SCOPE, reason="out_of_scope_terms")
+
+    if any(term in normalized for term in DOCUMENT_PRIORITY_TERMS):
+        return QueryAnalysis(QueryIntent.INTERNAL_DOCUMENT, metadata, "document_terms")
+
+    if any(term in normalized for term in BUSINESS_SUPPORT_TERMS):
+        return QueryAnalysis(QueryIntent.INTERNAL_DOCUMENT, metadata, "business_support_terms")
 
     if any(term in normalized for term in DOCUMENT_TERMS):
         return QueryAnalysis(QueryIntent.INTERNAL_DOCUMENT, metadata, "document_terms")
