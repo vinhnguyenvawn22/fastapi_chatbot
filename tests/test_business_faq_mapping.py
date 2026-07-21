@@ -141,7 +141,10 @@ def test_regrade_exam_question_returns_student_appeal_source():
         "generic_hybrid",
     }
     if debug["mapping_selected"]:
-        assert debug["mapping_question"] == "Làm thế nào để gửi yêu cầu phúc khảo/chấm lại bài thi?"
+        assert debug["mapping_question"] in {
+            "Tôi muốn chấm lại bài thi thì làm thế nào?",
+            "Làm thế nào để gửi yêu cầu phúc khảo/chấm lại bài thi?",
+        }
     else:
         assert debug["retrieval_plan"]["intent"] == "phuc_khao"
         assert "phuc khao" in normalize_text(debug["final_search_query"])

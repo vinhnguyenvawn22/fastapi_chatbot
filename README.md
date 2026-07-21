@@ -1,1158 +1,446 @@
-# FastAPI Chatbot Metadata
+# FastAPI Chatbot RAG UNETI
 
-## 1. Giới thiệu dự án
+## 1. Tổng Quan
 
-Dự án xây dựng một chatbot sử dụng FastAPI, có khả năng nhận câu hỏi từ người dùng, tìm kiếm nội dung liên quan trong tài liệu đã xử lý metadata, sau đó trả lời kèm nguồn tài liệu.
+Dự án này là một chatbot RAG xây dựng bằng FastAPI. Ứng dụng nhận câu hỏi của người dùng, phân loại ý định, truy xuất nguồn phù hợp từ tài liệu nội bộ, tài liệu nghiệp vụ hoặc website UNETI, sau đó dùng Gemini để tạo câu trả lời kèm nguồn tham chiếu.
 
-Mục tiêu chính của dự án:
+Các nhóm chức năng chính:
 
-* Xây dựng API chatbot bằng FastAPI.
-* Chia code rõ ràng theo từng module: `routers`, `controller`, `data`, `schemas`, `core`.
-* Có giao diện web chatbot đơn giản để người dùng nhập câu hỏi và nhận câu trả lời.
-* Mô phỏng hoặc triển khai luồng RAG: nhận câu hỏi, tìm tài liệu liên quan, xây dựng context, tạo prompt và trả lời kèm nguồn.
-* Hỗ trợ vector search bằng ChromaDB để cải thiện khả năng tìm kiếm tài liệu.
-* Làm việc nhóm bằng GitHub theo quy trình: clone repo, tạo branch, commit, push và tạo Pull Request.
-* Không code trực tiếp trên nhánh `main`.
+- Chat tổng hợp: tự chọn nguồn phù hợp giữa tài liệu nội bộ, tài liệu nghiệp vụ và website UNETI.
+- Chat theo nguồn: ép hệ thống chỉ hỏi tài liệu nội bộ, nghiệp vụ hoặc website.
+- Tra cứu nghiệp vụ không nhất thiết gọi LLM nếu câu hỏi khớp FAQ mapping.
+- Quản lý hội thoại ẩn danh bằng cookie session và SQLite.
+- Upload, đọc, chunk và index tài liệu PDF/DOCX.
+- Hybrid retrieval: metadata search, BM25, vector search ChromaDB, RRF fusion, HyDE, query expansion, ambiguity detection và cross-encoder rerank.
+- Giao diện web cơ bản ở `/` và `/chat-ui`.
 
----
+## 2. Công Nghệ Sử Dụng
 
-## 2. Thành viên nhóm và phân công công việc
+- Python, FastAPI, Uvicorn.
+- Pydantic cho request/response schema.
+- Gemini qua `google-genai`.
+- Google Cloud Discovery Engine cho tìm kiếm website UNETI nếu có cấu hình.
+- ChromaDB làm vector store local.
+- Sentence Transformers để tạo embedding.
+- `rank-bm25` cho lexical/BM25 retrieval.
+- `pypdf` và `python-docx` để đọc tài liệu.
+- SQLite để lưu phiên chat, thread, message và idempotency request.
+- Pytest và FastAPI TestClient cho test.
 
-Nhóm gồm 4 thành viên. Mỗi thành viên phụ trách một phần riêng để tránh sửa trùng file và hạn chế conflict khi làm việc nhóm.
-
-| STT | Thành viên         | Branch phụ trách      | Folder/File chính                                                      | Nhiệm vụ                                                                                            |
-| --- | ------------------ | --------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| 1   | Nguyễn Thị Hải Yến | `feature/routers`     | `app/routers`                                                          | Tạo các API endpoint, nhận request từ người dùng và gọi sang controller                             |
-| 2   | Nguyễn Văn Vinh    | `feature/controllers` | `app/controller`                                                       | Điều phối logic chatbot, xử lý luồng nghiệp vụ chính                                                |
-| 3   | Phương Thảo        | `feature/data-layer`  | `app/data`                                                             | Xử lý tìm kiếm dữ liệu, metadata, context, prompt và gọi model                                      |
-| 4   | Nguyễn Chính Nghĩa | `docs-and-tests`      | `README.md`, `tests`, `.gitignore`, `.env.example`, `requirements.txt` | Viết tài liệu hướng dẫn, test API, kiểm tra workflow GitHub và đảm bảo project có thể chạy lại được |
-
-### 2.1. Chi tiết công việc từng thành viên
-
-#### Thành viên 1: Routers
-
-Phụ trách các file:
-
-* `app/routers/chat_router.py`
-* `app/routers/document_router.py`
-* `app/routers/health_router.py`
-* `app/routers/page_router.py`
-
-Nhiệm vụ:
-
-* Tạo endpoint nhận câu hỏi chatbot.
-* Tạo endpoint kiểm tra server.
-* Tạo endpoint upload tài liệu.
-* Tạo route giao diện web chatbot tại `/`.
-* Router chỉ nên nhận request, gọi controller và trả response.
-* Không viết logic xử lý dài trong router.
-
----
-
-#### Thành viên 2: Controllers
-
-Phụ trách các file:
-
-* `app/controller/chatbot_controller.py`
-* `app/controller/document_controller.py`
-
-Nhiệm vụ:
-
-* Điều phối luồng xử lý chatbot.
-* Nhận dữ liệu từ router.
-* Gọi data layer để tìm kiếm tài liệu.
-* Gọi prompt builder để tạo prompt.
-* Gọi Gemini hoặc hàm xử lý model.
-* Trả response đúng định dạng cho router.
-
----
-
-#### Thành viên 3: Data Layer
-
-Phụ trách các file:
-
-* `app/data/elasticsearch_client.py`
-* `app/data/embedding_client.py`
-* `app/data/vector_store.py`
-* `app/data/prompt_builder.py`
-* `app/data/gemini_client.py`
-
-Nhiệm vụ:
-
-* Tạo hàm tìm kiếm tài liệu liên quan.
-* Tạo embedding cho câu hỏi và nội dung tài liệu.
-* Lưu và tìm kiếm vector bằng ChromaDB.
-* Xây dựng context từ tài liệu tìm được.
-* Xây dựng prompt cho chatbot.
-* Tạo hàm gọi mô hình Gemini.
-* Đảm bảo câu trả lời có kèm nguồn tài liệu.
-
----
-
-#### Thành viên 4: Docs and Tests
-
-Phụ trách các file:
-
-* `README.md`
-* `tests/`
-* `.gitignore`
-* `.env.example`
-* `requirements.txt`
-
-Nhiệm vụ:
-
-* Viết hướng dẫn cài đặt và chạy project.
-* Viết hướng dẫn Git workflow cho nhóm.
-* Kiểm tra API trên Swagger.
-* Viết test cơ bản cho web chatbot và API.
-* Cập nhật danh sách thư viện cần cài trong `requirements.txt`.
-* Đảm bảo không đẩy file nhạy cảm như `.env`, API key, credential, thư mục `venv`, file upload thật hoặc database local lên GitHub.
-
----
-
-## 3. Cấu trúc thư mục dự án
+## 3. Cấu Trúc Thư Mục Thực Tế
 
 ```text
 fastapi_chatbot/
 ├── app/
 │   ├── main.py
-│   │
-│   ├── routers/
-│   │   ├── page_router.py
-│   │   ├── chat_router.py
-│   │   ├── document_router.py
-│   │   └── health_router.py
-│   │
 │   ├── controller/
+│   │   ├── business_controller.py
 │   │   ├── chatbot_controller.py
-│   │   └── document_controller.py
-│   │
-│   ├── data/
-│   │   ├── elasticsearch_client.py
-│   │   ├── embedding_client.py
-│   │   ├── vector_store.py
-│   │   ├── prompt_builder.py
-│   │   └── gemini_client.py
-│   │
-│   ├── schemas/
-│   │   ├── chat_schema.py
-│   │   └── document_schema.py
-│   │
+│   │   ├── document_controller.py
+│   │   └── website_controller.py
 │   ├── core/
 │   │   ├── config.py
 │   │   └── constants.py
-│   │
+│   ├── data/
+│   │   ├── ambiguity_analyzer.py
+│   │   ├── business_knowledge.py
+│   │   ├── business_mapping_store.py
+│   │   ├── contextualizer.py
+│   │   ├── conversation_context.py
+│   │   ├── conversation_repository.py
+│   │   ├── elasticsearch_client.py
+│   │   ├── embedding_client.py
+│   │   ├── gemini_client.py
+│   │   ├── hyde.py
+│   │   ├── langchain_pipeline.py
+│   │   ├── preload.py
+│   │   ├── prompt_builder.py
+│   │   ├── query_analyzer.py
+│   │   ├── query_context.py
+│   │   ├── query_expander.py
+│   │   ├── query_expansion.py
+│   │   ├── reranker.py
+│   │   ├── trace_logger.py
+│   │   ├── vector_store.py
+│   │   └── website_search_client.py
+│   ├── routers/
+│   │   ├── business_router.py
+│   │   ├── chat_router.py
+│   │   ├── document_router.py
+│   │   ├── health_router.py
+│   │   ├── page_router.py
+│   │   └── website_router.py
+│   ├── schemas/
+│   │   ├── business_schema.py
+│   │   ├── chat_schema.py
+│   │   ├── document_schema.py
+│   │   └── website_schema.py
+│   ├── services/
+│   │   ├── __init__.py
+│   │   └── conversation_service.py
+│   ├── static/
+│   │   └── uneti-ai-hero.png
 │   └── templates/
-│       └── chat_ui.html
-│
+│       ├── chat_ui.html
+│       └── landing.html
+├── documents/
+│   └── nghiep_vu/
 ├── scripts/
+│   ├── benchmark_retrieval.py
+│   ├── extract_pcntt_mapping.py
 │   └── reindex_documents.py
-│
 ├── storage/
-│   └── chroma_db/
-│
-├── uploads/
+│   ├── business_knowledge_index/
+│   │   └── index.json
+│   ├── business_mapping/
+│   │   └── pcntt_mapping.json
+│   └── document_index/
+│       └── index.json
 ├── tests/
-│   └── test_app.py
-│
+├── uploads/
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt
 └── README.md
 ```
 
----
+Ngoài ra repo hiện có một số file log cũ như `uvicorn-8501.*.log` và file tài liệu nguồn `PCNTT_MAPPING_FILE.docx`.
 
-## 4. Vai trò từng thư mục
+## 4. Vai Trò Các Module Chính
 
-| Thư mục          | Vai trò                                                                            |
-| ---------------- | ---------------------------------------------------------------------------------- |
-| `app/routers`    | Nhận request từ web hoặc Swagger, gọi controller và trả response                   |
-| `app/controller` | Điều phối luồng xử lý nghiệp vụ                                                    |
-| `app/data`       | Xử lý dữ liệu, embedding, vector search, build context, build prompt và gọi Gemini |
-| `app/schemas`    | Định nghĩa request/response bằng Pydantic                                          |
-| `app/core`       | Chứa cấu hình chung, biến môi trường và hằng số                                    |
-| `app/templates`  | Chứa giao diện web chatbot                                                         |
-| `scripts`        | Chứa script hỗ trợ, ví dụ reindex tài liệu                                         |
-| `storage`        | Chứa dữ liệu sinh ra khi chạy vector database local                                |
-| `uploads`        | Chứa tài liệu upload khi chạy project                                              |
-| `tests`          | Chứa các file kiểm thử API                                                         |
-
----
-
-## 5. Hướng dẫn cho người mới vào nhóm
-
-Phần này dành cho thành viên mới khi bắt đầu tham gia project.
-
-### Bước 1: Clone project về máy
-
-Mở Git Bash hoặc terminal, sau đó chạy:
-
-```bash
-git clone https://github.com/vinhnguyenvawn22/fastapi_chatbot.git
-cd fastapi_chatbot
-```
-
-### Bước 2: Kiểm tra các branch hiện có
-
-```bash
-git branch -a
-```
-
-Nếu thấy có `main` và `develop` là đúng.
-
-### Bước 3: Chuyển sang nhánh `develop`
-
-Không code trực tiếp trên `main`.
-
-```bash
-git checkout develop
-git pull origin develop
-```
-
-Nếu repository chưa có nhánh `develop`, có thể làm tạm trên nhánh riêng được tạo từ `main`.
-
-### Bước 4: Tạo branch riêng để làm việc
-
-Mỗi thành viên tạo một branch riêng từ `develop`.
-
-```bash
-git checkout -b ten-branch
-```
-
-Ví dụ:
-
-```bash
-git checkout -b feature/routers
-git checkout -b feature/controllers
-git checkout -b feature/data-layer
-git checkout -b docs-and-tests
-```
-
-### Bước 5: Kiểm tra đang ở branch nào
-
-```bash
-git branch
-```
-
-Nếu thấy dấu `*` ở branch của mình là đúng.
-
-Ví dụ:
-
-```text
-  develop
-* docs-and-tests
-  main
-```
-
----
-
-## 6. Quy tắc đặt tên branch
-
-| Loại công việc                    | Cách đặt tên            | Ví dụ                     |
-| --------------------------------- | ----------------------- | ------------------------- |
-| Thêm chức năng mới                | `feature/ten-chuc-nang` | `feature/chat-api`        |
-| Sửa lỗi                           | `fix/ten-loi`           | `fix/search-empty-result` |
-| Viết tài liệu                     | `docs/noi-dung`         | `docs/update-readme`      |
-| Viết test                         | `test/noi-dung`         | `test/chat-api`           |
-| Tài liệu và test của thành viên 4 | `docs-and-tests`        | `docs-and-tests`          |
-
----
-
-## 7. Quy trình làm việc với Git
-
-### Bước 1: Trước khi code, luôn cập nhật code mới nhất
-
-```bash
-git checkout develop
-git pull origin develop
-```
-
-Sau đó tạo branch mới:
-
-```bash
-git checkout -b feature/ten-chuc-nang
-```
-
-Ví dụ:
-
-```bash
-git checkout -b docs-and-tests
-```
-
-### Bước 2: Code phần việc của mình
-
-Mỗi thành viên chỉ nên sửa các file thuộc phần mình phụ trách.
-
-Ví dụ:
-
-* Người làm routers sửa trong `app/routers`.
-* Người làm controllers sửa trong `app/controller`.
-* Người làm data layer sửa trong `app/data`.
-* Người làm docs/tests sửa `README.md`, `.gitignore`, `.env.example`, `requirements.txt`, `tests`.
-
-### Bước 3: Kiểm tra file đã thay đổi
-
-```bash
-git status
-```
-
-Nếu có file màu đỏ hoặc xanh nghĩa là có thay đổi chưa commit.
-
-### Bước 4: Thêm file vào Git
-
-Nên add từng file cụ thể để tránh đẩy nhầm file không cần thiết:
-
-```bash
-git add README.md
-git add .env.example
-git add .gitignore
-git add requirements.txt
-git add tests/test_app.py
-```
-
-Không nên dùng `git add .` nếu chưa kiểm tra kỹ vì có thể add nhầm `.env`, `venv`, `storage` hoặc `uploads`.
-
-### Bước 5: Commit code
-
-Cú pháp:
-
-```bash
-git commit -m "loai: mo ta ngan gon noi dung da lam"
-```
-
-Ví dụ:
-
-```bash
-git commit -m "docs: update setup guide and add basic tests"
-```
-
-Một số mẫu commit nên dùng:
-
-```bash
-git commit -m "feat: add chat api"
-git commit -m "feat: add document upload router"
-git commit -m "fix: handle empty search result"
-git commit -m "docs: update readme git workflow"
-git commit -m "test: add chat api test"
-```
-
-Ý nghĩa một số loại commit:
-
-| Loại       | Ý nghĩa                                      |
-| ---------- | -------------------------------------------- |
-| `feat`     | Thêm chức năng mới                           |
-| `fix`      | Sửa lỗi                                      |
-| `docs`     | Sửa tài liệu                                 |
-| `test`     | Thêm hoặc sửa test                           |
-| `refactor` | Sửa lại code nhưng không đổi chức năng       |
-| `chore`    | Công việc phụ như cấu hình, cài đặt, dọn dẹp |
-
-### Bước 6: Push branch lên GitHub
-
-Lần đầu push branch mới:
-
-```bash
-git push -u origin ten-branch
-```
-
-Ví dụ:
-
-```bash
-git push -u origin docs-and-tests
-```
-
-Những lần sau, nếu đang ở đúng branch, chỉ cần:
-
-```bash
-git push
-```
-
----
-
-## 8. Tạo Pull Request trên GitHub
-
-Sau khi push branch lên GitHub, cần tạo Pull Request để merge code vào `develop`.
-
-Các bước:
-
-1. Vào repository trên GitHub.
-2. Bấm nút **Compare & pull request**.
-3. Chọn:
-
-   * Base branch: `develop`
-   * Compare branch: branch của mình, ví dụ `docs-and-tests`
-4. Ghi tiêu đề Pull Request.
-5. Ghi mô tả Pull Request.
-6. Bấm **Create pull request**.
-7. Nhờ ít nhất 1 thành viên trong nhóm review.
-8. Sau khi review xong mới merge vào `develop`.
-
-Lưu ý:
-
-* Không tự ý merge code khi chưa được review.
-* Không tạo Pull Request trực tiếp vào `main` khi đang phát triển.
-* Code ổn định ở `develop` rồi mới merge sang `main`.
-
----
-
-## 9. Mẫu nội dung Pull Request
-
-Có thể copy mẫu này khi tạo Pull Request:
-
-````md
-## Đã làm
-
-- Cập nhật README hướng dẫn cài đặt, cấu hình `.env`, chạy server và mở web chatbot.
-- Bổ sung `.env.example` để người mới biết cần cấu hình `GEMINI_API_KEY`.
-- Cập nhật `.gitignore` để tránh đẩy `.env`, `venv/`, `uploads/`, dữ liệu ChromaDB và cache Python.
-- Cập nhật `requirements.txt` để tránh thiếu thư viện khi clone project.
-- Thêm test cơ bản cho `/`, `/docs`, `/openapi.json` và `/api/chat/`.
-
-## Cần review
-
-- Kiểm tra lại danh sách thư viện trong `requirements.txt`.
-- Kiểm tra nội dung README đã đúng với luồng chạy thực tế chưa.
-- Kiểm tra test `/api/chat/` đã phù hợp với schema hiện tại chưa.
-
-## Cách test
-
-```bash
-pip install -r requirements.txt
-python -m pytest -q
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8501
-````
-
-Mở:
-
-```text
-http://127.0.0.1:8501/
-http://127.0.0.1:8501/docs
-```
-
-````
-
----
-
-## 10. Cài đặt project
-
-### Bước 1: Tạo môi trường ảo
-
-```bash
-python -m venv venv
-````
-
-### Bước 2: Kích hoạt môi trường ảo
-
-Trên Windows PowerShell:
-
-```bash
-venv\Scripts\activate
-```
-
-Trên Git Bash:
-
-```bash
-source venv/Scripts/activate
-```
-
-Trên macOS/Linux:
-
-```bash
-source venv/bin/activate
-```
-
-Khi kích hoạt thành công, terminal sẽ có dạng:
-
-```text
-(venv) PS ...\fastapi_chatbot>
-```
-
-### Bước 3: Cài thư viện
-
-```bash
-pip install -r requirements.txt
-```
-
-Nếu thiếu thư viện trong quá trình chạy, có thể cài lại các thư viện chính:
-
-```bash
-pip install fastapi uvicorn pydantic python-dotenv jinja2 chromadb google-generativeai python-multipart pypdf pytest httpx
-```
-
----
-
-## 11. Cấu hình biến môi trường
-
-Project cần file `.env` để lưu cấu hình chạy local, đặc biệt là `GEMINI_API_KEY`.
-
-### Bước 1: Copy file mẫu
-
-Trên Windows PowerShell:
-
-```bash
-copy .env.example .env
-```
-
-Trên macOS/Linux:
-
-```bash
-cp .env.example .env
-```
-
-### Bước 2: Điền API key thật vào file `.env`
-
-Mở file `.env` và cấu hình theo mẫu:
-
-```env
-GEMINI_API_KEY=your_real_gemini_api_key
-GEMINI_MODEL=gemini-2.5-flash
-VECTOR_STORE_PATH=storage/chroma_db
-RETRIEVAL_TOP_K=5
-SIMILARITY_THRESHOLD=0.3
-```
-
-Lưu ý:
-
-* Không commit file `.env` lên GitHub.
-* Không ghi API key thật vào `.env.example`.
-* Nếu lỡ đẩy API key lên GitHub, cần đổi key ngay.
-
----
-
-## 12. Chạy project
-
-Chạy server FastAPI:
-
-```bash
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8501
-```
-
-Hoặc:
-
-```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8501
-```
-
-Nếu chạy thành công, terminal sẽ hiện dạng:
-
-```text
-Uvicorn running on http://0.0.0.0:8501
-Application startup complete.
-```
-
----
-
-## 13. Mở giao diện web chatbot
-
-Sau khi server chạy thành công, mở trình duyệt tại:
-
-```text
-http://127.0.0.1:8501/
-```
-
-Đây là giao diện chatbot được load từ file:
-
-```text
-app/templates/chat_ui.html
-```
-
-Giao diện này sẽ gửi câu hỏi đến API:
-
-```text
-POST /api/chat/
-```
-
-Nếu vào `/` bị lỗi `404 Not Found`, cần kiểm tra lại:
-
-* `app/routers/page_router.py` có route `@router.get("/")` chưa.
-* `app/main.py` đã include `page_router` chưa.
-* File `app/templates/chat_ui.html` có tồn tại đúng vị trí không.
-
----
-
-## 14. Mở Swagger UI
-
-Swagger UI dùng để kiểm tra API trực tiếp trên trình duyệt.
-
-Mở:
-
-```text
-http://127.0.0.1:8501/docs
-```
-
-OpenAPI JSON:
-
-```text
-http://127.0.0.1:8501/openapi.json
-```
-
-Một số endpoint thường dùng:
-
-| Endpoint                                       | Phương thức | Mục đích                                        |
-| ---------------------------------------------- | ----------- | ----------------------------------------------- |
-| `/`                                            | GET         | Mở giao diện web chatbot                        |
-| `/api/chat/`                                   | POST        | Gửi câu hỏi cho chatbot                         |
-| `/api/documents/` hoặc `/api/documents/upload` | POST        | Upload hoặc xử lý tài liệu nếu router có hỗ trợ |
-| `/docs`                                        | GET         | Mở Swagger UI                                   |
-| `/openapi.json`                                | GET         | Xem OpenAPI schema                              |
-
-Lưu ý: Tên endpoint tài liệu có thể thay đổi tùy theo nội dung trong `document_router.py`. Nên kiểm tra chính xác trong Swagger tại `/docs`.
-
----
-
-## 15. Hướng dẫn test endpoint chat
-
-Endpoint cần test:
-
-```text
-POST /api/chat/
-```
-
-Endpoint này nhận câu hỏi từ người dùng, gọi luồng xử lý chatbot trong `chatbot_controller.py`, sau đó trả về câu trả lời theo schema `ChatResponse`.
-
-### 15.1. Chuẩn bị trước khi test
-
-Tạo file `.env` hoặc cấu hình biến môi trường cần thiết, tối thiểu phải có:
-
-```env
-GEMINI_API_KEY=your-gemini-api-key
-```
-
-Cài thư viện:
-
-```powershell
-pip install -r requirements.txt
-```
-
-Chạy server FastAPI:
-
-```powershell
-uvicorn app.main:app --reload
-```
-
-Khi server chạy thành công, API mặc định ở:
-
-```text
-http://127.0.0.1:8000
-```
-
-### 15.2. Test bằng Swagger UI
-
-Mở trình duyệt:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-Chọn endpoint:
-
-```text
-POST /api/chat/
-```
-
-Bấm **Try it out**, nhập body mẫu:
-
-```json
-{
-  "question": "Quy chế đào tạo đại học chính quy quy định thế nào về học phần?"
-}
-```
-
-Bấm **Execute**.
-
-Kết quả đúng là Swagger trả về HTTP status `200` và response có các trường như:
-
-```json
-{
-  "question": "Quy chế đào tạo đại học chính quy quy định thế nào về học phần?",
-  "answer": "Nội dung câu trả lời từ chatbot",
-  "source": "Tên tài liệu nguồn",
-  "intent": "document_question",
-  "trace_id": "trace-id",
-  "sources": []
-}
-```
-
-Lưu ý: Nội dung `answer`, `source`, `intent`, `trace_id` và `sources` có thể thay đổi tùy dữ liệu đã index và kết quả xử lý của chatbot.
-
-### 15.3. Test bằng PowerShell
-
-Chạy lệnh:
-
-```powershell
-Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8000/api/chat/" `
-  -Method Post `
-  -ContentType "application/json" `
-  -Body '{"question":"Quy chế đào tạo đại học chính quy quy định thế nào về học phần?"}'
-```
-
-Nếu muốn xem response dạng JSON dễ đọc hơn:
-
-```powershell
-Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8000/api/chat/" `
-  -Method Post `
-  -ContentType "application/json" `
-  -Body '{"question":"Quy chế đào tạo đại học chính quy quy định thế nào về học phần?"}' |
-ConvertTo-Json -Depth 10
-```
-
-### 15.4. Test bằng curl
-
-```bash
-curl -X POST "http://127.0.0.1:8000/api/chat/" \
-  -H "Content-Type: application/json" \
-  -d '{"question":"Quy chế đào tạo đại học chính quy quy định thế nào về học phần?"}'
-```
-
-Kết quả đúng là response JSON có ít nhất:
-
-```json
-{
-  "question": "...",
-  "answer": "..."
-}
-```
-
-### 15.5. Test trace sau khi gọi chat
-
-Mỗi lần gọi `POST /api/chat/`, response có thể trả về `trace_id`.
-
-Dùng `trace_id` đó để xem chi tiết luồng xử lý:
-
-```text
-GET /api/chat/traces/{trace_id}
-```
-
-Ví dụ:
-
-```powershell
-Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8000/api/chat/traces/trace-id" `
-  -Method Get |
-ConvertTo-Json -Depth 10
-```
-
-Trace dùng để kiểm tra từng bước xử lý như phân tích câu hỏi, tìm kiếm tài liệu, xây dựng prompt và tạo câu trả lời.
-
-### 15.6. Test tự động bằng pytest
-
-Dự án đã có test cho endpoint `/api/chat/` trong:
-
-```text
-tests/test_app.py
-```
-
-Test này mock `handle_chat`, nên không gọi Gemini thật. Cách này giúp kiểm tra router, schema request và schema response ổn định hơn khi chạy CI hoặc khi chưa có API key thật.
-
-Chạy toàn bộ test:
-
-```powershell
-pytest
-```
-
-Chạy riêng file test app:
-
-```powershell
-pytest tests/test_app.py
-```
-
-Chạy riêng test endpoint chat:
-
-```powershell
-pytest tests/test_app.py -k chat_api
-```
-
-Kết quả đúng:
-
-```text
-passed
-```
-
-### 15.7. Một số lỗi thường gặp
-
-| Lỗi | Nguyên nhân thường gặp | Cách kiểm tra |
+### `app/main.py`
+
+Entrypoint FastAPI. File này:
+
+- Tạo app với lifespan.
+- Khởi tạo `ConversationRepository` dùng SQLite.
+- Preload các thành phần RAG nếu bật cấu hình.
+- Mount static tại `/static`.
+- Gắn middleware reset bộ đếm Gemini mỗi request.
+- Gắn middleware tạo cookie session ẩn danh và `chat_owner_id`.
+- Include các router: health, chat, nghiệp vụ, website, documents và page.
+
+### `app/routers`
+
+Router chỉ nhận request, gọi controller/service và trả response:
+
+- `chat_router.py`: các endpoint chat, trace và thread.
+- `business_router.py`: API hỏi/tra cứu nghiệp vụ.
+- `website_router.py`: API tra cứu website UNETI.
+- `document_router.py`: upload, liệt kê và đọc text tài liệu.
+- `page_router.py`: trả HTML landing và chat UI.
+- `health_router.py`: kiểm tra server.
+
+### `app/controller`
+
+Điều phối nghiệp vụ:
+
+- `chatbot_controller.py`: luồng chat chính, phân loại câu hỏi, chọn nguồn, gọi retrieval, kiểm tra evidence, build sources, finalize trace.
+- `business_controller.py`: hỏi đáp nghiệp vụ theo mapping và search nguồn nghiệp vụ.
+- `website_controller.py`: tra cứu website UNETI, chuẩn hóa kết quả và trace.
+- `document_controller.py`: xử lý upload, validate file, đọc PDF/DOCX, tách chunk và metadata.
+
+### `app/data`
+
+Data layer và RAG logic:
+
+- `elasticsearch_client.py`: tên file hơi lịch sử, hiện xử lý index tài liệu local, metadata search, BM25, vector search, RRF, HyDE/probe và cache.
+- `vector_store.py`: ChromaDB persistent collection, index và search vector chunks.
+- `embedding_client.py`: tải/cache SentenceTransformer và tạo embedding.
+- `reranker.py`: cross-encoder rerank.
+- `hyde.py`: sinh HyDE và grounded HyDE bằng Gemini.
+- `query_analyzer.py`: phân loại intent và trích metadata như số văn bản, điều, mục, chương, ngày.
+- `query_context.py`: nhận diện đối tượng hỏi như sinh viên/CBGV và loại nhu cầu như thủ tục UI hay văn bản chính sách.
+- `ambiguity_analyzer.py`: quyết định direct retrieval, HyDE, probe retrieval hoặc hỏi làm rõ.
+- `query_expander.py` và `query_expansion.py`: mở rộng truy vấn bằng rule/cache/Gemini.
+- `business_knowledge.py`: index và search tài liệu nghiệp vụ, FAQ mapping, guided retrieval theo location/keyword/vector và fallback generic hybrid.
+- `business_mapping_store.py`: search file mapping JSON `pcntt_mapping.json`.
+- `website_search_client.py`: tìm kiếm website UNETI qua Discovery Engine, fallback HTML/sitemap/category, tải nội dung trang/attachment, index website chunks.
+- `prompt_builder.py`: ghép context thành `<NGUON>...</NGUON>` và tạo prompt cho tài liệu/website.
+- `langchain_pipeline.py`: pipeline retrieve + prompt + generate answer, có trace từng bước.
+- `conversation_repository.py`: SQLite repository cho session/thread/message/chat_requests.
+- `contextualizer.py`: viết lại câu hỏi phụ thuộc lịch sử hội thoại.
+- `conversation_context.py`: contextvar giữ thông tin hội thoại trong request.
+- `trace_logger.py`: ghi trace JSON vào `storage/traces`.
+- `preload.py`: preload model/index theo cấu hình.
+
+### `app/schemas`
+
+Định nghĩa Pydantic schema:
+
+- `ChatRequest`, `ChatResponse`, `ChatSource`, thread/message/trace response.
+- `BusinessAskRequest`, `BusinessAskResponse`, `BusinessSearchRequest`, `BusinessSearchResponse`.
+- `WebsiteSearchRequest`, `WebsiteSearchResponse`.
+- `DocumentResponse`.
+
+### `app/services`
+
+- `conversation_service.py`: tạo session token, hash session, validate UUID, quản lý lifecycle chat request. Service này hỗ trợ idempotency bằng `request_id`, lưu user/assistant message, rewrite câu hỏi theo history, xử lý replay response nếu request trùng.
+
+### `scripts`
+
+- `reindex_documents.py`: xóa vector cũ và index lại toàn bộ tài liệu được hỗ trợ.
+- `extract_pcntt_mapping.py`: đọc `PCNTT_MAPPING_FILE.docx` và xuất `storage/business_mapping/pcntt_mapping.json`.
+- `benchmark_retrieval.py`: benchmark retrieval hoặc benchmark synthetic song song.
+
+### `tests`
+
+Test bao phủ:
+
+- App, docs, OpenAPI, chat router.
+- Chat endpoints, prompt, routing, fallback, trace.
+- Hội thoại/thread/session/idempotency/soft delete.
+- Business API, FAQ mapping, guided retrieval, audience routing.
+- Hybrid retrieval, query expansion, ambiguity, HyDE, rerank.
+- Website search API với mock.
+
+## 5. Luồng Xử Lý Chat/RAG
+
+### Chat tổng hợp `/api/chat/`
+
+1. Middleware đọc hoặc tạo cookie session ẩn danh.
+2. `ConversationService.chat()` nhận `question`, `request_id`, `thread_id`.
+3. Service claim request trong SQLite để chống gửi trùng.
+4. Lấy lịch sử hội thoại gần nhất, nếu cần thì gọi `contextualizer` để viết lại câu hỏi độc lập.
+5. `chatbot_controller.handle_chat()` tạo trace và phân loại câu hỏi bằng `query_analyzer`.
+6. Hệ thống chọn hướng xử lý:
+   - Website UNETI nếu câu hỏi có tín hiệu website/tin tức/link.
+   - Tài liệu nghiệp vụ nếu câu hỏi liên quan Web Support, thủ tục, tra cứu nghiệp vụ.
+   - Tài liệu nội bộ nếu câu hỏi hỏi quy định, quyết định, điều, mục, chương, số văn bản.
+   - Ngoài phạm vi hoặc general advice sẽ trả câu trả lời an toàn theo rule.
+7. Retrieval lấy nguồn liên quan:
+   - Nội bộ: metadata/BM25/vector/HyDE/RRF/cross-encoder.
+   - Nghiệp vụ: FAQ mapping, guided source search, generic hybrid.
+   - Website: Discovery Engine hoặc fallback crawling/search, sau đó có thể index vào vector store với `source_type=website_uneti`.
+8. Controller kiểm tra nguồn có đủ tin cậy không.
+9. `prompt_builder` ghép context và prompt.
+10. `gemini_client.ask_gemini()` gọi Gemini.
+11. Response được làm sạch, gắn nguồn, ghi trace vào `storage/traces`, lưu message vào SQLite và trả về client.
+
+### Upload và index tài liệu
+
+1. `POST /api/documents/upload` nhận file PDF.
+2. `document_controller` validate tên file, MIME type, kích thước và nội dung PDF.
+3. File được lưu vào `DOCUMENTS_DIR`.
+4. Cache document index bị clear.
+5. Tài liệu được tách chunk, trích metadata và index vào ChromaDB.
+
+## 6. API Endpoint Quan Trọng
+
+Các prefix được khai báo trong `app/main.py`.
+
+| Method | Endpoint | Mục đích |
 | --- | --- | --- |
-| `404 Not Found` | Gọi sai URL, thiếu dấu `/` cuối hoặc server chưa include router | Kiểm tra URL là `/api/chat/` và xem `app/main.py` |
-| `422 Unprocessable Entity` | Body sai schema hoặc thiếu trường `question` | Body phải có dạng `{"question":"..."}` |
-| `500 Internal Server Error` | Thiếu API key, lỗi gọi Gemini, lỗi vector store hoặc dữ liệu chưa sẵn sàng | Xem log terminal đang chạy `uvicorn` |
-| Response không có nguồn | Không tìm được tài liệu phù hợp hoặc dữ liệu chưa được index | Kiểm tra thư mục `documents/` và luồng index tài liệu |
+| GET | `/` | Trang landing HTML |
+| GET | `/chat-ui` | Giao diện chat HTML |
+| GET | `/api/health/` | Health check |
+| POST | `/api/chat/` | Chat tổng hợp, tự chọn nguồn |
+| POST | `/api/chat/business` | Chat chỉ dùng nguồn nghiệp vụ |
+| POST | `/api/chat/internal` | Chat chỉ dùng tài liệu nội bộ |
+| POST | `/api/chat/website` | Chat chỉ dùng website UNETI |
+| GET | `/api/chat/traces/{trace_id}` | Xem trace debug của một câu hỏi |
+| POST | `/api/chat/threads` | Tạo thread chat |
+| GET | `/api/chat/threads` | Danh sách thread của session hiện tại |
+| GET | `/api/chat/threads/{thread_id}` | Chi tiết thread |
+| GET | `/api/chat/threads/{thread_id}/messages` | Danh sách message trong thread |
+| DELETE | `/api/chat/threads/{thread_id}` | Soft delete thread |
+| POST | `/api/nghiep-vu/ask` | Hỏi đáp theo FAQ mapping nghiệp vụ |
+| POST | `/api/nghiep-vu/search` | Search nguồn nghiệp vụ, không bắt buộc gọi LLM |
+| POST | `/api/website/search` | Tra cứu trực tiếp website UNETI |
+| POST | `/api/documents/upload` | Upload PDF và index |
+| GET | `/api/documents/` | Liệt kê tài liệu |
+| GET | `/api/documents/{file_name}/text` | Đọc text đã trích xuất từ PDF/DOCX |
 
-Nếu terminal hiện dòng tương tự:
-
-```text
-POST /api/chat/ HTTP/1.1" 200 OK
-```
-
-nghĩa là endpoint chat đã nhận request và trả response thành công.
-
----
-
-## 16. Luồng xử lý chatbot
-
-Luồng xử lý chính của chatbot:
-
-```text
-Người dùng nhập câu hỏi trên giao diện web
-→ Frontend gọi API POST /api/chat/
-→ chat_router nhận request
-→ chatbot_controller điều phối xử lý
-→ data layer tìm tài liệu hoặc chunk liên quan
-→ prompt_builder tạo prompt từ nội dung tìm được
-→ gemini_client gọi Gemini để sinh câu trả lời
-→ API trả answer và source về frontend
-→ Web hiển thị câu trả lời và nguồn tài liệu
-```
-
-Giải thích ngắn gọn:
-
-| Thành phần                | Vai trò                                        |
-| ------------------------- | ---------------------------------------------- |
-| `app/main.py`             | Khởi tạo FastAPI và include các router         |
-| `page_router.py`          | Trả về giao diện web chatbot tại `/`           |
-| `chat_router.py`          | Nhận câu hỏi từ frontend hoặc Swagger          |
-| `chatbot_controller.py`   | Điều phối quá trình xử lý câu hỏi              |
-| `elasticsearch_client.py` | Lớp retrieval, tìm tài liệu liên quan          |
-| `embedding_client.py`     | Tạo vector embedding cho câu hỏi hoặc tài liệu |
-| `vector_store.py`         | Lưu và tìm kiếm vector bằng ChromaDB           |
-| `prompt_builder.py`       | Tạo context và prompt để gửi cho Gemini        |
-| `gemini_client.py`        | Gọi Gemini để sinh câu trả lời                 |
-| `chat_schema.py`          | Chuẩn hóa request/response                     |
-| `chat_ui.html`            | Giao diện web chatbot                          |
-
----
-
-## 17. Metadata cần lưu
-
-| Trường        | Kiểu dữ liệu | Ý nghĩa                                     |
-| ------------- | ------------ | ------------------------------------------- |
-| `doc_name`    | String       | Tên tài liệu nguồn                          |
-| `title`       | String       | Tiêu đề, mục hoặc điều khoản trong tài liệu |
-| `content`     | Text         | Nội dung đoạn tài liệu                      |
-| `chunk_index` | Number       | Thứ tự đoạn đã tách                         |
-| `file_path`   | String       | Đường dẫn file gốc                          |
-| `source_type` | String       | Loại nguồn tài liệu                         |
-| `is_active`   | Boolean      | Trạng thái tài liệu còn hiệu lực hay không  |
-| `score`       | Float        | Điểm liên quan hoặc độ tương đồng của chunk |
-| `page_start`  | Number       | Trang bắt đầu nếu trích xuất từ PDF         |
-| `page_end`    | Number       | Trang kết thúc nếu trích xuất từ PDF        |
-
-Ví dụ metadata:
+Ví dụ request chat:
 
 ```json
 {
-  "doc_name": "quy-che-dao-tao.pdf",
-  "title": "Điều 2. Hoãn thi",
-  "chunk_index": 1,
-  "content": "Sinh viên có thể xin hoãn thi nếu có lý do chính đáng.",
-  "file_path": "uploads/ChatAI/quy-che-dao-tao.pdf",
-  "source_type": "official_document",
-  "is_active": true,
-  "score": 0.87,
-  "page_start": 3,
-  "page_end": 4
+  "question": "Sinh viên xem điểm ở đâu?",
+  "request_id": "uuid-hoac-id-duy-nhat",
+  "thread_id": null
 }
 ```
 
----
+`request_id` là bắt buộc và dùng để chống xử lý trùng. Nếu gửi lại cùng `request_id` với cùng nội dung, hệ thống có thể replay response đã lưu.
 
-## 18. Chạy test
+## 7. Biến Môi Trường
 
-Cài thư viện test nếu chưa có:
+Tạo file `.env` từ `.env.example`. Không commit `.env` thật.
 
-```bash
-pip install pytest httpx
-```
-
-Chạy test:
-
-```bash
-python -m pytest -q
-```
-
-Kết quả mong đợi:
-
-```text
-4 passed
-```
-
-Các test cơ bản:
-
-| Test                          | Mục đích                                           |
-| ----------------------------- | -------------------------------------------------- |
-| `test_home_page_returns_html` | Kiểm tra web chatbot tại `/`                       |
-| `test_docs_page_available`    | Kiểm tra Swagger `/docs`                           |
-| `test_openapi_json_available` | Kiểm tra OpenAPI schema                            |
-| `test_chat_api_with_mock`     | Kiểm tra API `/api/chat/` mà không gọi Gemini thật |
-
----
-
-## 19. Quy tắc không được đẩy lên GitHub
-
-Không đẩy các file hoặc thư mục sau lên GitHub:
-
-* `.env`
-* API key
-* Token
-* File credential
-* File service account
-* Thư mục môi trường ảo `venv/`
-* Thư mục upload thật `uploads/`
-* Dữ liệu vector database local `storage/chroma_db/`
-* File cache Python `__pycache__/`
-* File cache test `.pytest_cache/`
-* File log `*.log`
-
-Nếu lỡ add nhầm file `.env`, cần gỡ khỏi Git:
-
-```bash
-git restore --staged .env
-```
-
-Nếu file `.env` đã từng bị commit, cần xóa khỏi Git tracking:
-
-```bash
-git rm --cached .env
-git add .gitignore
-git commit -m "fix: remove env file from repository"
-git push
-```
-
-Nếu đã đẩy API key thật lên GitHub, cần đổi API key ngay.
-
----
-
-## 20. Một số lỗi thường gặp và cách xử lý
-
-### Lỗi 1: Thiếu `GEMINI_API_KEY`
-
-Thông báo lỗi có dạng:
-
-```text
-ValueError: Thiếu GEMINI_API_KEY trong file .env
-```
-
-Cách xử lý:
-
-* Kiểm tra đã có file `.env` chưa.
-* Kiểm tra `.env` có nằm ngang hàng với `app/` không.
-* Kiểm tra đã có dòng `GEMINI_API_KEY=...` chưa.
-* Không đặt tên nhầm thành `.env.txt`.
-
----
-
-### Lỗi 2: Thiếu thư viện `chromadb`
-
-Thông báo lỗi có dạng:
-
-```text
-ModuleNotFoundError: No module named 'chromadb'
-```
-
-Cách xử lý:
-
-```bash
-pip install chromadb
-```
-
-Sau đó cập nhật lại `requirements.txt` nếu cần.
-
----
-
-### Lỗi 3: Vào `/` bị `404 Not Found`
-
-Nguyên nhân thường gặp:
-
-* Chưa có route `GET /`.
-* Chưa include `page_router` trong `app/main.py`.
-* File `chat_ui.html` đặt sai vị trí.
-
-Cách kiểm tra:
-
-```text
-app/templates/chat_ui.html
-app/routers/page_router.py
-app/main.py
-```
-
-Route web cần trả về giao diện chatbot tại:
-
-```text
-http://127.0.0.1:8501/
-```
-
----
-
-### Lỗi 4: Gõ sai đường dẫn `/docs`
-
-Đường dẫn đúng:
-
-```text
-http://127.0.0.1:8501/docs
-```
-
-Nếu gõ nhầm `/dosc` thì sẽ bị `404 Not Found`.
-
----
-
-### Lỗi 5: API chat không kết nối từ giao diện web
-
-Cần kiểm tra trong file `chat_ui.html` có đúng API URL:
-
-```javascript
-const API_URL = "/api/chat/";
-```
-
-Nếu backend dùng endpoint khác, cần sửa URL cho khớp với router thực tế.
-
----
-
-### Lỗi 6: Không push được branch mới
-
-Nếu gặp lỗi vì branch chưa tồn tại trên GitHub, chạy:
-
-```bash
-git push -u origin ten-branch
-```
-
-Ví dụ:
-
-```bash
-git push -u origin docs-and-tests
-```
-
----
-
-### Lỗi 7: Đang ở nhầm branch
-
-Kiểm tra branch hiện tại:
-
-```bash
-git branch
-```
-
-Chuyển về branch đúng:
-
-```bash
-git checkout docs-and-tests
-```
-
----
-
-### Lỗi 8: Bị conflict khi merge Pull Request
-
-Cách xử lý cơ bản:
-
-```bash
-git checkout develop
-git pull origin develop
-git checkout ten-branch
-git merge develop
-```
-
-Sau đó mở file bị conflict, sửa thủ công, rồi commit lại:
-
-```bash
-git add .
-git commit -m "fix: resolve merge conflict"
-git push
-```
-
----
-
-## 21. Checklist trước khi nộp bài
-
-* [ ] Có repository GitHub chung cho nhóm.
-* [ ] Có nhánh `main`.
-* [ ] Có nhánh `develop` nếu nhóm sử dụng quy trình develop.
-* [ ] Mỗi thành viên có branch riêng.
-* [ ] Không code trực tiếp trên `main`.
-* [ ] Không code trực tiếp trên `develop`.
-* [ ] Có Pull Request trước khi merge.
-* [ ] Có review trước khi merge.
-* [ ] Project chạy được bằng lệnh `python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8501`.
-* [ ] Mở được web chatbot tại `/`.
-* [ ] Mở được Swagger UI tại `/docs`.
-* [ ] Test được API `/api/chat/`.
-* [ ] Có đủ folder `app/routers`, `app/controller`, `app/data`, `app/schemas`, `app/core`.
-* [ ] Có file giao diện `app/templates/chat_ui.html`.
-* [ ] Router không chứa logic nghiệp vụ quá dài.
-* [ ] Controller điều phối luồng xử lý rõ ràng.
-* [ ] Data layer có xử lý metadata hoặc vector search.
-* [ ] Câu trả lời chatbot có kèm nguồn.
-* [ ] Có file `.gitignore`.
-* [ ] Có file `.env.example`.
-* [ ] Có file `README.md` hướng dẫn rõ ràng.
-* [ ] Có file `requirements.txt` cập nhật đủ thư viện.
-* [ ] Có test cơ bản trong thư mục `tests/`.
-* [ ] Chạy được `python -m pytest -q`.
-* [ ] Không đẩy `.env`, API key hoặc credential lên GitHub.
-* [ ] Không đẩy `venv/`, `uploads/`, `storage/chroma_db/`, `__pycache__/` lên GitHub.
-
----
-
-
-
-## Reindex tai lieu RAG
-
-Pipeline tai lieu doc recursive cac file PDF trong `DOCUMENTS_DIR`. Cau hinh khuyen nghi:
+Biến bắt buộc:
 
 ```env
-DOCUMENTS_DIR=uploads/Tổng hợp văn bản AI
+GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-Cac file `.doc`, `.docx`, `.xlsx`, `.json`, `.png`, `.rar` duoc bo qua o giai doan nay; he thong chi index `.pdf`.
+Nếu có nhiều Gemini API key, có thể dùng `GEMINI_API_KEYS=key_1,key_2,key_3`, hoặc khai báo `GEMINI_API_KEY_1`, `GEMINI_API_KEY_2`, hoặc lặp nhiều dòng `GEMINI_API_KEY=...` trong `.env`. Hệ thống sẽ tự xoay vòng key và thử key tiếp theo khi gặp quota/rate limit hoặc lỗi tạm thời.
 
-Cai dependency va reindex:
-
-```bash
-pip install -r requirements.txt
-python scripts/reindex_documents.py
-```
-
-Ket qua reindex bao so PDF phat hien, so file index thanh cong, tong so chunk, `vector_count` trong ChromaDB va danh sach file loi neu co. Moi chunk co metadata `phong_ban`, `relative_path`, `source_root` de giam lay nham nguon khi hoi theo phong ban hoac chu de rong.
-
-
-## Tra cuu website UNETI bang Vertex AI Search
-
-Luồng website không crawl HTML trực tiếp. Hệ thống gọi Google Vertex AI Search/Discovery Engine, lọc domain `uneti.edu.vn`, loại trùng URL, rerank kết quả và chỉ đưa 1-2 nguồn tốt nhất sang Gemini.
-
-Cấu hình `.env` cần có:
+Biến thường dùng:
 
 ```env
+GEMINI_MODEL=gemini-2.5-flash
+DOCUMENTS_DIR=uploads/Tong hop van ban AI
+DOCUMENT_INDEX_CACHE_ENABLED=true
+DOCUMENT_INDEX_CACHE_FILE=storage/document_index/index.json
+BUSINESS_DOCUMENTS_DIR=documents/nghiep_vu
+BUSINESS_INDEX_CACHE_ENABLED=true
+BUSINESS_INDEX_CACHE_FILE=storage/business_knowledge_index/index.json
+BUSINESS_MAPPING_FILE=storage/business_mapping/pcntt_mapping.json
+
+SEARCH_TOP_K=3
+MAX_CONTEXT_CHUNKS=3
+MAX_CONTEXT_CHARS=12000
+CHUNK_SIZE=2000
+CHUNK_OVERLAP=500
+
+EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+VECTOR_STORE_DIR=storage/chroma_db
+VECTOR_COLLECTION_NAME=document_chunks
+VECTOR_MAX_DISTANCE=0.75
+
+CHAT_DATABASE_FILE=storage/chat_history.sqlite3
+CHAT_SESSION_COOKIE_NAME=chat_session
+CHAT_SESSION_MAX_AGE_SECONDS=2592000
+CHAT_COOKIE_SECURE=false
+CHAT_COOKIE_SAMESITE=lax
+CHAT_HISTORY_MAX_MESSAGES=10
+CHAT_HISTORY_MAX_CHARS=6000
+CHAT_QUESTION_MAX_CHARS=4000
+```
+
+Biến cho website UNETI/Discovery Engine:
+
+```env
+UNETI_WEBSITE_DOMAIN=uneti.edu.vn
 GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
 DISCOVERY_PROJECT_NUMBER=your_google_cloud_project_number
 DISCOVERY_LOCATION=global
 DISCOVERY_COLLECTION_ID=default_collection
 DISCOVERY_ENGINE_ID=your_discovery_engine_id
 DISCOVERY_SERVING_CONFIG_ID=default_search
-UNETI_WEBSITE_DOMAIN=uneti.edu.vn
 WEBSITE_SEARCH_TOP_K=10
 WEBSITE_RERANK_TOP_K=2
+WEBSITE_MIN_SOURCE_SCORE=50
 ```
 
-Các câu hỏi có dấu hiệu như `website`, `trang web`, `uneti.edu.vn`, `tin tức`, `bài viết`, `link` sẽ được route sang intent `website_uneti`. Các câu hỏi về quy định, quyết định, điều khoản trong tài liệu nội bộ vẫn dùng pipeline RAG PDF.
+Nếu thiếu cấu hình Discovery Engine, website search có cơ chế fallback trong code, nhưng chất lượng/phạm vi có thể khác tùy truy vấn và kết nối mạng.
 
-## Debug pipeline bang trace_id
+## 8. Cài Đặt Và Chạy Dự Án
 
-Moi cau hoi gui vao API chat se tra ve `trace_id` trong response:
+### Tạo môi trường Python
 
 ```bash
-POST /api/chat/
+python -m venv .venv
 ```
 
-Dung `trace_id` do de tra cuu chi tiet cac buoc xu ly:
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+macOS/Linux:
 
 ```bash
-GET /api/chat/traces/{trace_id}
+source .venv/bin/activate
 ```
 
-Endpoint trace tra ve cac thong tin chinh:
+### Cài thư viện
 
-- `trace_id`, `question`, `created_at`, `updated_at`
-- `steps`: cac buoc nhu `classify_query`, `retrieval`, `website_search`, `context_builder`, `llm_call`
-- `response`: cau tra loi cuoi cung va nguon da tra ve cho nguoi dung
+```bash
+pip install -r requirements.txt
+```
 
-Endpoint nay chi nhan `trace_id` dang UUID hop le va chi doc file trong `storage/traces/{trace_id}.json`; neu trace khong ton tai se tra ve HTTP 404.
+### Tạo file môi trường
+
+```bash
+cp .env.example .env
+```
+
+Trên Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Sau đó điền `GEMINI_API_KEY` thật trong `.env`.
+
+### Chạy server
+
+```bash
+uvicorn app.main:app --reload
+```
+
+Mặc định mở:
+
+- App: `http://127.0.0.1:8000`
+- Chat UI: `http://127.0.0.1:8000/chat-ui`
+- Swagger: `http://127.0.0.1:8000/docs`
+- OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
+
+### Chạy test
+
+```bash
+pytest
+```
+
+Nhiều test tự set `GEMINI_API_KEY=test-gemini-api-key` và mock các phần gọi ngoài, nên không nhất thiết gọi Gemini thật.
+
+## 9. Dữ Liệu, Tài Liệu Và Index
+
+- `documents/nghiep_vu/`: tài liệu nghiệp vụ gốc, gồm DOCX/PDF hướng dẫn Web Support, quy chế/quy định.
+- `PCNTT_MAPPING_FILE.docx`: file mapping nguồn FAQ PCNTT ở root.
+- `storage/business_mapping/pcntt_mapping.json`: mapping FAQ đã trích xuất từ file DOCX.
+- `storage/business_knowledge_index/index.json`: cache index nghiệp vụ.
+- `storage/document_index/index.json`: cache index tài liệu nội bộ.
+- `storage/chroma_db/`: vector store ChromaDB local, có thể được tạo khi index.
+- `storage/chat_history.sqlite3`: SQLite lưu session/thread/message, có thể được tạo khi chạy.
+- `storage/traces/`: JSON trace debug từng câu hỏi, có thể được tạo khi chat.
+- `uploads/`: nơi lưu tài liệu upload theo `DOCUMENTS_DIR`.
+
+## 10. Script Hỗ Trợ
+
+Tạo lại mapping FAQ PCNTT:
+
+```bash
+python scripts/extract_pcntt_mapping.py
+```
+
+Index lại toàn bộ tài liệu vào ChromaDB:
+
+```bash
+python scripts/reindex_documents.py
+```
+
+Benchmark retrieval:
+
+```bash
+python scripts/benchmark_retrieval.py --rounds 1
+```
+
+Benchmark synthetic song song:
+
+```bash
+python scripts/benchmark_retrieval.py --synthetic
+```
+
+## 11. Lưu Ý Khi Phát Triển
+
+- Không commit `.env`, API key, service account hoặc credential thật.
+- `app/core/config.py` hiện raise lỗi nếu thiếu `GEMINI_API_KEY`, nên cần set biến môi trường trước khi import app.
+- Một số file/comment cũ có dấu hiệu lỗi encoding mojibake. Khi sửa, nên lưu file mới bằng UTF-8.
+- `elasticsearch_client.py` không nhất thiết đang dùng Elasticsearch thật; tên file là lịch sử, logic hiện tại là retrieval local/hybrid.
+- Khi thêm endpoint, giữ pattern router mỏng, controller điều phối, data layer xử lý retrieval/model.
+- Khi thay đổi schema chat, cần kiểm tra lại tests liên quan `test_chat_langchain.py`, `test_conversations.py` và frontend trong `chat_ui.html`.
+- Khi thêm tài liệu mới thủ công, cần reindex nếu muốn vector search thấy ngay.
+- Website search phụ thuộc cấu hình Google Discovery Engine và fallback network. Khi test nên mock để tránh gọi dịch vụ thật.
+- `request_id` trong `ChatRequest` là bắt buộc để đảm bảo idempotency.
+- Cookie session là ẩn danh, không nên log hoặc expose token gốc; hệ thống chỉ lưu hash session.
+
+## 12. Context Cho AI Ở Chat Mới
+
+Bạn đang làm trong dự án `fastapi_chatbot`, một chatbot RAG FastAPI cho UNETI. Entrypoint là `app/main.py`. App có middleware tạo session chat ẩn danh bằng cookie, lưu hội thoại vào SQLite qua `ConversationRepository`, và expose các route `/api/chat`, `/api/nghiep-vu`, `/api/website`, `/api/documents`, `/api/health`, `/`, `/chat-ui`.
+
+Luồng chat chính nằm ở `app/controller/chatbot_controller.py`, gọi pipeline trong `app/data/langchain_pipeline.py`. Retrieval nội bộ nằm chủ yếu ở `app/data/elasticsearch_client.py`, vector Chroma ở `app/data/vector_store.py`, embedding ở `app/data/embedding_client.py`, prompt ở `app/data/prompt_builder.py`, Gemini ở `app/data/gemini_client.py`. Nghiệp vụ Web Support/PCNTT nằm ở `app/data/business_knowledge.py` và `app/data/business_mapping_store.py`. Website UNETI nằm ở `app/data/website_search_client.py`. Quản lý hội thoại nằm ở `app/services/conversation_service.py` và `app/data/conversation_repository.py`.
+
+Trước khi sửa code hãy đọc file liên quan bằng `rg --files` và `Get-Content`. Không đọc/ghi lộ `.env` thật. Nếu chạy app dùng `uvicorn app.main:app --reload`; nếu chạy test dùng `pytest`. Giữ thay đổi nhỏ, đúng module, không tự bịa chức năng ngoài code hiện có.

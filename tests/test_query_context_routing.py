@@ -7,8 +7,8 @@ from app.controller.chatbot_controller import (
     _should_prefer_business_over_internal,
 )
 from app.data.business_knowledge import clear_business_knowledge_cache, search_business_sources
-from app.data.query_analyzer import classify_query
 from app.data.query_context import analyze_query_context
+from app.data.query_analyzer import QueryIntent, classify_query
 
 
 def test_explicit_history_inference_and_default_audience_priority():
@@ -108,7 +108,7 @@ def test_business_mapping_handles_student_procedure_and_rejects_generic_query():
     assert vague_debug["mapping_rejected_reason"] == "overly_generic_query"
 
 
-def test_teacher_schedule_does_not_accept_unrelated_business_mapping():
+def test_teacher_schedule_uses_related_cbgv_mapping():
     clear_business_knowledge_cache()
     question = "giang vien xem lich day o dau"
     debug = {}
@@ -120,11 +120,9 @@ def test_teacher_schedule_does_not_accept_unrelated_business_mapping():
 
     assert docs
     assert "CBGV" in docs[0]["doc_name"].upper()
-    assert debug["mapping_selected"] is False
-    assert all(
-        decision["decision"] == "reject"
-        for decision in debug["mapping_gate_decisions"]
-    )
+    assert debug["mapping_selected"] is True
+    assert debug["mapping_question"] == "Giảng viên xem lớp học phần giảng viên ở đâu?"
+    assert debug["retrieval_method"] in {"location", "keyword", "vector"}
 
 
 def test_teacher_workload_lookup_keeps_mapping_with_query_context():
@@ -277,7 +275,7 @@ def test_policy_need_blocks_business_priority_and_direct_answer():
         "quy dinh ve diem hoc phan", business_state, [business_doc], [internal_doc]
     )
     direct_allowed, reason = _allow_aggregate_direct_business_answer(
-        business_state, [internal_doc]
+        "quy dinh ve diem hoc phan", business_state, [internal_doc]
     )
 
     assert preferred is False
@@ -323,6 +321,30 @@ def test_policy_document_questions_do_not_force_business_priority():
         )
         assert preferred is False
         assert debug["reason"] in {
+            "academic_policy_terms_prefer_internal_or_merge",
             "policy_document",
             "document_intent_terms_prefer_internal_or_merge",
         }
+
+
+def test_policy_with_website_news_term_still_routes_to_internal_document():
+    policy = classify_query("quy che tuyen sinh dai hoc nam nay")
+    news = classify_query("thong tin tuyen sinh dai hoc nam nay")
+
+    assert policy.intent == QueryIntent.INTERNAL_DOCUMENT
+    assert policy.reason == "document_terms"
+    assert news.intent == QueryIntent.WEBSITE_UNETI
+
+
+def test_attendance_exam_question_is_policy_not_procedure():
+    context = analyze_query_context("nghi hoc khong phep co bi cam thi khong", [])
+
+    assert context["information_need"] == "policy_document"
+    assert "cam thi" in context["information_need_signals"]["policy"]
+
+
+def test_exam_retake_registration_is_procedure_ui_with_dang_ki_variant():
+    context = analyze_query_context("huong dan dang ki thi lai", [])
+
+    assert context["information_need"] == "procedure_ui"
+    assert context["audience_hint"] == "sv"

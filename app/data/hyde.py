@@ -4,10 +4,7 @@ import hashlib
 import re
 import time
 
-from google import genai
-
 from app.core.config import (
-    GEMINI_API_KEY,
     GROUNDED_HYDE_MAX_EVIDENCE_CHARS,
     HYDE_CACHE_MAX_ITEMS,
     HYDE_CACHE_TTL_SECONDS,
@@ -15,11 +12,11 @@ from app.core.config import (
     HYDE_MAX_WORDS,
     HYDE_MODEL,
 )
+from app.data.gemini_client import generate_content
 from app.data.query_analyzer import normalize_text
 
 
 NEED_CLARIFICATION = "NEED_CLARIFICATION"
-_client = genai.Client(api_key=GEMINI_API_KEY)
 _CACHE = OrderedDict()
 
 
@@ -95,7 +92,7 @@ CÂU HỎI:
 """.strip()
 
     try:
-        response = _client.models.generate_content(model=HYDE_MODEL, contents=prompt)
+        response = generate_content(model=HYDE_MODEL, contents=prompt)
         text = " ".join(str(response.text or "").split()).strip()
         if text.upper() == NEED_CLARIFICATION:
             result = {
@@ -191,7 +188,7 @@ QUY TẮC BẮT BUỘC:
 """.strip()
 
     try:
-        response = _client.models.generate_content(model=HYDE_MODEL, contents=prompt)
+        response = generate_content(model=HYDE_MODEL, contents=prompt)
         text = " ".join(str(response.text or "").split()).strip()
         if text.upper() == NEED_CLARIFICATION:
             result = {

@@ -1,10 +1,87 @@
 import os
+import re
+from pathlib import Path
 from dotenv import load_dotenv
 
 
 load_dotenv(encoding="utf-8-sig")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+def _clean_env_value(value: str) -> str:
+    value = str(value or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1].strip()
+    return value
+
+
+def _split_api_key_values(value: str) -> list[str]:
+    return [
+        _clean_env_value(item)
+        for item in re.split(r"[,;\n]+", str(value or ""))
+        if _clean_env_value(item)
+    ]
+
+
+def _is_placeholder_api_key(value: str) -> bool:
+    normalized = value.lower()
+    return (
+        not value
+        or "your_" in normalized
+        or "api_key_here" in normalized
+        or normalized in {"changeme", "replace_me"}
+    )
+
+
+def _read_raw_gemini_api_keys() -> list[str]:
+    """Read .env manually so repeated GEMINI_API_KEY lines are preserved."""
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if not env_path.is_file():
+        return []
+
+    keys = []
+    try:
+        lines = env_path.read_text(encoding="utf-8-sig").splitlines()
+    except UnicodeDecodeError:
+        lines = env_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        name, value = stripped.split("=", 1)
+        name = name.strip()
+        if name == "GEMINI_API_KEYS" or re.fullmatch(r"GEMINI_API_KEY(?:_\d+)?", name):
+            keys.extend(_split_api_key_values(value))
+
+    return keys
+
+
+def _load_gemini_api_keys() -> list[str]:
+    keys = []
+    keys.extend(_read_raw_gemini_api_keys())
+    keys.extend(_split_api_key_values(os.getenv("GEMINI_API_KEYS", "")))
+    keys.extend(
+        value
+        for name, value in sorted(os.environ.items())
+        if re.fullmatch(r"GEMINI_API_KEY(?:_\d+)?", name)
+    )
+
+    deduped = []
+    seen = set()
+    for key in keys:
+        key = _clean_env_value(key)
+        if _is_placeholder_api_key(key) or key in seen:
+            continue
+        deduped.append(key)
+        seen.add(key)
+
+    return deduped
+
+
+GEMINI_API_KEYS = _load_gemini_api_keys()
+GEMINI_API_KEY = GEMINI_API_KEYS[0] if GEMINI_API_KEYS else None
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", "uploads/Tổng hợp văn bản AI")
@@ -30,7 +107,7 @@ BUSINESS_INDEX_CACHE_FILE = os.getenv(
 MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "20"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "2000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "500"))
-SEARCH_TOP_K = int(os.getenv("SEARCH_TOP_K", "3"))
+SEARCH_TOP_K = int(os.getenv("SEARCH_TOP_K", "6"))
 RRF_CANDIDATE_TOP_K = int(
     os.getenv(
         "RRF_CANDIDATE_TOP_K",
@@ -51,7 +128,7 @@ SHORT_QUERY_MIN_SEARCH_SCORE = float(os.getenv("SHORT_QUERY_MIN_SEARCH_SCORE", "
 MIN_VECTOR_CONFIDENCE = float(os.getenv("MIN_VECTOR_CONFIDENCE", "0.45"))
 SHORT_QUERY_MIN_VECTOR_CONFIDENCE = float(os.getenv("SHORT_QUERY_MIN_VECTOR_CONFIDENCE", "0.55"))
 MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "12000"))
-MAX_CONTEXT_CHUNKS = int(os.getenv("MAX_CONTEXT_CHUNKS", "3"))
+MAX_CONTEXT_CHUNKS = int(os.getenv("MAX_CONTEXT_CHUNKS", "5"))
 RETRIEVAL_CACHE_TTL_SECONDS = int(os.getenv("RETRIEVAL_CACHE_TTL_SECONDS", "900"))
 RETRIEVAL_CACHE_MAX_ITEMS = int(os.getenv("RETRIEVAL_CACHE_MAX_ITEMS", "128"))
 EMBEDDING_CACHE_MAX_ITEMS = int(os.getenv("EMBEDDING_CACHE_MAX_ITEMS", "512"))
@@ -177,5 +254,5 @@ WEBSITE_FETCH_TIMEOUT = float(os.getenv("WEBSITE_FETCH_TIMEOUT", "15"))
 WEBSITE_FETCH_MAX_BYTES = int(os.getenv("WEBSITE_FETCH_MAX_BYTES", str(20 * 1024 * 1024)))
 WEBSITE_EXTRACT_MAX_CHARS = int(os.getenv("WEBSITE_EXTRACT_MAX_CHARS", "12000"))
 
-if not GEMINI_API_KEY:
-    raise ValueError("Thieu GEMINI_API_KEY trong file .env")
+if not GEMINI_API_KEYS:
+    raise ValueError("Thieu GEMINI_API_KEY hoac GEMINI_API_KEYS trong file .env")

@@ -8,7 +8,8 @@ SV_BUSINESS_TERMS = (
     "thoi khoa bieu", "hoc phi", "phuc khao", "dang ky hoc phan",
     "cham lai bai thi", "xem lai diem thi", "khieu nai diem",
     "diem thi sai", "gui yeu cau phuc khao", "don phuc khao",
-    "ket qua bai thi",
+    "ket qua bai thi", "thi lai", "hoan thi",
+    "dang ky thi lai", "dang ki thi lai", "huy dang ky thi lai", "huy dang ki thi lai",
     "diem danh", "tra cuu diem danh", "chuyen can", "diem chuyen can",
     "so buoi vang", "so tiet vang", "ty le vang", "nghi co phep",
     "nghi khong phep", "ren luyen", "chuong trinh dao tao",
@@ -28,13 +29,17 @@ PROCEDURE_SIGNALS = (
     "cach xem", "cach tra cuu", "cach truy cap", "cach lam",
     "lam the nao de", "chon hoc ky", "theo hoc ky", "xem chi tiet",
     "truy cap nhanh", "lam the nao", "cach gui", "cach thuc hien",
-    "gui yeu cau", "nop don", "thuc hien phuc khao",
+    "gui yeu cau", "nop don", "thuc hien phuc khao", "huong dan",
+    "thi lai", "hoan thi",
+    "dang ky thi lai", "dang ki thi lai", "huy dang ky thi lai", "huy dang ki thi lai",
 )
 POLICY_SIGNALS = (
     "quy dinh", "quy che", "quyet dinh", "thong bao", "van ban",
     "dieu kien", "doi tuong", "thoi han", "duoc phep", "co bat buoc",
     "trach nhiem", "quyen", "nghia vu", "theo dieu", "theo muc",
-    "theo chuong", "theo van ban",
+    "theo chuong", "theo van ban", "co bi", "bi cam thi", "cam thi",
+    "khong duoc thi", "diem chuyen can", "nghi hoc khong phep",
+    "nghi hoc co phep", "nghi hoc tren", "so tiet vang", "ty le vang",
 )
 
 

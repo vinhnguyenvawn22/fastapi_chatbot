@@ -146,11 +146,10 @@ def classify_query(question: str) -> QueryAnalysis:
     if not normalized:
         return QueryAnalysis(QueryIntent.OUT_OF_SCOPE, reason="empty_question")
 
-    if any(term in normalized for term in WEBSITE_TERMS):
+    explicit_website = any(term in normalized for term in WEBSITE_TERMS)
+    has_document_priority = any(term in normalized for term in DOCUMENT_PRIORITY_TERMS)
+    if explicit_website and not has_document_priority:
         return QueryAnalysis(QueryIntent.WEBSITE_UNETI, metadata, "website_terms")
-
-    if any(term in normalized for term in WEBSITE_NEWS_TERMS):
-        return QueryAnalysis(QueryIntent.WEBSITE_UNETI, metadata, "website_news_terms")
 
     if metadata:
         return QueryAnalysis(QueryIntent.INTERNAL_DOCUMENT, metadata, "metadata_query")
@@ -160,6 +159,12 @@ def classify_query(question: str) -> QueryAnalysis:
 
     if any(term in normalized for term in DOCUMENT_PRIORITY_TERMS):
         return QueryAnalysis(QueryIntent.INTERNAL_DOCUMENT, metadata, "document_terms")
+
+    if any(term in normalized for term in WEBSITE_NEWS_TERMS):
+        return QueryAnalysis(QueryIntent.WEBSITE_UNETI, metadata, "website_news_terms")
+
+    if explicit_website:
+        return QueryAnalysis(QueryIntent.WEBSITE_UNETI, metadata, "website_terms")
 
     if any(term in normalized for term in BUSINESS_SUPPORT_TERMS):
         return QueryAnalysis(QueryIntent.INTERNAL_DOCUMENT, metadata, "business_support_terms")

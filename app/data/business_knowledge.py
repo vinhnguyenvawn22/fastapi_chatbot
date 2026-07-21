@@ -1395,6 +1395,32 @@ def _score_chunk(query: str, chunk: dict, doc_freq: Counter, total_docs: int) ->
         if any(term in searchable for term in ("huy dang ky thi lai", "hoan thi", "dang ky thi lai")) and "man phuc khao cho phep" not in searchable:
             score -= 80.0
 
+    if "thi lai" in normalized_query and any(term in normalized_query for term in ("dang ky", "dang ki", "huy", "huong dan", "lam the nao", "lam sao")):
+        searchable = f"{normalized_title} {normalized_content} {doc_name}"
+        if "web support sv" in doc_name or "support sv" in searchable:
+            score += 120.0
+        if "mot cua" in searchable and "khao thi" in searchable:
+            score += 90.0
+        if "dang ky thi lai" in searchable:
+            score += 180.0
+        if "huy dang ky thi lai" in searchable and "huy" in normalized_query:
+            score += 220.0
+        if any(term in searchable for term in ("khcn", "nghien cuu", "de tai", "nhiem vu kh&cn")):
+            score -= 260.0
+        if "dang ky hoc lai" in searchable or "hoc cai thien" in searchable:
+            score -= 160.0
+
+    if "hoan thi" in normalized_query and any(term in normalized_query for term in ("huong dan", "lam the nao", "lam sao", "phai lam sao", "cach", "thu tuc")):
+        searchable = f"{normalized_title} {normalized_content} {doc_name}"
+        if "web support sv" in doc_name or "support sv" in searchable:
+            score += 140.0
+        if "mot cua" in searchable and "khao thi" in searchable:
+            score += 100.0
+        if "hoan thi" in searchable:
+            score += 180.0
+        if any(term in searchable for term in ("khcn", "nghien cuu", "de tai", "nhiem vu kh&cn")):
+            score -= 280.0
+
     if "tot nghiep" in normalized_query and "dieu kien" in normalized_query:
         if "dieu 24" in normalized_content or "dieu 24" in normalized_title:
             score += 80.0
@@ -1619,13 +1645,18 @@ def _should_search_cbgv_source_directly(query: str) -> bool:
 
 def _should_keep_cbgv_mapping_candidates(query: str) -> bool:
     normalized = normalize_text(query)
-    workload_terms = (
+    mapping_friendly_terms = (
+        "lich day",
+        "lich coi thi",
+        "lop hoc phan giang vien",
         "khoi luong cong tac",
         "khoi luong giang day",
+        "khoi luong coi thi",
+        "khoi luong cham thi",
         "tra cuu khoi luong",
         "cong tac giang vien",
     )
-    return any(term in normalized for term in workload_terms) and "sinh vien" not in normalized
+    return any(term in normalized for term in mapping_friendly_terms) and "sinh vien" not in normalized
 
 
 def _meaningful_business_terms(text: str) -> set[str]:
@@ -1863,6 +1894,22 @@ def _context_cache_key(query_context: dict | None) -> tuple:
         context.get("audience_source") or "unknown",
         context.get("information_need") or "unknown",
     )
+
+
+def _business_query_with_spelling_variants(query: str) -> str:
+    normalized = normalize_text(query)
+    extras: list[str] = []
+    if "thi lai" in normalized and "dang ki" in normalized:
+        extras.append("dang ky thi lai")
+    if "thi lai" in normalized:
+        extras.append("dang ky thi lai")
+    if "thi lai" in normalized and "huy" in normalized:
+        extras.append("huy dang ky thi lai")
+    if "hoan thi" in normalized:
+        extras.append("hoan thi mot cua khao thi gui yeu cau")
+    if not extras:
+        return query
+    return " ".join(dict.fromkeys([query, *extras]))
 
 
 def _query_context_audience(query: str, query_context: dict | None) -> tuple[str, dict]:
@@ -2317,6 +2364,7 @@ def _guided_keyword_score(query: str, mapping: dict, chunk: dict) -> float:
     searchable = normalize_text(
         f'{chunk.get("title", "")} {chunk.get("content", "")}'
     )
+    normalized_query = normalize_text(query)
     searchable_tokens = set(get_keywords(searchable))
     query_tokens = set(get_keywords(query))
     keyword_tokens = set(get_keywords(mapping.get("faq_keywords", "")))
@@ -2330,6 +2378,25 @@ def _guided_keyword_score(query: str, mapping: dict, chunk: dict) -> float:
     for phrase in _faq_keyword_phrases(mapping.get("faq_keywords", "")):
         if len(get_keywords(phrase)) >= 2 and phrase in searchable:
             score += 18.0
+
+    if "thi lai" in normalized_query:
+        if "huy" in normalized_query:
+            if "huy dang ky thi lai" in searchable:
+                score += 220.0
+            elif "dang ky thi lai" in searchable:
+                score += 35.0
+        elif "dang ky thi lai" in normalized_query and "dang ky thi lai" in searchable:
+            score += 140.0
+        if any(term in searchable for term in ("thi thu", "on tap", "ket qua hoc tap", "xac nhan ct&ctsv")):
+            score -= 80.0
+
+    if "hoan thi" in normalized_query:
+        if "hoan thi" in searchable:
+            score += 180.0
+        if "mot cua" in searchable and "khao thi" in searchable:
+            score += 90.0
+        if any(term in searchable for term in ("khcn", "nghien cuu", "de tai", "nhiem vu kh&cn")):
+            score -= 180.0
 
     return round(score, 4)
 
@@ -2896,6 +2963,7 @@ def search_business_sources(
     query_context: dict | None = None,
 ) -> list[dict]:
     query = str(query or "").strip()
+    retrieval_query = _business_query_with_spelling_variants(query)
     limit = limit or BUSINESS_SEARCH_TOP_K
     context_key = _context_cache_key(query_context)
     cache_key = (
@@ -2914,13 +2982,34 @@ def search_business_sources(
 
     context_audience = (query_context or {}).get("audience_hint")
     context_information_need = (query_context or {}).get("information_need")
+    normalized_query = normalize_text(query)
+    force_student_support_source = (
+        context_audience == "sv"
+        and context_information_need == "procedure_ui"
+        and any(term in normalized_query for term in ("thi lai", "hoan thi"))
+    )
     force_direct_source = _should_search_cbgv_source_directly(query) or (
         context_audience == "cbgv"
         and context_information_need == "procedure_ui"
         and not _should_keep_cbgv_mapping_candidates(query)
     )
     chunks, doc_freq, total_docs = _load_business_index()
-    mappings = [] if force_direct_source else _mapping_candidates(query, chunks)
+    if force_direct_source or force_student_support_source:
+        source_marker = "web support sv" if force_student_support_source else "web support cbgv"
+        chunks = [
+            chunk for chunk in chunks
+            if source_marker in normalize_text(
+                " ".join([
+                    str(chunk.get("doc_name") or ""),
+                    str(chunk.get("relative_path") or ""),
+                ])
+            )
+        ]
+        doc_freq = Counter()
+        for chunk in chunks:
+            doc_freq.update(set(_meaningful_business_terms(chunk.get("content", ""))))
+        total_docs = len(chunks)
+    mappings = [] if (force_direct_source or force_student_support_source) else _mapping_candidates(query, chunks)
     selected_mapping = None
     mapping_rejected_reason = None
     rejected_mapping_count = 0
@@ -2960,7 +3049,7 @@ def search_business_sources(
     vector_error = None
     generic_hybrid_debug = {}
     retrieval_plan = _empty_retrieval_plan("not_needed")
-    final_search_query = query
+    final_search_query = retrieval_query
     source_chunks = []
     mapping_ambiguous = False
 
@@ -2977,7 +3066,7 @@ def search_business_sources(
         source_chunks = _source_chunks_for_mapping(selected_mapping, chunks)
         if source_chunks:
             final_results = _search_location_in_source(
-                query,
+                retrieval_query,
                 selected_mapping,
                 source_chunks,
                 limit,
@@ -2986,7 +3075,7 @@ def search_business_sources(
 
             if not final_results:
                 final_results = _search_keywords_in_source(
-                    query,
+                    retrieval_query,
                     selected_mapping,
                     source_chunks,
                     limit,
@@ -2995,7 +3084,7 @@ def search_business_sources(
 
             if not final_results:
                 final_results, vector_error = _search_vectors_in_source(
-                    query,
+                    retrieval_query,
                     selected_mapping,
                     source_chunks,
                     limit,
@@ -3018,7 +3107,7 @@ def search_business_sources(
 
     if not final_results and not mapping_ambiguous:
         final_results = _search_generic_business_chunks(
-            query,
+            retrieval_query,
             chunks,
             doc_freq,
             total_docs,

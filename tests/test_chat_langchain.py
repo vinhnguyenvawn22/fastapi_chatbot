@@ -13,7 +13,7 @@ from app.controller.document_controller import (
     _extract_document_number_from_filename,
     _is_ignored_document,
 )
-from app.data.prompt_builder import build_prompt
+from app.data.prompt_builder import build_context, build_prompt
 from app.data.trace_logger import RagTrace
 import app.data.elasticsearch_client as document_search
 import app.data.langchain_pipeline as langchain_pipeline
@@ -300,9 +300,617 @@ def test_aggregate_prefers_mapping_guided_business_answer(monkeypatch):
         )
     )
 
-    assert generated_docs == [[business_doc]]
+    assert len(generated_docs) == 1
+    assert [doc["doc_name"] for doc in generated_docs[0]] == [business_doc["doc_name"]]
+    assert generated_docs[0][0]["aggregate_route"] == "business"
     assert result["source"] == "Muc II -> 5 -> 5.3 -> a - ChatbotAI_CBGV_SV_V4.docx"
     assert result["answer"] == "Dung huong dan nghiep vu de lay lai mat khau Gmail."
+
+
+def test_exam_retake_procedure_uses_support_source_not_hoc_lai(monkeypatch):
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Mot cua -> Khao thi",
+        "content": (
+            "Dang ky thi lai la thu tuc Mot cua - Khao thi. "
+            "Buoc 1: Dang nhap he thong support. "
+            "Buoc 2: Chon Mot cua - Khao thi -> Dang ky thi lai. "
+            "Buoc 3: Gui yeu cau."
+        ),
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "relative_path": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "chunk_index": 10,
+        "keyword_score": 300.0,
+    }
+    internal_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 11. Dang ky hoc lai, hoc cai thien diem",
+        "content": "Sinh vien dang ky hoc lai hoac hoc cai thien diem theo quy che dao tao.",
+        "doc_name": "quy-che-dao-tao.docx",
+        "relative_path": "quy-che-dao-tao.docx",
+        "chunk_index": 11,
+        "keyword_score": 200.0,
+    }
+
+    async def fake_business(state):
+        return {
+            **state,
+            "docs": [business_doc],
+            "retrieval_debug": {
+                "mapping_selected": True,
+                "retrieval_method": "keyword",
+                "information_need": "procedure_ui",
+            },
+        }
+
+    async def fake_internal(state):
+        return {**state, "docs": [internal_doc], "retrieval_debug": {}}
+
+    async def fake_generate(state):
+        raise AssertionError("Exam retake procedure should not be generated from hoc-lai internal docs")
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_business", fake_business)
+    monkeypatch.setattr(chatbot_controller, "retrieve_internal", fake_internal)
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_has_confident_evidence",
+        lambda question, docs: (bool(docs), "mock"),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_filter_usable_sources",
+        lambda question, docs: (docs, []),
+    )
+
+    result = asyncio.run(
+        chatbot_controller._answer_with_aggregate_documents(
+            RagTrace("huong dan dang ki thi lai"),
+            "huong dan dang ki thi lai",
+            "internal_document",
+            "document_terms",
+        )
+    )
+
+    assert result["source"] == "Mot cua -> Khao thi - 2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx"
+    assert result["sources"][0]["doc_name"] == "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx"
+    assert "dang-ky-thi-lai" in result["answer"]
+    assert "hoc lai" not in chatbot_controller.normalize_text(result["answer"])
+
+
+def test_cancel_exam_retake_procedure_uses_cancel_support_source(monkeypatch):
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Mot cua -> Khao thi -> Huy dang ky thi lai",
+        "content": (
+            "Huy dang ky thi lai cho phep sinh vien gui yeu cau. "
+            "Buoc 1: Dang nhap he thong support. "
+            "Buoc 2: Chon Mot cua - Khao thi -> Huy dang ky thi lai. "
+            "Buoc 3: Gui yeu cau."
+        ),
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "relative_path": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "chunk_index": 16,
+        "keyword_score": 300.0,
+    }
+
+    async def fake_business(state):
+        return {
+            **state,
+            "docs": [business_doc],
+            "retrieval_debug": {
+                "mapping_selected": True,
+                "retrieval_method": "keyword",
+                "information_need": "procedure_ui",
+            },
+        }
+
+    async def fake_internal(state):
+        return {**state, "docs": [], "retrieval_debug": {}}
+
+    async def fake_generate(state):
+        raise AssertionError("Cancel exam retake should use the support source directly")
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_business", fake_business)
+    monkeypatch.setattr(chatbot_controller, "retrieve_internal", fake_internal)
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_has_confident_evidence",
+        lambda question, docs: (bool(docs), "mock"),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_filter_usable_sources",
+        lambda question, docs: (docs, []),
+    )
+
+    result = asyncio.run(
+        chatbot_controller._answer_with_aggregate_documents(
+            RagTrace("toi muon huy dang ki thi lai lam the nao"),
+            "toi muon huy dang ki thi lai lam the nao",
+            "internal_document",
+            "document_terms",
+        )
+    )
+
+    assert "huy-dang-ky-thi-lai" in result["answer"]
+    assert result["sources"][0]["chunk_index"] == 16
+
+
+def test_aggregate_soft_merge_keeps_internal_and_business_sources(monkeypatch):
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Web Support - Hoan thi",
+        "content": "Huong dan sinh vien vao Mot cua - Khao thi de gui yeu cau hoan thi tren support.",
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "relative_path": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "chunk_index": 15,
+        "keyword_score": 120.0,
+    }
+    internal_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 15. Thi ket thuc hoc phan",
+        "content": "Sinh vien vang mat du thi co ly do chinh dang duoc phep hoan thi theo quy che dao tao.",
+        "doc_name": "quy-che-dao-tao.docx",
+        "relative_path": "quy-che-dao-tao.docx",
+        "chunk_index": 30,
+        "keyword_score": 115.0,
+    }
+    generated_docs = []
+
+    async def fake_business(state):
+        return {
+            **state,
+            "docs": [business_doc],
+            "retrieval_debug": {
+                "mapping_selected": True,
+                "retrieval_method": "keyword",
+                "information_need": "procedure_ui",
+            },
+        }
+
+    async def fake_internal(state):
+        return {**state, "docs": [internal_doc], "retrieval_debug": {}}
+
+    async def fake_generate(state):
+        generated_docs.append(state["docs"])
+        return {**state, "answer": "Sinh vien can xem quy dinh hoan thi va gui yeu cau tren support."}
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_business", fake_business)
+    monkeypatch.setattr(chatbot_controller, "retrieve_internal", fake_internal)
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_has_confident_evidence",
+        lambda question, docs: (bool(docs), "mock"),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_filter_usable_sources",
+        lambda question, docs: (docs, []),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "rerank_chunks",
+        lambda question, docs: (docs, {"used": False, "reason": "mock"}),
+    )
+
+    result = asyncio.run(
+        chatbot_controller._answer_with_aggregate_documents(
+            RagTrace("toi muon biet dieu kien hoan thi va cach thuc hien tren support"),
+            "toi muon biet dieu kien hoan thi va cach thuc hien tren support",
+            "internal_document",
+            "document_terms",
+        )
+    )
+
+    assert len(generated_docs) == 1
+    assert {doc["source_type"] for doc in generated_docs[0]} == {
+        "business_document",
+        "official_document",
+    }
+    assert {source["source_type"] for source in result["sources"]} == {
+        "business_document",
+        "official_document",
+    }
+
+
+def test_diverse_aggregate_selection_limits_single_document_dominance():
+    same_doc_chunks = [
+        {
+            "source_type": "official_document",
+            "title": f"Dieu {index}",
+            "content": "Noi dung quy dinh lien quan",
+            "doc_name": "quy-che-a.docx",
+            "relative_path": "quy-che-a.docx",
+            "chunk_index": index,
+            "keyword_score": 100 - index,
+        }
+        for index in range(1, 6)
+    ]
+    other_doc = {
+        "source_type": "official_document",
+        "title": "Dieu khac",
+        "content": "Noi dung quy dinh lien quan tu tai lieu khac",
+        "doc_name": "quy-che-b.docx",
+        "relative_path": "quy-che-b.docx",
+        "chunk_index": 1,
+        "keyword_score": 90.0,
+    }
+
+    selected, debug = chatbot_controller._select_diverse_aggregate_sources(
+        "quy dinh dieu kien",
+        [],
+        same_doc_chunks + [other_doc],
+        query_context={"information_need": "policy_document"},
+        limit=5,
+    )
+
+    assert debug["doc_name_count"] >= 2
+    assert sum(1 for doc in selected if doc["doc_name"] == "quy-che-a.docx") <= 3
+    assert any(doc["doc_name"] == "quy-che-b.docx" for doc in selected)
+
+
+def test_internal_retrieval_defaults_to_official_document_filter(monkeypatch):
+    captured = {}
+
+    async def fake_search_documents(question, debug=None, source_type_filter=None, ambiguity_decision=None):
+        captured["source_type_filter"] = source_type_filter
+        if debug is not None:
+            debug["final_sources"] = []
+        return []
+
+    monkeypatch.setattr(langchain_pipeline, "search_documents", fake_search_documents)
+
+    result = asyncio.run(
+        langchain_pipeline.retrieve_internal({
+            "question": "toi muon hoan thi thi phai lam sao",
+            "reason": "test",
+            "trace_callback": None,
+        })
+    )
+
+    assert captured["source_type_filter"] == "official_document"
+    assert result["docs"] == []
+
+
+def test_build_context_accepts_chunk_override():
+    docs = [
+        {
+            "doc_name": f"doc-{index}.pdf",
+            "title": f"Dieu {index}",
+            "chunk_index": index,
+            "content": f"Noi dung chunk {index}",
+        }
+        for index in range(1, 6)
+    ]
+
+    context = build_context(docs, max_chunks=5)
+
+    assert context.count("<NGUON") == 5
+    assert 'ten_tai_lieu="doc-5.pdf"' in context
+
+
+def test_academic_policy_question_blocks_business_direct_answer(monkeypatch):
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Dang ky muon thiet bi",
+        "content": "Huong dan dang ky muon thiet bi phong hoc tren cong ho tro.",
+        "doc_name": "support-cbgv.docx",
+        "relative_path": "support-cbgv.docx",
+        "chunk_index": 1,
+        "keyword_score": 90.0,
+    }
+    internal_doc = {
+        "source_type": "official_document",
+        "title": "Hoan thi ket thuc hoc phan",
+        "content": (
+            "Sinh vien xin hoan thi ket thuc hoc phan phai thuc hien theo quy che "
+            "dao tao va quy dinh hoc vu cua nha truong."
+        ),
+        "doc_name": "quy-che-dao-tao.pdf",
+        "relative_path": "quy-che-dao-tao.pdf",
+        "chunk_index": 2,
+        "keyword_score": 80.0,
+    }
+    generated_docs = []
+
+    async def fake_business(state):
+        return {
+            **state,
+            "docs": [business_doc],
+            "retrieval_debug": {
+                "mapping_selected": True,
+                "retrieval_method": "location",
+                "mapping_gate_score": 100,
+            },
+        }
+
+    async def fake_internal(state):
+        assert state["source_type_filter"] == "official_document"
+        return {**state, "docs": [internal_doc], "retrieval_debug": {}}
+
+    async def fake_generate(state):
+        generated_docs.append(state["docs"])
+        return {**state, "answer": "Sinh vien thuc hien hoan thi theo quy che dao tao."}
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_business", fake_business)
+    monkeypatch.setattr(chatbot_controller, "retrieve_internal", fake_internal)
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_business_direct_answer",
+        lambda question, docs: "Direct business answer",
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_filter_usable_sources",
+        lambda question, docs: (docs, []),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_has_confident_evidence",
+        lambda question, docs: (bool(docs), "mock"),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "rerank_chunks",
+        lambda question, docs: (docs, {"used": False, "reason": "mock"}),
+    )
+
+    result = asyncio.run(
+        chatbot_controller._answer_with_aggregate_documents(
+            RagTrace("toi muon hoan thi thi phai lam sao"),
+            "toi muon hoan thi thi phai lam sao",
+            "internal_document",
+            "document_terms",
+        )
+    )
+
+    assert generated_docs
+    assert any(doc["doc_name"] == internal_doc["doc_name"] for doc in generated_docs[0])
+    assert result["answer"] == "Sinh vien thuc hien hoan thi theo quy che dao tao."
+    assert any(source["source_type"] == "official_document" for source in result["sources"])
+
+
+def test_attendance_exam_policy_drops_business_and_prefers_training_regulation(monkeypatch):
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Diem danh tren web support",
+        "content": "Huong dan sinh vien xem diem danh va so tiet vang tren web support.",
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "relative_path": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "chunk_index": 1,
+        "keyword_score": 100.0,
+    }
+    direct_internal = {
+        "source_type": "official_document",
+        "title": "Dieu 13. Danh gia hoc phan",
+        "content": (
+            "Sinh vien nghi hoc tren 50% so tiet trong chuong trinh se bi cam thi "
+            "ca ky thi chinh va ky thi phu, diem thi duoc tinh la 0 diem."
+        ),
+        "doc_name": "DHKTKTCN_PDT_QD_Quy che dao tao dai hoc chinh quy.docx",
+        "relative_path": "Phong Dao tao/DHKTKTCN_PDT_QD_Quy che dao tao dai hoc chinh quy.docx",
+        "chunk_index": 26,
+        "keyword_score": 100.0,
+    }
+    generic_internal = {
+        "source_type": "official_document",
+        "title": "Dieu 26. To chuc thuc hien",
+        "content": "Nghi hoc dai ngay khong ly do co the bi xu ly ky luat.",
+        "doc_name": "DHKTKTCN_PCTCTSV_Quy che Cong tac sinh vien.pdf",
+        "relative_path": "Phong CTCTSV/DHKTKTCN_PCTCTSV_Quy che Cong tac sinh vien.pdf",
+        "chunk_index": 59,
+        "keyword_score": 80.0,
+    }
+    generated_docs = []
+
+    async def fake_business(state):
+        return {
+            **state,
+            "docs": [business_doc],
+            "retrieval_debug": {
+                "mapping_selected": True,
+                "retrieval_method": "keyword",
+                "information_need": "policy_document",
+            },
+        }
+
+    async def fake_internal(state):
+        return {
+            **state,
+            "docs": [generic_internal, direct_internal],
+            "retrieval_debug": {},
+        }
+
+    async def fake_generate(state):
+        generated_docs.append(state["docs"])
+        return {**state, "answer": "Sinh vien nghi hoc tren 50% so tiet se bi cam thi."}
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_business", fake_business)
+    monkeypatch.setattr(chatbot_controller, "retrieve_internal", fake_internal)
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_filter_usable_sources",
+        lambda question, docs: (docs, []),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_has_confident_evidence",
+        lambda question, docs: (bool(docs), "mock"),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "rerank_chunks",
+        lambda question, docs: (docs, {"used": False, "reason": "mock"}),
+    )
+
+    result = asyncio.run(
+        chatbot_controller._answer_with_aggregate_documents(
+            RagTrace("nghi hoc khong phep co bi cam thi khong"),
+            "nghi hoc khong phep co bi cam thi khong",
+            "internal_document",
+            "document_terms",
+        )
+    )
+
+    assert len(generated_docs) == 1
+    assert [doc["title"] for doc in generated_docs[0]] == [direct_internal["title"]]
+    assert generated_docs[0][0]["aggregate_route"] == "internal"
+    assert result["sources"][0]["doc_name"].startswith("DHKTKTCN_PDT")
+    assert all(source["source_type"] != "business_document" for source in result["sources"])
+
+
+def test_absence_permission_comparison_does_not_select_final_exam_rule(monkeypatch):
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Diem danh tren web support",
+        "content": "Huong dan sinh vien xem diem danh va so tiet vang tren web support.",
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "relative_path": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "chunk_index": 1,
+        "keyword_score": 100.0,
+    }
+    attendance_internal = {
+        "source_type": "official_document",
+        "title": "Dieu 13. Danh gia hoc phan",
+        "content": (
+            "Diem chuyen can duoc danh gia theo thoi gian tham gia hoc tap tren lop. "
+            "Sinh vien nghi hoc tren 50% so tiet trong chuong trinh se bi cam thi."
+        ),
+        "doc_name": "DHKTKTCN_PDT_QD_Quy che dao tao dai hoc chinh quy.docx",
+        "relative_path": "Phong Dao tao/DHKTKTCN_PDT_QD_Quy che dao tao dai hoc chinh quy.docx",
+        "chunk_index": 26,
+        "keyword_score": 95.0,
+    }
+    final_exam_internal = {
+        "source_type": "official_document",
+        "title": "Dieu 15. Thi ket thuc hoc phan",
+        "content": (
+            "Sinh vien vang mat trong ky thi ket thuc hoc phan neu co ly do chinh dang "
+            "duoc du thi ky thi phu."
+        ),
+        "doc_name": "DHKTKTCN_PDT_QD_Quy che dao tao dai hoc chinh quy.docx",
+        "relative_path": "Phong Dao tao/DHKTKTCN_PDT_QD_Quy che dao tao dai hoc chinh quy.docx",
+        "chunk_index": 30,
+        "keyword_score": 120.0,
+    }
+    generated_docs = []
+
+    async def fake_business(state):
+        return {
+            **state,
+            "docs": [business_doc],
+            "retrieval_debug": {
+                "mapping_selected": True,
+                "retrieval_method": "keyword",
+                "information_need": "policy_document",
+            },
+        }
+
+    async def fake_internal(state):
+        return {
+            **state,
+            "docs": [final_exam_internal, attendance_internal],
+            "retrieval_debug": {},
+        }
+
+    async def fake_generate(state):
+        generated_docs.append(state["docs"])
+        return {**state, "answer": "Tai lieu neu cach tinh diem chuyen can theo so tiet vang."}
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_business", fake_business)
+    monkeypatch.setattr(chatbot_controller, "retrieve_internal", fake_internal)
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_has_confident_evidence",
+        lambda question, docs: (bool(docs), "mock"),
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "rerank_chunks",
+        lambda question, docs: (docs, {"used": False, "reason": "mock"}),
+    )
+
+    result = asyncio.run(
+        chatbot_controller._answer_with_aggregate_documents(
+            RagTrace("nghi hoc khong phep va nghi hoc co phep khac nhau nhung gi"),
+            "nghi hoc khong phep va nghi hoc co phep khac nhau nhung gi",
+            "internal_document",
+            "document_terms",
+        )
+    )
+
+    assert len(generated_docs) == 1
+    assert [doc["title"] for doc in generated_docs[0]] == ["Dieu 13. Danh gia hoc phan"]
+    assert result["sources"][0]["title"] == "Dieu 13. Danh gia hoc phan"
+    assert all(source["title"] != "Dieu 15. Thi ket thuc hoc phan" for source in result["sources"])
+    assert all(source["source_type"] != "business_document" for source in result["sources"])
+
+
+def test_absence_permission_comparison_partial_fallback_uses_attendance_evidence():
+    doc = {
+        "source_type": "official_document",
+        "title": "Dieu 13. Danh gia hoc phan",
+        "content": (
+            "Diem chuyen can duoc danh gia theo thoi gian tham gia hoc tap tren lop. "
+            "Co nghi hoc; nghi hoc duoi 10% so tiet trong chuong trinh duoc tinh 8 diem. "
+            "Nghi hoc tu 50% tro len: 0 diem. Sinh vien nghi hoc tren 50% so tiet se bi cam thi."
+        ),
+        "doc_name": "DHKTKTCN_PDT_QD_Quy che dao tao dai hoc chinh quy.docx",
+        "relative_path": "Phong Dao tao/DHKTKTCN_PDT_QD_Quy che dao tao dai hoc chinh quy.docx",
+        "chunk_index": 26,
+        "keyword_score": 95.0,
+    }
+
+    answer, docs = chatbot_controller._absence_permission_comparison_answer(
+        "nghi hoc khong phep va nghi hoc co phep khac nhau nhung gi",
+        [doc],
+    )
+
+    assert answer is not None
+    assert "chưa nêu rõ" in answer
+    assert "Nghỉ từ 50% trở lên: 0 điểm" in answer
+    assert docs == [doc]
+
+
+def test_absence_permission_comparison_fallback_keeps_support_and_policy_sources():
+    support_doc = {
+        "source_type": "business_document",
+        "title": "Theo doi diem danh",
+        "content": "He thong hien thi so tiet vang, nghi co phep va nghi khong phep cua sinh vien.",
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "relative_path": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "chunk_index": 9,
+        "keyword_score": 100.0,
+    }
+    policy_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 13. Danh gia hoc phan",
+        "content": (
+            "Diem chuyen can duoc danh gia theo thoi gian tham gia hoc tap tren lop. "
+            "Co nghi hoc; nghi hoc duoi 10% so tiet trong chuong trinh duoc tinh 8 diem. "
+            "Nghi hoc tu 50% tro len: 0 diem. Sinh vien nghi hoc tren 50% so tiet se bi cam thi."
+        ),
+        "doc_name": "DHKTKTCN_PDT_QD_Quy che dao tao dai hoc chinh quy.docx",
+        "relative_path": "Phong Dao tao/DHKTKTCN_PDT_QD_Quy che dao tao dai hoc chinh quy.docx",
+        "chunk_index": 26,
+        "keyword_score": 95.0,
+    }
+
+    answer, docs = chatbot_controller._absence_permission_comparison_answer(
+        "nghi hoc khong phep va nghi hoc co phep khac nhau nhung gi",
+        [support_doc, policy_doc],
+    )
+
+    assert answer is not None
+    assert "ghi nhận riêng" in answer
+    assert "không nêu" in answer
+    assert [doc["source_type"] for doc in docs] == ["business_document", "official_document"]
 
 
 def test_aggregate_rejects_keyword_false_positive_and_uses_internal(monkeypatch):
@@ -357,7 +965,10 @@ def test_aggregate_rejects_keyword_false_positive_and_uses_internal(monkeypatch)
         )
     )
 
-    assert generated_docs == [[internal_doc | {"lexical_coverage": 1.0}]]
+    assert len(generated_docs) == 1
+    assert [doc["doc_name"] for doc in generated_docs[0]] == [internal_doc["doc_name"]]
+    assert generated_docs[0][0]["lexical_coverage"] == 1.0
+    assert generated_docs[0][0]["aggregate_route"] == "internal"
     assert result["source"].endswith("mien-giam-hoc-phi.pdf")
     assert all(source["source_type"] != "business_document" for source in result["sources"])
 
@@ -583,7 +1194,7 @@ def test_probe_failure_returns_no_evidence_after_retrieval(monkeypatch):
     assert result["intent"] != "clarification_needed"
 
 
-def test_gemini_error_returns_unavailable_message_without_source_summary(monkeypatch):
+def test_gemini_error_uses_extractive_fallback_from_sources(monkeypatch):
     monkeypatch.setattr(
         langchain_pipeline,
         "ask_gemini",
@@ -603,15 +1214,14 @@ def test_gemini_error_returns_unavailable_message_without_source_summary(monkeyp
 
     result = asyncio.run(langchain_pipeline._generate_answer(state))
 
-    assert result["answer"] == langchain_pipeline.GEMINI_UNAVAILABLE_ANSWER
-    assert "Thông tin tóm tắt" not in result["answer"]
-    assert "Điều kiện tốt nghiệp" not in result["answer"]
+    assert "Sinh viên phải tích lũy" in result["answer"]
+    assert "Điều kiện tốt nghiệp" in result["answer"]
     assert traces[-1][1]["fallback_used"] is True
     assert traces[-1][1]["fallback_reason"] == "gemini_unavailable"
     assert "He thong AI dang ban" in traces[-1][1]["gemini_error_message"]
 
 
-def test_gemini_exception_returns_unavailable_message_without_source_summary(monkeypatch):
+def test_gemini_exception_uses_extractive_fallback_from_sources(monkeypatch):
     monkeypatch.setattr(
         langchain_pipeline,
         "ask_gemini",
@@ -627,8 +1237,8 @@ def test_gemini_exception_returns_unavailable_message_without_source_summary(mon
 
     result = asyncio.run(langchain_pipeline._generate_answer(state))
 
-    assert result["answer"] == langchain_pipeline.GEMINI_UNAVAILABLE_ANSWER
-    assert "Quy định camera" not in result["answer"]
+    assert "camera" in result["answer"]
+    assert "Quy định camera" in result["answer"]
 
 
 def test_hyde_only_source_requires_rerank_score(monkeypatch):

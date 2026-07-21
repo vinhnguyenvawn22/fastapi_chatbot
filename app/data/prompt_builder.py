@@ -31,12 +31,13 @@ def _reorder_for_generation(docs):
     return front + list(reversed(back))
 
 
-def build_context(docs):
+def build_context(docs, max_chunks: int | None = None):
     """Ghep cac chunk truy xuat duoc thanh khoi context co the nguon cho LLM."""
     context_parts = []
     current_length = 0
+    chunk_limit = max_chunks or MAX_CONTEXT_CHUNKS
 
-    for index, doc in enumerate(_reorder_for_generation(docs[:MAX_CONTEXT_CHUNKS]), start=1):
+    for index, doc in enumerate(_reorder_for_generation(docs[:chunk_limit]), start=1):
         file_name = doc.get("doc_name", "unknown")
         section_name = doc.get("title", "Khong ro muc")
         chunk_index = doc.get("chunk_index", "unknown")
@@ -51,6 +52,10 @@ def build_context(docs):
         relative_path = doc.get("relative_path") or ""
         url = doc.get("url") or ""
         attachment_url = doc.get("attachment_url") or ""
+        source_type = doc.get("source_type") or ""
+        aggregate_score = doc.get("aggregate_score") or ""
+        evidence_aspect = doc.get("evidence_aspect") or ""
+        coverage_aspects = ",".join(doc.get("coverage_aspects") or [])
 
         block = (
             f'<NGUON id="{index}" ten_tai_lieu="{file_name}" '
@@ -59,7 +64,9 @@ def build_context(docs):
             f'ngay_ban_hanh="{ngay_ban_hanh}" ngay_hieu_luc="{ngay_hieu_luc}" '
             f'loai_van_ban="{loai_van_ban}" don_vi_ban_hanh="{don_vi_ban_hanh}" '
             f'phong_ban="{phong_ban}" relative_path="{relative_path}" '
-            f'url="{url}" attachment_url="{attachment_url}">\n'
+            f'url="{url}" attachment_url="{attachment_url}" '
+            f'source_type="{source_type}" diem_tong_hop="{aggregate_score}" '
+            f'khia_canh="{evidence_aspect}" phu_khia_canh="{coverage_aspects}">\n'
             f'{content}\n'
             f'</NGUON>'
         )
@@ -162,6 +169,12 @@ Trả lời trực tiếp vào nội dung người dùng hỏi.
 Ưu tiên ngắn gọn, rõ ràng.
 Với câu hỏi về quy trình, điều kiện, hồ sơ, thủ tục hoặc quy định, trình bày bằng các gạch đầu dòng ngắn.
 Có thể tổng hợp thông tin từ nhiều đoạn tài liệu để tạo thành câu trả lời mạch lạc hơn.
+Khi câu hỏi có nhiều khía cạnh, hãy dùng nhiều thẻ <NGUON> phù hợp thay vì chỉ bám vào nguồn đầu tiên.
+Nếu có cả nguồn quy định/chính sách và nguồn hướng dẫn thủ tục, hãy tổng hợp theo từng phần: quy định/điều kiện, cách thực hiện, lưu ý.
+Với câu hỏi so sánh, hãy trả lời theo bảng hoặc theo từng tiêu chí nếu tài liệu cung cấp đủ căn cứ.
+Nếu các thẻ <NGUON> có thuộc tính khia_canh/phu_khia_canh, hãy cố gắng bao phủ các khía cạnh đó trong câu trả lời.
+Với câu hỏi so sánh hoặc tổng hợp nhiều ý, không được kết luận "không tìm thấy căn cứ đủ rõ" nếu trong context có ít nhất một nguồn cho từng phần liên quan; thay vào đó trả lời phần có căn cứ và nêu rõ phần nào tài liệu chưa nói trực tiếp.
+Nếu context có cả source_type="business_document" hoặc "business_faq_mapping" và source_type="official_document", hãy dùng nguồn nghiệp vụ cho thao tác/hệ thống, dùng nguồn chính thức cho quy định/điều kiện/chế tài.
 Không sao chép nguyên văn cả đoạn dài từ tài liệu nếu không cần thiết.
 Phải giữ nguyên các nội dung cần độ chính xác tuyệt đối như:
 Tên biểu mẫu

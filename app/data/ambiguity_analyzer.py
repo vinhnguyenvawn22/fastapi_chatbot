@@ -5,17 +5,15 @@ import json
 import re
 import time
 
-from google import genai
-
 from app.core.config import (
     AMBIGUITY_CACHE_MAX_ITEMS,
     AMBIGUITY_CACHE_TTL_SECONDS,
     AMBIGUITY_CLARIFY_THRESHOLD,
     AMBIGUITY_LLM_ENABLED,
-    GEMINI_API_KEY,
     HYDE_MIN_TOPIC_CONFIDENCE,
     HYDE_MODEL,
 )
+from app.data.gemini_client import generate_content
 from app.data.query_analyzer import extract_metadata_constraints, normalize_text
 
 
@@ -24,7 +22,6 @@ HYDE_RETRIEVAL = "hyde_retrieval"
 PROBE_RETRIEVAL = "probe_retrieval"
 CLARIFICATION_NEEDED = "clarification_needed"
 
-_client = genai.Client(api_key=GEMINI_API_KEY)
 _CACHE = OrderedDict()
 
 TOPIC_TERMS = {
@@ -210,7 +207,7 @@ Quy tắc:
 
 Câu hỏi: {question}
 """.strip()
-    response = _client.models.generate_content(model=HYDE_MODEL, contents=prompt)
+    response = generate_content(model=HYDE_MODEL, contents=prompt)
     return _parse_llm_decision(response.text or "")
 
 

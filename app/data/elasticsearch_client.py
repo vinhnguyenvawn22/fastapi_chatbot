@@ -271,6 +271,220 @@ def apply_uneti_query_expansion(query: str) -> str:
     return " ".join(dict.fromkeys(expanded_terms))
 
 
+def _academic_policy_retrieval_query(query: str) -> str:
+    normalized_query = normalize_text(query)
+    expanded_terms = [query]
+    profile = _policy_query_profile(query)
+
+    if "thi lai" in normalized_query or ("thi" in normalized_query and "lai" in normalized_query):
+        expanded_terms.append(
+            "dang ky thi lai ky thi lai du thi lai lich thi lai hoc phan "
+            "khao thi thi ket thuc hoc phan"
+        )
+
+    if "hoan thi" in normalized_query or ("thi" in normalized_query and "hoan" in normalized_query):
+        expanded_terms.append(
+            "vang mat du thi co ly do chinh dang don xin hoan thi diem I "
+            "ky thi phu danh gia hoc phan quy che dao tao dai hoc chinh quy"
+        )
+
+    if profile == "attendance_exam_eligibility":
+        expanded_terms.append(
+            "diem chuyen can nghi hoc tren 50 phan tram so tiet trong chuong trinh "
+            "bi cam thi ca ky thi chinh va ky thi phu diem thi tinh la 0 diem "
+            "danh gia hoc phan quy che dao tao dai hoc chinh quy"
+        )
+    elif profile == "absence_permission_comparison":
+        expanded_terms.append(
+            "nghi hoc co phep nghi hoc khong phep so tiet vang diem chuyen can "
+            "danh gia hoc phan hoc tap tren lop quy che dao tao dai hoc chinh quy dieu 13"
+        )
+
+    if any(term in normalized_query for term in ("ra truong", "tot nghiep", "chung chi", "chuan dau ra")):
+        expanded_terms.append(
+            "dieu kien xet tot nghiep cong nhan tot nghiep chung chi ngoai ngu "
+            "chung chi tin hoc chuan dau ra quy che dao tao dai hoc chinh quy dieu 24"
+        )
+
+    return " ".join(dict.fromkeys(expanded_terms))
+
+
+def _policy_query_profile(query: str) -> str | None:
+    normalized_query = normalize_text(query)
+    asks_attendance_exam = any(
+        term in normalized_query
+        for term in (
+            "cam thi",
+            "bi cam thi",
+            "khong duoc thi",
+            "du thi",
+            "duoc thi",
+            "diem chuyen can",
+            "so tiet",
+            "so tiet vang",
+            "ty le vang",
+            "nghi hoc tren",
+            "tren 50",
+            "qua 50",
+        )
+    )
+    asks_absence_comparison = (
+        "nghi hoc" in normalized_query
+        and any(term in normalized_query for term in ("co phep", "khong phep"))
+        and any(
+            term in normalized_query
+            for term in ("khac nhau", "khac gi", "phan biet", "so sanh", "nhung gi")
+        )
+    )
+
+    if "thi lai" in normalized_query or ("thi" in normalized_query and "lai" in normalized_query):
+        return "exam_retake"
+    if "hoan thi" in normalized_query or ("thi" in normalized_query and "hoan" in normalized_query):
+        return "exam_defer"
+    if asks_absence_comparison and not asks_attendance_exam:
+        return "absence_permission_comparison"
+    if (
+        "diem chuyen can" in normalized_query
+        or "cam thi" in normalized_query
+        or "khong duoc thi" in normalized_query
+        or "du thi" in normalized_query
+    ) and (
+        "nghi hoc" in normalized_query
+        or "vang" in normalized_query
+        or "chuyen can" in normalized_query
+        or "so tiet" in normalized_query
+    ):
+        return "attendance_exam_eligibility"
+    if any(term in normalized_query for term in ("ra truong", "tot nghiep", "chung chi", "chuan dau ra")):
+        return "graduation_requirements"
+    if (
+        "nghi hoc" in normalized_query
+        and asks_attendance_exam
+    ):
+        return "attendance_exam_eligibility"
+    return None
+
+
+def _effective_final_top_k(question: str, source_type_filter: str | None) -> int:
+    base_top_k = min(CROSS_ENCODER_FINAL_TOP_K, SEARCH_TOP_K)
+    if source_type_filter == "official_document" and _policy_query_profile(question):
+        return max(base_top_k, 8)
+    return base_top_k
+
+
+def _policy_rerank_pool_size(question: str, final_top_k: int) -> int:
+    if _policy_query_profile(question):
+        return max(final_top_k, 16)
+    return final_top_k
+
+
+def _policy_result_priority(question: str, doc: dict) -> int:
+    profile = _policy_query_profile(question)
+    if not profile:
+        return 0
+
+    searchable = normalize_text(" ".join(
+        str(doc.get(field) or "")
+        for field in ("doc_name", "title", "relative_path", "phong_ban", "content")
+    ))
+    metadata_text = normalize_text(" ".join(
+        str(doc.get(field) or "")
+        for field in ("doc_name", "title", "relative_path", "phong_ban")
+    ))
+    score = 0
+
+    if "quy che dao tao dai hoc chinh quy" in searchable or "quy che dao tao dai hoc" in searchable:
+        score += 60
+    if "pdt" in searchable or "phong dao tao" in searchable:
+        score += 20
+    if "thac si" in searchable and "thac si" not in normalize_text(question):
+        score -= 45
+    if any(term in searchable for term in ("cntt", "khcn", "thiet bi", "phong hoc", "tuyen sinh")):
+        score -= 35
+
+    if profile == "attendance_exam_eligibility":
+        if "nghi hoc tren 50" in searchable and "cam thi" in searchable:
+            score += 120
+        if "diem chuyen can" in searchable:
+            score += 60
+        if "danh gia hoc phan" in searchable or "diem hoc phan" in searchable:
+            score += 35
+        if doc.get("dieu") == 13:
+            score += 35
+        if "quy che cong tac sinh vien" in searchable:
+            score -= 40
+        if "thi ket thuc hoc phan" in searchable and "diem chuyen can" not in searchable:
+            score -= 45
+    elif profile == "absence_permission_comparison":
+        if "diem chuyen can" in searchable:
+            score += 85
+        if "nghi hoc" in searchable and any(term in searchable for term in ("so tiet", "vang", "co phep", "khong phep")):
+            score += 65
+        if "danh gia hoc phan" in searchable:
+            score += 45
+        if doc.get("dieu") == 13:
+            score += 45
+        if "thi ket thuc hoc phan" in metadata_text or doc.get("dieu") == 15:
+            score -= 90
+        if "vang mat trong ky thi" in metadata_text:
+            score -= 100
+        if any(term in metadata_text for term in ("diem ren luyen", "cong tac sinh vien", "ngoai tru")):
+            score -= 70
+    elif profile == "exam_retake":
+        if any(term in searchable for term in ("dang ky thi lai", "thi lai", "du thi lai", "ky thi lai")):
+            score += 100
+        if "khao thi" in searchable or "thi ket thuc hoc phan" in searchable:
+            score += 25
+        if any(
+            term in metadata_text
+            for term in (
+                "dang ky hoc lai",
+                "hoc cai thien",
+                "chuan dau ra",
+                "diem ren luyen",
+                "cong tac sinh vien",
+                "khcn",
+                "nghien cuu",
+                "de an tot nghiep",
+                "xay dung",
+                "tham dinh",
+            )
+        ):
+            score -= 90
+    elif profile == "exam_defer":
+        if "diem i" in searchable or "duoc phep hoan thi" in searchable:
+            score += 100
+        if "thi ket thuc hoc phan" in searchable:
+            score += 35
+    elif profile == "graduation_requirements":
+        if "dieu kien xet tot nghiep" in searchable or "cong nhan tot nghiep" in searchable:
+            score += 100
+        if "chung chi" in searchable and any(term in searchable for term in ("ngoai ngu", "tin hoc")):
+            score += 45
+        if doc.get("dieu") == 24:
+            score += 30
+
+    return score
+
+
+def _prioritize_policy_results(question: str, docs: list[dict]) -> list[dict]:
+    if not _policy_query_profile(question):
+        return docs
+
+    return sorted(
+        docs,
+        key=lambda doc: (
+            _policy_result_priority(question, doc),
+            doc.get("metadata_matched", False),
+            float(doc.get("rerank_score", float("-inf"))),
+            float(doc.get("keyword_score") or 0),
+            float(doc.get("vector_score") or 0),
+            float(doc.get("rrf_score") or 0),
+        ),
+        reverse=True,
+    )
+
+
 def get_keywords(text: str):
     """Tách text thành các keyword đã chuẩn hóa, bỏ stop words và từ quá ngắn."""
     normalized = normalize_text(text)
@@ -416,13 +630,16 @@ def _search_cache_key(
     source_type_filter: str | None,
     signature,
     retrieval_action: str = DIRECT_RETRIEVAL,
+    final_top_k: int | None = None,
+    retrieval_query: str | None = None,
 ):
     return (
         normalize_text(question),
+        normalize_text(retrieval_query or question),
         source_type_filter or "",
         retrieval_action,
         signature,
-        SEARCH_TOP_K,
+        final_top_k or SEARCH_TOP_K,
     )
 
 
@@ -446,6 +663,12 @@ def _set_search_cache(key, results):
 
     while len(_SEARCH_CACHE) > RETRIEVAL_CACHE_MAX_ITEMS:
         _SEARCH_CACHE.popitem(last=False)
+
+
+def _filter_results_by_source_type(results: list[dict], source_type_filter: str | None) -> list[dict]:
+    if not source_type_filter:
+        return results
+    return [doc for doc in results if doc.get("source_type") == source_type_filter]
 
 
 def _extract_document_number_query(question: str) -> str | None:
@@ -1001,12 +1224,16 @@ async def search_documents(
             "reason": "hyde_llm_disabled_for_cap_two",
         }
         ambiguity_action = DIRECT_RETRIEVAL
+    retrieval_query = _academic_policy_retrieval_query(question)
+    effective_final_top_k = _effective_final_top_k(question, source_type_filter)
     signature = _current_document_signature()
     cache_key = _search_cache_key(
         question,
         source_type_filter,
         signature,
         ambiguity_action,
+        effective_final_top_k,
+        retrieval_query,
     )
     cached_results = _get_search_cache(cache_key)
     if cached_results is not None:
@@ -1048,9 +1275,9 @@ async def search_documents(
             })
         return cached_results
 
-    candidate_limit = max(RRF_CANDIDATE_TOP_K, SEARCH_TOP_K)
+    candidate_limit = max(RRF_CANDIDATE_TOP_K, effective_final_top_k)
     metadata_results, metadata_constraints = _search_metadata_documents(
-        question, candidate_limit
+        retrieval_query, candidate_limit
     )
 
     # Exact document-number requests must never fall through to a different document.
@@ -1062,6 +1289,8 @@ async def search_documents(
                 "cache_hit": False,
                 "metadata_constraints": metadata_constraints,
                 "source_type_filter": source_type_filter,
+                "final_search_query": retrieval_query,
+                "effective_final_top_k": effective_final_top_k,
                 "metadata_results_count": 0,
                 "expanded_queries": [question],
                 "expansion": {
@@ -1084,6 +1313,7 @@ async def search_documents(
             debug.update({
                 "cache_hit": False,
                 "ambiguity": ambiguity_decision,
+                "final_search_query": retrieval_query,
                 "fallback_reason": "clarification_bypassed_for_retrieval",
             })
 
@@ -1141,7 +1371,7 @@ async def search_documents(
     bm25_error = None
     try:
         bm25_results = _search_bm25_documents(
-            question,
+            retrieval_query,
             min(BM25_TOP_K, candidate_limit),
             source_type_filter,
         )
@@ -1162,10 +1392,11 @@ async def search_documents(
     ann_original_error = None
     try:
         ann_original = search_similar_chunks(
-            question,
+            retrieval_query,
             top_k=min(ANN_TOP_K, candidate_limit),
             metadata_filter=metadata_filter if metadata_filter else None,
         )
+        ann_original = _filter_results_by_source_type(ann_original, source_type_filter)
     except Exception as exc:
         ann_original_error = str(exc)
         vector_errors.append({"branch": "ann_original", "error": ann_original_error})
@@ -1248,6 +1479,10 @@ async def search_documents(
                     top_k=min(GROUNDED_HYDE_ANN_TOP_K, candidate_limit),
                     metadata_filter=metadata_filter if metadata_filter else None,
                 )
+                ann_grounded_hyde = _filter_results_by_source_type(
+                    ann_grounded_hyde,
+                    source_type_filter,
+                )
             except Exception as exc:
                 grounded_error = str(exc)
                 fallback_reason = "grounded_hyde_ann_error_original_retrieval"
@@ -1288,6 +1523,7 @@ async def search_documents(
                     top_k=min(HYDE_ANN_TOP_K, candidate_limit),
                     metadata_filter=metadata_filter if metadata_filter else None,
                 )
+                ann_hyde = _filter_results_by_source_type(ann_hyde, source_type_filter)
             except Exception as exc:
                 hyde_error = str(exc)
                 vector_errors.append({"branch": "ann_hyde", "error": hyde_error})
@@ -1317,8 +1553,12 @@ async def search_documents(
         final_results, rerank_debug = rerank_documents(
             question,
             rrf_results,
-            final_top_k=min(CROSS_ENCODER_FINAL_TOP_K, SEARCH_TOP_K),
+            final_top_k=_policy_rerank_pool_size(question, effective_final_top_k),
         )
+        final_results = _prioritize_policy_results(
+            question,
+            final_results,
+        )[:effective_final_top_k]
         for doc in final_results:
             branches = set(doc.get("retrieval_branches") or [])
             doc["hyde_only"] = branches in (
@@ -1337,6 +1577,8 @@ async def search_documents(
             "cache_hit": False,
             "metadata_constraints": metadata_constraints,
             "source_type_filter": source_type_filter,
+            "final_search_query": retrieval_query,
+            "effective_final_top_k": effective_final_top_k,
             "metadata_results_count": len(metadata_results),
             "ambiguity": ambiguity_decision,
             "probe_retrieval": probe_debug,

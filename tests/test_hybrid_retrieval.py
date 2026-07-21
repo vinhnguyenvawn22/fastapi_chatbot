@@ -159,6 +159,80 @@ def test_cross_encoder_success_reorders_candidates(monkeypatch):
     assert results[0]["rerank_score"] == 0.9
 
 
+def test_attendance_exam_policy_query_uses_expanded_query_and_wider_top_k():
+    question = "nghi hoc khong phep co bi cam thi khong"
+    expanded = retrieval._academic_policy_retrieval_query(question)
+
+    assert "diem chuyen can" in expanded
+    assert "nghi hoc tren 50" in expanded
+    assert retrieval._policy_query_profile(question) == "attendance_exam_eligibility"
+    assert retrieval._effective_final_top_k(question, "official_document") >= 8
+
+
+def test_absence_permission_comparison_is_not_final_exam_profile():
+    question = "nghi hoc khong phep va nghi hoc co phep khac nhau nhung gi"
+    expanded = retrieval._academic_policy_retrieval_query(question)
+
+    assert retrieval._policy_query_profile(question) == "absence_permission_comparison"
+    assert "diem chuyen can" in expanded
+    assert "dieu 13" in expanded
+    assert "ky thi phu" not in expanded
+    assert retrieval._effective_final_top_k(question, "official_document") >= 8
+
+
+def test_exam_retake_policy_query_does_not_expand_to_hoc_lai():
+    question = "huong dan dang ky thi lai"
+    expanded = retrieval._academic_policy_retrieval_query(question)
+
+    assert retrieval._policy_query_profile(question) == "exam_retake"
+    assert "dang ky thi lai" in expanded
+    assert "hoc lai" not in expanded
+    assert "hoc cai thien" not in expanded
+    assert "dieu 11" not in expanded
+
+
+def test_policy_priority_prefers_direct_attendance_exam_source():
+    question = "nghi hoc khong phep co bi cam thi khong"
+    direct_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy.docx",
+        "title": "Dieu 13. Danh gia hoc phan",
+        "content": "Sinh vien nghi hoc tren 50% so tiet trong chuong trinh se bi cam thi.",
+        "keyword_score": 10,
+    }
+    generic_doc = {
+        "doc_name": "DHKTKTCN_PCTCTSV_Quy che Cong tac sinh vien.pdf",
+        "title": "Dieu 26. To chuc thuc hien",
+        "content": "Nghi hoc dai ngay khong ly do bi xu ly ky luat.",
+        "keyword_score": 50,
+    }
+
+    results = retrieval._prioritize_policy_results(question, [generic_doc, direct_doc])
+
+    assert results[0]["doc_name"].startswith("DHKTKTCN_PDT")
+
+
+def test_policy_priority_rejects_final_exam_for_absence_comparison():
+    question = "nghi hoc khong phep va nghi hoc co phep khac nhau nhung gi"
+    attendance_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy.docx",
+        "title": "Dieu 13. Danh gia hoc phan",
+        "content": "Diem chuyen can can cu so tiet vang, nghi hoc trong chuong trinh hoc tap tren lop.",
+        "dieu": 13,
+        "keyword_score": 10,
+    }
+    final_exam_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy.docx",
+        "title": "Dieu 15. Thi ket thuc hoc phan",
+        "content": "Sinh vien vang mat trong ky thi ket thuc hoc phan phai du thi ky thi phu.",
+        "dieu": 15,
+        "keyword_score": 80,
+    }
+
+    results = retrieval._prioritize_policy_results(question, [final_exam_doc, attendance_doc])
+
+    assert results[0]["title"] == "Dieu 13. Danh gia hoc phan"
+
+
 def test_hybrid_pipeline_traces_all_steps_and_ann_fallback(monkeypatch):
     bm25_doc = _doc("bm25.pdf", 1, bm25_score=12, keyword_score=12, score=12)
     monkeypatch.setattr(retrieval, "_current_document_signature", lambda: ("sig",))

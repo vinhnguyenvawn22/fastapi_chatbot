@@ -128,10 +128,11 @@ def _trace_hybrid_retrieval(state: PipelineState, debug: dict) -> None:
 
 async def _retrieve_internal(state: PipelineState) -> PipelineState:
     debug = {}
+    source_type_filter = state.get("source_type_filter") or "official_document"
     docs = await search_documents(
         state["question"],
         debug=debug,
-        source_type_filter=state.get("source_type_filter"),
+        source_type_filter=source_type_filter,
         ambiguity_decision=state.get("ambiguity_decision"),
     )
     _trace_hybrid_retrieval(state, debug)
@@ -151,6 +152,12 @@ async def _retrieve_business(state: PipelineState) -> PipelineState:
         debug,
         state.get("query_context"),
     )
+    docs = [
+        doc for doc in docs
+        if doc.get("source_type") in {"business_document", "business_faq_mapping"}
+        or normalize_text(doc.get("source_root", "")) == "nghiep_vu"
+        or "web support" in normalize_text(doc.get("doc_name", ""))
+    ]
     _trace(state, "business_retrieval_plan", {
         "retrieval_plan": debug.get("retrieval_plan"),
         "retrieval_plan_parse_error": debug.get("retrieval_plan_parse_error"),
@@ -201,7 +208,7 @@ async def _retrieve_website(state: PipelineState) -> PipelineState:
 
 def _build_generation_prompt(state: PipelineState) -> PipelineState:
     docs = state.get("docs") or []
-    context = build_context(docs)
+    context = build_context(docs, max_chunks=state.get("max_context_chunks"))
     retrieval_plan = (state.get("retrieval_debug") or {}).get("retrieval_plan")
     if state.get("prompt_type") == "website":
         prompt = build_website_prompt(
@@ -223,6 +230,9 @@ def _build_generation_prompt(state: PipelineState) -> PipelineState:
                 "doc_name": doc.get("doc_name"),
                 "title": doc.get("title"),
                 "chunk_index": doc.get("chunk_index"),
+                "source_type": doc.get("source_type"),
+                "aggregate_route": doc.get("aggregate_route"),
+                "aggregate_score": doc.get("aggregate_score"),
                 "bm25_score": doc.get("bm25_score"),
                 "vector_score": doc.get("vector_score"),
                 "rrf_score": doc.get("rrf_score"),

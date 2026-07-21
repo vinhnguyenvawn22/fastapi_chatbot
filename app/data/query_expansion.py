@@ -1,19 +1,14 @@
 import json
 import re
 
-from google import genai
-
 from app.core.config import (
-    GEMINI_API_KEY,
     QUERY_EXPANSION_ENABLED,
     QUERY_EXPANSION_MAX_VARIANTS,
     QUERY_EXPANSION_MAX_WORDS,
     QUERY_EXPANSION_MODEL,
 )
+from app.data.gemini_client import generate_content
 from app.data.query_analyzer import extract_metadata_constraints, normalize_text
-
-
-_client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 def should_expand_query(question: str) -> tuple[bool, str]:
@@ -87,7 +82,7 @@ Yêu cầu:
 Câu hỏi: {question}
 """.strip()
 
-    response = _client.models.generate_content(
+    response = generate_content(
         model=QUERY_EXPANSION_MODEL,
         contents=prompt,
     )
