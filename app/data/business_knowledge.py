@@ -1893,6 +1893,7 @@ def _context_cache_key(query_context: dict | None) -> tuple:
         context.get("audience_hint") or "unknown",
         context.get("audience_source") or "unknown",
         context.get("information_need") or "unknown",
+        bool(context.get("skip_retrieval_plan_llm")),
     )
 
 
@@ -2099,7 +2100,12 @@ def _mapping_gate_decision(
             "information_need": information_need,
         }
 
-    if len(query_terms) >= 2 and len(overlap_terms) < BUSINESS_MAPPING_MIN_TOPIC_OVERLAP and BUSINESS_MAPPING_LLM_JUDGE_ENABLED:
+    if (
+        len(query_terms) >= 2
+        and len(overlap_terms) < BUSINESS_MAPPING_MIN_TOPIC_OVERLAP
+        and BUSINESS_MAPPING_LLM_JUDGE_ENABLED
+        and not (query_context or {}).get("skip_retrieval_plan_llm")
+    ):
         judge = _judge_mapping_with_llm(query, mapping, topic_overlap)
         return {
             **judge,
@@ -3091,7 +3097,11 @@ def search_business_sources(
                 )
                 retrieval_method = "vector" if final_results else None
     if not final_results and not mapping_ambiguous:
-        retrieval_plan = _generate_business_retrieval_plan(query)
+        if (query_context or {}).get("skip_retrieval_plan_llm"):
+            retrieval_plan = _empty_retrieval_plan("skipped_for_multihop")
+            retrieval_plan["query"] = query
+        else:
+            retrieval_plan = _generate_business_retrieval_plan(query)
         final_search_query = _plan_search_query(query, retrieval_plan)
         if final_search_query:
             final_results = _search_generic_business_hybrid(

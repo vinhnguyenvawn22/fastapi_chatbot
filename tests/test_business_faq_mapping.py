@@ -203,6 +203,29 @@ def test_retrieval_plan_invalid_json_falls_back_safely(monkeypatch):
     assert plan["parse_error"]
 
 
+def test_multihop_business_search_skips_llm_retrieval_plan(monkeypatch):
+    clear_business_knowledge_cache()
+
+    def fail_if_called(prompt):
+        raise AssertionError("multi-hop business retrieval must not call Gemini plan")
+
+    monkeypatch.setattr("app.data.business_knowledge.ask_gemini", fail_if_called)
+
+    debug = {}
+    docs = search_business_sources(
+        "mot cau hoi nghiep vu rat la khac biet xyzabc",
+        debug=debug,
+        query_context={"skip_retrieval_plan_llm": True},
+    )
+
+    assert isinstance(docs, list)
+    assert debug["retrieval_plan"]["status"] in {
+        "not_needed",
+        "skipped_for_multihop",
+    }
+    assert debug["retrieval_plan"].get("llm_called") is False
+
+
 def test_mapping_match_without_original_file_returns_no_source(monkeypatch):
     mapping = {
         "source_type": BUSINESS_FAQ_SOURCE_TYPE,

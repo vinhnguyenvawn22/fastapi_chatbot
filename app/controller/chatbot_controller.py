@@ -15,6 +15,7 @@ from app.core.config import (
 from app.data.elasticsearch_client import get_keywords, normalize_text, search_documents
 from app.data.ambiguity_analyzer import (
     CLARIFICATION_NEEDED,
+    DIRECT_RETRIEVAL,
     analyze_ambiguity,
 )
 from app.data.langchain_pipeline import (
@@ -1562,10 +1563,18 @@ async def _retrieve_multihop_evidence(
             "original_question": base_state.get("original_question") or question,
             "standalone_question": question,
             "reason": f'multi_hop:{subq["aspect"]}',
+            "ambiguity_decision": {
+                "action": DIRECT_RETRIEVAL,
+                "topic": None,
+                "confidence": 1.0,
+                "reason": "multi_hop_subquestion_no_llm",
+                "clarifying_question": None,
+            },
         }
         sub_context = dict(base_state.get("query_context") or {})
         if subq.get("need"):
             sub_context["information_need"] = subq["need"]
+        sub_context["skip_retrieval_plan_llm"] = True
         sub_state["query_context"] = sub_context
 
         tasks = []

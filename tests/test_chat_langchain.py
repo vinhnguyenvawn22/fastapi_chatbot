@@ -238,6 +238,48 @@ def test_aggregate_generation_receives_business_retrieval_plan(monkeypatch):
     assert generated_states[0]["retrieval_debug"]["retrieval_plan"] == retrieval_plan
 
 
+def test_multihop_subquestions_disable_llm_retrieval_helpers(monkeypatch):
+    business_states = []
+    internal_states = []
+
+    async def fake_business(state):
+        business_states.append(state)
+        return {**state, "docs": [], "retrieval_debug": {}}
+
+    async def fake_internal(state):
+        internal_states.append(state)
+        return {**state, "docs": [], "retrieval_debug": {}}
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_business", fake_business)
+    monkeypatch.setattr(chatbot_controller, "retrieve_internal", fake_internal)
+
+    asyncio.run(
+        chatbot_controller._retrieve_multihop_evidence(
+            RagTrace("nghi hoc khong phep va nghi hoc co phep khac nhau nhung gi"),
+            {
+                "question": "nghi hoc khong phep va nghi hoc co phep khac nhau nhung gi",
+                "query_context": {},
+            },
+            "nghi hoc khong phep va nghi hoc co phep khac nhau nhung gi",
+        )
+    )
+
+    assert business_states
+    assert internal_states
+    assert all(
+        state["query_context"].get("skip_retrieval_plan_llm") is True
+        for state in business_states
+    )
+    assert all(
+        state["ambiguity_decision"]["action"] == "direct_retrieval"
+        for state in internal_states
+    )
+    assert all(
+        state["ambiguity_decision"]["reason"] == "multi_hop_subquestion_no_llm"
+        for state in internal_states
+    )
+
+
 def test_aggregate_prefers_mapping_guided_business_answer(monkeypatch):
     business_doc = {
         "source_type": "business_document",
