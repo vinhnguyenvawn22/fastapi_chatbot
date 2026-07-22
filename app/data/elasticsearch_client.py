@@ -58,6 +58,93 @@ STOP_WORDS = {
     "khi", "cần", "chú", "ý", "lưu",
 }
 QUERY_EXPANSION = {
+    "chuyen truong": [
+        "chuyen truong",
+        "dieu kien chuyen truong",
+        "hieu truong",
+        "cung nganh",
+        "noi cu tru",
+        "quy che dao tao dai hoc chinh quy",
+        "dieu 28",
+    ],
+    "toi muon chuyen truong": [
+        "chuyen truong",
+        "dieu kien chuyen truong",
+        "hieu truong",
+        "cung nganh",
+        "noi cu tru",
+        "quy che dao tao dai hoc chinh quy",
+        "dieu 28",
+    ],
+    "hoc 2 bang": [
+        "hoc cung luc hai chuong trinh",
+        "chuong trinh thu hai",
+        "nam thu hai",
+        "tot nghiep chuong trinh thu nhat",
+        "quy che dao tao dai hoc chinh quy",
+        "dieu 29",
+    ],
+    "f mon tu chon": [
+        "hoc phan tu chon bi diem F F+",
+        "hoc doi hoc phan khac tuong duong",
+        "hoc cai thien diem trung binh tich luy",
+        "quy che dao tao dai hoc chinh quy",
+        "dieu 11",
+    ],
+    "f+ va f": [
+        "diem chu F+ F",
+        "thang diem",
+        "diem hoc phan khong dat",
+        "hoc lai hoc doi hoc phan tuong duong",
+        "quy che dao tao dai hoc chinh quy",
+        "dieu 16",
+        "dieu 11",
+    ],
+    "diem f+ va f": [
+        "diem chu F+ F",
+        "thang diem",
+        "diem hoc phan khong dat",
+        "hoc lai hoc doi hoc phan tuong duong",
+        "quy che dao tao dai hoc chinh quy",
+        "dieu 16",
+        "dieu 11",
+    ],
+    "mot tin chi": [
+        "tin chi 15 tiet ly thuyet 30 tiet thuc hanh thi nghiem thao luan",
+        "30 40 gio thuc tap tai co so",
+        "45 60 gio lam tieu luan bai tap lon do an khoa luan",
+        "quy che dao tao dai hoc chinh quy",
+        "dieu 2",
+    ],
+    "tin chi tuong duong": [
+        "tin chi 15 tiet ly thuyet 30 tiet thuc hanh thi nghiem thao luan",
+        "30 40 gio thuc tap tai co so",
+        "45 60 gio lam tieu luan bai tap lon do an khoa luan",
+        "quy che dao tao dai hoc chinh quy",
+        "dieu 2",
+    ],
+    "canh bao hoc tap": [
+        "cảnh báo học tập",
+        "khối lượng học tập",
+        "đăng ký khối lượng học tập",
+        "không quá 16 tín chỉ",
+        "quy chế đào tạo đại học chính quy",
+        "điều 9",
+    ],
+    "toi da bao nhieu tin chi": [
+        "khối lượng học tập",
+        "đăng ký khối lượng học tập",
+        "số tín chỉ đăng ký tối đa",
+        "quy chế đào tạo đại học chính quy",
+        "điều 9",
+    ],
+    "dang ky bao nhieu tin chi": [
+        "khối lượng học tập",
+        "đăng ký khối lượng học tập",
+        "số tín chỉ đăng ký",
+        "quy chế đào tạo đại học chính quy",
+        "điều 9",
+    ],
     "sử dụng phòng học": [
         "quy định chung khi khai thác sử dụng phòng học",
         "quy định thực hiện 5S trong phòng học",
@@ -86,6 +173,44 @@ QUERY_EXPANSION = {
     "đăng ký môn": ["đăng ký học phần", "thời gian đăng ký"],
     "bỏ môn": ["rút bớt học phần", "hủy đăng ký học phần"],
     "hủy môn": ["rút bớt học phần", "hủy đăng ký học phần"],
+    "hủy học phần": [
+        "hủy đăng ký học phần",
+        "rút bớt học phần",
+        "đăng ký khối lượng học tập",
+        "quy chế đào tạo đại học chính quy",
+        "điều 10",
+        "điều 9",
+    ],
+    "hủy học phần đã đăng ký": [
+        "hủy đăng ký học phần",
+        "rút bớt học phần",
+        "đăng ký khối lượng học tập",
+        "quy chế đào tạo đại học chính quy",
+        "điều 10",
+        "điều 9",
+    ],
+    "hủy đăng ký học phần": [
+        "rút bớt học phần",
+        "đăng ký khối lượng học tập",
+        "quy chế đào tạo đại học chính quy",
+        "điều 10",
+        "điều 9",
+    ],
+    "rút học phần": [
+        "rút bớt học phần",
+        "hủy đăng ký học phần",
+        "đăng ký khối lượng học tập",
+        "quy chế đào tạo đại học chính quy",
+        "điều 10",
+        "điều 9",
+    ],
+    "rút bớt học phần": [
+        "hủy đăng ký học phần",
+        "đăng ký khối lượng học tập",
+        "quy chế đào tạo đại học chính quy",
+        "điều 10",
+        "điều 9",
+    ],
     "trượt": ["học lại", "điểm F", "không đạt", "cải thiện điểm"],
     "rớt": ["học lại", "điểm F", "không đạt"],
     "thi lại": ["kỳ thi phụ", "đánh giá lại học phần"],
@@ -96,7 +221,13 @@ QUERY_EXPANSION = {
         "thang điểm 4",
         "thang điểm 10",
     ],
-    "gpa": ["điểm trung bình tích lũy", "điểm hệ 4"],
+    "gpa": [
+        "điểm trung bình tích lũy",
+        "điểm trung bình học tập",
+        "điểm trung bình chung tích lũy",
+        "tính điểm trung bình",
+        "điểm hệ 4",
+    ],
     "ra trường": ["điều kiện xét tốt nghiệp", "công nhận tốt nghiệp"],
     "tốt nghiệp": [
         "điều kiện xét tốt nghiệp",
@@ -273,8 +404,8 @@ def apply_uneti_query_expansion(query: str) -> str:
 
 def _academic_policy_retrieval_query(query: str) -> str:
     normalized_query = normalize_text(query)
-    expanded_terms = [query]
     profile = _policy_query_profile(query)
+    expanded_terms = [query if profile == "credit_load_warning" else apply_uneti_query_expansion(query)]
 
     if "thi lai" in normalized_query or ("thi" in normalized_query and "lai" in normalized_query):
         expanded_terms.append(
@@ -299,11 +430,54 @@ def _academic_policy_retrieval_query(query: str) -> str:
             "nghi hoc co phep nghi hoc khong phep so tiet vang diem chuyen can "
             "danh gia hoc phan hoc tap tren lop quy che dao tao dai hoc chinh quy dieu 13"
         )
+    elif profile == "credit_load_warning":
+        expanded_terms.append(
+            "canh bao hoc tap dang ky khoi luong hoc tap khoi luong hoc tap "
+            "so tin chi dang ky toi da khong qua 16 tin chi quy che dao tao "
+            "dai hoc chinh quy dieu 9"
+        )
 
     if any(term in normalized_query for term in ("ra truong", "tot nghiep", "chung chi", "chuan dau ra")):
         expanded_terms.append(
             "dieu kien xet tot nghiep cong nhan tot nghiep chung chi ngoai ngu "
             "chung chi tin hoc chuan dau ra quy che dao tao dai hoc chinh quy dieu 24"
+        )
+
+    if "gpa" in normalized_query or "diem trung binh" in normalized_query:
+        expanded_terms.append(
+            "diem trung binh hoc ky diem trung binh tich luy diem trung binh chung "
+            "tich luy tinh diem trung binh thang diem 4 quy che dao tao dai hoc "
+            "chinh quy dieu 20"
+        )
+
+    if profile == "course_registration_change":
+        expanded_terms.append(
+            "huy dang ky hoc phan rut bot hoc phan dang ky khoi luong hoc tap "
+            "thoi gian dang ky rut hoc phan quy che dao tao dai hoc chinh quy dieu 10 dieu 9"
+        )
+    elif profile == "transfer_school":
+        expanded_terms.append(
+            "chuyen truong dieu kien chuyen truong hieu truong dong y cung nganh "
+            "noi cu tru hoan canh kho khan khong phai chuyen chuong trinh dao tao "
+            "quy che dao tao dai hoc chinh quy dieu 28"
+        )
+    elif profile == "elective_failed_course":
+        expanded_terms.append(
+            "hoc phan tu chon bi diem F F+ hoc lai hoc doi sang hoc phan khac "
+            "tuong duong cai thien diem trung binh tich luy quy che dao tao dai hoc "
+            "chinh quy dieu 11"
+        )
+    elif profile == "f_grade_comparison":
+        expanded_terms.append(
+            "diem chu F+ F thang diem diem hoc phan khong dat quy doi diem chu "
+            "hoc phan bat buoc hoc lai hoc phan tu chon hoc doi hoc phan tuong duong "
+            "quy che dao tao dai hoc chinh quy dieu 16 dieu 11"
+        )
+    elif profile == "credit_definition":
+        expanded_terms.append(
+            "tin chi 15 tiet ly thuyet 30 tiet thuc hanh thi nghiem thao luan "
+            "30 40 gio thuc tap tai co so 45 60 gio lam tieu luan bai tap lon "
+            "do an khoa luan quy che dao tao dai hoc chinh quy dieu 2"
         )
 
     return " ".join(dict.fromkeys(expanded_terms))
@@ -357,6 +531,41 @@ def _policy_query_profile(query: str) -> str | None:
         return "attendance_exam_eligibility"
     if any(term in normalized_query for term in ("ra truong", "tot nghiep", "chung chi", "chuan dau ra")):
         return "graduation_requirements"
+    if "gpa" in normalized_query or "diem trung binh" in normalized_query:
+        return "grade_average"
+    if "chuyen truong" in normalized_query:
+        return "transfer_school"
+    if (
+        any(term in normalized_query for term in ("f+ va f", "f va f+", "diem f+", "f+"))
+        and "f" in normalized_query
+    ):
+        return "f_grade_comparison"
+    if (
+        "tu chon" in normalized_query
+        and any(term in normalized_query for term in ("diem f", "bi f", "f+", "khong dat"))
+        and any(term in normalized_query for term in ("mon", "hoc phan", "chon mon", "thay the", "hoc doi"))
+    ):
+        return "elective_failed_course"
+    if (
+        "tin chi" in normalized_query
+        and any(term in normalized_query for term in ("tuong duong", "bao nhieu tiet", "may tiet", "ly thuyet", "thuc hanh"))
+    ):
+        return "credit_definition"
+    if (
+        "canh bao hoc tap" in normalized_query
+        and any(term in normalized_query for term in ("tin chi", "khoi luong", "dang ky", "dang ki", "toi da", "bao nhieu"))
+    ) or (
+        any(term in normalized_query for term in ("toi da", "bao nhieu", "may tin chi", "so tin chi"))
+        and "tin chi" in normalized_query
+        and any(term in normalized_query for term in ("dang ky", "dang ki", "khoi luong hoc tap"))
+    ):
+        return "credit_load_warning"
+    if (
+        any(term in normalized_query for term in ("huy", "rut", "bo", "xoa"))
+        and any(term in normalized_query for term in ("hoc phan", "mon", "dang ky", "dang ki"))
+        and "thi lai" not in normalized_query
+    ):
+        return "course_registration_change"
     if (
         "nghi hoc" in normalized_query
         and asks_attendance_exam
@@ -413,8 +622,117 @@ def _policy_result_priority(question: str, doc: dict) -> int:
             score += 35
         if "quy che cong tac sinh vien" in searchable:
             score -= 40
+    elif profile == "grade_average":
+        if "tinh diem trung binh" in searchable:
+            score += 120
+        if "diem trung binh tich luy" in searchable or "diem trung binh hoc ky" in searchable:
+            score += 90
+        if doc.get("dieu") == 20:
+            score += 60
+        if "quy che dao tao dai hoc chinh quy" in searchable:
+            score += 50
+        if "thac si" in searchable and "thac si" not in normalize_text(question):
+            score -= 70
+    elif profile == "transfer_school":
+        if "chuyen truong" in searchable:
+            score += 170
+        if doc.get("dieu") == 28:
+            score += 140
+        if "hieu truong" in searchable:
+            score += 80
+        if any(term in searchable for term in ("cung nganh", "noi cu tru", "hoan canh")):
+            score += 60
+        if "quy che dao tao dai hoc chinh quy" in searchable:
+            score += 80
+        if "thac si" in searchable and "thac si" not in normalize_text(question):
+            score -= 180
+        if "chuyen chuong trinh dao tao" in searchable and "chuyen truong" not in searchable:
+            score -= 140
+    elif profile == "elective_failed_course":
+        if "hoc phan tu chon" in searchable:
+            score += 150
+        if any(term in searchable for term in ("diem f", " f ", "f+", "khong dat")):
+            score += 80
+        if "hoc doi" in searchable or "hoc phan khac tuong duong" in searchable:
+            score += 140
+        if "hoc cai thien" in searchable or "diem trung binh tich luy" in searchable:
+            score += 70
+        if doc.get("dieu") == 11:
+            score += 130
+        if "quy che dao tao dai hoc chinh quy" in searchable:
+            score += 70
+        if "thac si" in searchable and "thac si" not in normalize_text(question):
+            score -= 140
+    elif profile == "f_grade_comparison":
+        if "f+" in searchable and " f" in searchable:
+            score += 140
+        if any(term in searchable for term in ("thang diem", "diem chu", "diem hoc phan")):
+            score += 100
+        if doc.get("dieu") == 16:
+            score += 140
+        if doc.get("dieu") == 11:
+            score += 120
+        if any(term in searchable for term in ("hoc lai", "hoc doi", "hoc phan tu chon", "hoc phan bat buoc")):
+            score += 90
+        if "quy che dao tao dai hoc chinh quy" in searchable:
+            score += 70
+        if "thac si" in searchable and "thac si" not in normalize_text(question):
+            score -= 160
+    elif profile == "credit_definition":
+        if "tin chi" in searchable:
+            score += 80
+        if "15 tiet" in searchable and "ly thuyet" in searchable:
+            score += 120
+        if "30 tiet" in searchable and any(term in searchable for term in ("thuc hanh", "thi nghiem", "thao luan")):
+            score += 120
+        if any(term in searchable for term in ("30 40 gio", "30-40 gio", "30 den 40 gio")):
+            score += 100
+        if any(term in searchable for term in ("45 60 gio", "45-60 gio", "45 den 60 gio")):
+            score += 130
+        if doc.get("dieu") == 2:
+            score += 120
+        if "quy che dao tao dai hoc chinh quy" in searchable:
+            score += 80
+        if any(term in searchable for term in ("gpa", "tot nghiep", "chung chi", "web support", "khcn")):
+            score -= 120
+    elif profile == "course_registration_change":
+        if "rut bot hoc phan" in searchable or "huy dang ky hoc phan" in searchable:
+            score += 170
+        if doc.get("dieu") == 10:
+            score += 130
+        if "dang ky khoi luong hoc tap" in searchable:
+            score += 110
+        if doc.get("dieu") == 9:
+            score += 45
+        if "quy che dao tao dai hoc chinh quy" in searchable:
+            score += 60
+        if any(term in searchable for term in ("tieng anh", "toeic", "ielts", "chung chi", "quy doi", "ngoai ngu", "tin hoc")):
+            score -= 110
+        if any(term in searchable for term in ("khcn", "nghien cuu", "thiet bi", "phong hoc")):
+            score -= 90
         if "thi ket thuc hoc phan" in searchable and "diem chuyen can" not in searchable:
             score -= 45
+    elif profile == "credit_load_warning":
+        if "canh bao hoc tap" in searchable or "canh bao ket qua hoc tap" in searchable:
+            score += 150
+        if "dang trong thoi gian bi canh bao" in searchable:
+            score += 80
+        if "dang ky khoi luong hoc tap" in searchable or "khoi luong hoc tap" in searchable:
+            score += 120
+        if "khong qua 16" in searchable or "16 tin chi" in searchable:
+            score += 180
+        if "3/2 so tin chi" in searchable and not (
+            "khong qua 16" in searchable or "16 tin chi" in searchable
+        ):
+            score -= 80
+        if doc.get("dieu") == 9:
+            score += 80
+        if "quy che dao tao dai hoc chinh quy" in searchable:
+            score += 60
+        if any(term in metadata_text for term in ("thoi khoa bieu", "lich hoc", "lich thi", "web support")):
+            score -= 130
+        if any(term in metadata_text for term in ("khcn", "nghien cuu", "tap chi", "thiet bi", "phong hoc")):
+            score -= 110
     elif profile == "absence_permission_comparison":
         if "diem chuyen can" in searchable:
             score += 85
@@ -1279,9 +1597,10 @@ async def search_documents(
     metadata_results, metadata_constraints = _search_metadata_documents(
         retrieval_query, candidate_limit
     )
+    original_metadata_constraints = extract_metadata_constraints(question)
 
     # Exact document-number requests must never fall through to a different document.
-    if metadata_constraints.get("so_van_ban") and not metadata_results:
+    if original_metadata_constraints.get("so_van_ban") and metadata_constraints.get("so_van_ban") and not metadata_results:
         final_results = []
         _set_search_cache(cache_key, final_results)
         if debug is not None:

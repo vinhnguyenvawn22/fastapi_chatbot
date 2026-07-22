@@ -716,6 +716,298 @@ def test_academic_policy_question_blocks_business_direct_answer(monkeypatch):
     assert any(source["source_type"] == "official_document" for source in result["sources"])
 
 
+def test_course_registration_change_policy_source_filter_prefers_article_10():
+    question = "cach huy hoc phan da dang ky"
+    direct_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 10. Rut bot hoc phan da dang ky",
+        "content": "Sinh vien duoc rut bot hoc phan trong thoi gian dang ky hoc phan.",
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy.docx",
+        "relative_path": "quy-che-dao-tao.docx",
+        "dieu": 10,
+    }
+    noisy_doc = {
+        "source_type": "official_document",
+        "title": "Quy doi chung chi tieng Anh",
+        "content": "Hoc phan da dang ky chung chi tieng Anh TOEIC IELTS.",
+        "doc_name": "TTNNTH_Quy doi chung chi tieng Anh.docx",
+        "relative_path": "tieng-anh.docx",
+    }
+
+    assert chatbot_controller._matches_academic_policy_source(question, direct_doc)
+    assert not chatbot_controller._matches_academic_policy_source(question, noisy_doc)
+    assert (
+        chatbot_controller._score_aggregate_evidence(question, direct_doc, {})
+        > chatbot_controller._score_aggregate_evidence(question, noisy_doc, {})
+    )
+
+
+def test_credit_load_warning_policy_source_filter_prefers_training_regulation():
+    question = "em dang bi canh bao hoc tap thi toi da duoc dang ky bao nhieu tin chi"
+    direct_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 9. Dang ky khoi luong hoc tap",
+        "content": "Sinh vien bi canh bao hoc tap khong duoc dang ky qua 16 tin chi.",
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy.docx",
+        "relative_path": "quy-che-dao-tao.docx",
+        "dieu": 9,
+    }
+    noisy_doc = {
+        "source_type": "business_document",
+        "title": "Muc I -> 2 -> 2.2",
+        "content": "Thoi khoa bieu lich hoc lich thi tren Web Support SV.",
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "relative_path": "web-support-sv.docx",
+    }
+
+    assert chatbot_controller._matches_academic_policy_source(question, direct_doc)
+    assert not chatbot_controller._matches_academic_policy_source(question, noisy_doc)
+    assert (
+        chatbot_controller._score_aggregate_evidence(question, direct_doc, {})
+        > chatbot_controller._score_aggregate_evidence(question, noisy_doc, {})
+    )
+
+
+def test_credit_load_warning_aggregate_selection_drops_web_support_noise():
+    question = "em dang bi canh bao hoc tap thi toi da duoc dang ky bao nhieu tin chi"
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Muc I -> 2 -> 2.2",
+        "content": "Thoi khoa bieu lich hoc lich thi tren Web Support SV.",
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "relative_path": "web-support-sv.docx",
+        "chunk_index": 7,
+        "keyword_score": 90,
+    }
+    internal_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 9. Dang ky khoi luong hoc tap",
+        "content": "Sinh vien bi canh bao hoc tap khong duoc dang ky qua 16 tin chi.",
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy.docx",
+        "relative_path": "quy-che-dao-tao.docx",
+        "chunk_index": 19,
+        "dieu": 9,
+        "keyword_score": 50,
+    }
+
+    selected, debug = chatbot_controller._select_diverse_aggregate_sources(
+        question,
+        [business_doc],
+        [internal_doc],
+        {"information_need": "policy_document"},
+        limit=3,
+    )
+
+    assert debug["selected_sources"][0]["source_type"] == "official_document"
+    assert selected[0]["title"] == "Dieu 9. Dang ky khoi luong hoc tap"
+
+
+def test_credit_load_warning_aggregate_selection_prefers_16_credit_clause():
+    question = "em dang bi canh bao hoc tap thi toi da duoc dang ky bao nhieu tin chi"
+    generic_clause = {
+        "source_type": "official_document",
+        "title": "Dieu 9. Dang ky khoi luong hoc tap (1)",
+        "content": (
+            "Khoi luong hoc tap toi da la 3/2 so tin chi trung binh mot hoc ky. "
+            "Sinh vien vua bi canh bao hoc tap o hoc ky truoc do."
+        ),
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy.docx",
+        "relative_path": "quy-che-dao-tao.docx",
+        "chunk_index": 18,
+        "dieu": 9,
+        "keyword_score": 100,
+    }
+    specific_clause = {
+        "source_type": "official_document",
+        "title": "Dieu 9. Dang ky khoi luong hoc tap (2)",
+        "content": (
+            "Sinh vien dang trong thoi gian bi canh bao ket qua hoc tap chi duoc "
+            "dang ky khoi luong hoc tap khong qua 16 tin chi cho moi hoc ky. "
+            "Quy dinh nay ap dung rieng cho sinh vien diem trung binh hoc ky yeu kem "
+            "hoac dang bi canh bao ket qua hoc tap trong hoc ky moi."
+        ),
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy.docx",
+        "relative_path": "quy-che-dao-tao.docx",
+        "chunk_index": 19,
+        "dieu": 9,
+        "keyword_score": 80,
+    }
+
+    selected, debug = chatbot_controller._select_diverse_aggregate_sources(
+        question,
+        [],
+        [generic_clause, specific_clause],
+        {"information_need": "policy_document"},
+        limit=2,
+    )
+
+    assert debug["selected_sources"][0]["title"] == "Dieu 9. Dang ky khoi luong hoc tap (2)"
+    assert selected[0]["chunk_index"] == 19
+
+
+def test_credit_load_warning_aggregate_uses_deterministic_16_credit_answer(monkeypatch):
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Muc I -> 2 -> 2.2",
+        "content": "Thoi khoa bieu lich hoc lich thi tren Web Support SV.",
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "relative_path": "web-support-sv.docx",
+        "chunk_index": 7,
+        "keyword_score": 90,
+    }
+    internal_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 9. Dang ky khoi luong hoc tap (2)",
+        "content": (
+            "Sinh vien dang trong thoi gian bi canh bao ket qua hoc tap chi duoc "
+            "dang ky khoi luong hoc tap khong qua 16 tin chi cho moi hoc ky. "
+            "Quy dinh nay ap dung rieng cho sinh vien diem trung binh hoc ky yeu kem "
+            "hoac dang bi canh bao ket qua hoc tap trong hoc ky moi."
+        ),
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy_832_20092023.docx",
+        "relative_path": "quy-che-dao-tao.docx",
+        "chunk_index": 19,
+        "dieu": 9,
+        "keyword_score": 80,
+    }
+
+    async def fake_business(state):
+        return {
+            **state,
+            "docs": [business_doc],
+            "retrieval_debug": {
+                "information_need": "policy_document",
+                "retrieval_method": "generic_hybrid",
+            },
+        }
+
+    async def fake_internal(state):
+        return {**state, "docs": [internal_doc], "retrieval_debug": {}}
+
+    async def fail_generate(state):
+        raise AssertionError("Gemini generation should be skipped for clear 16-credit clause")
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_business", fake_business)
+    monkeypatch.setattr(chatbot_controller, "retrieve_internal", fake_internal)
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fail_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_retrieve_multihop_evidence",
+        lambda *args, **kwargs: asyncio.sleep(0, result=([], [], {})),
+    )
+
+    result = asyncio.run(
+        chatbot_controller._answer_with_aggregate_documents(
+            RagTrace("em dang bi canh bao hoc tap thi toi da duoc dang ky bao nhieu tin chi"),
+            "em dang bi canh bao hoc tap thi toi da duoc dang ky bao nhieu tin chi",
+            "internal_document",
+            "document_terms",
+        )
+    )
+
+    assert "không quá 16 tín chỉ" in result["answer"]
+    assert "3/2" in result["answer"]
+    assert result["sources"][0]["chunk_index"] == 19
+
+
+def test_transfer_school_policy_filter_rejects_master_regulation():
+    question = "toi muon chuyen truong khong phai chuyen chuong trinh dao tao"
+    undergraduate_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 28. Chuyen truong",
+        "content": "Sinh vien duoc chuyen truong khi co dong y cua Hieu truong va cung nganh dao tao.",
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy_832_20092023.docx",
+        "relative_path": "quy-che-dao-tao.docx",
+        "dieu": 28,
+        "keyword_score": 40,
+    }
+    master_doc = {
+        "source_type": "official_document",
+        "title": "Chuyen truong thac si",
+        "content": "Hoc vien thac si duoc chuyen truong theo quy che dao tao trinh do thac si.",
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che tuyen sinh va dao tao trinh do thac si_834_20092023.docx",
+        "relative_path": "thac-si.docx",
+        "keyword_score": 100,
+    }
+
+    assert chatbot_controller._matches_academic_policy_source(question, undergraduate_doc)
+    assert not chatbot_controller._matches_academic_policy_source(question, master_doc)
+    assert (
+        chatbot_controller._score_aggregate_evidence(question, undergraduate_doc, {})
+        > chatbot_controller._score_aggregate_evidence(question, master_doc, {})
+    )
+
+
+def test_elective_failed_course_policy_filter_prefers_article_11():
+    question = "neu em bi F mon tu chon thi co the chon mon khac thay the khong"
+    direct_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 11. Hoc lai, hoc cai thien diem",
+        "content": "Hoc phan tu chon bi diem F F+ thi sinh vien co the hoc doi sang hoc phan khac tuong duong.",
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy_832_20092023.docx",
+        "relative_path": "quy-che-dao-tao.docx",
+        "dieu": 11,
+    }
+    business_doc = {
+        "source_type": "business_document",
+        "title": "Lop hoc phan",
+        "content": "Huong dan xem lop hoc phan tren Web Support SV.",
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+    }
+
+    assert chatbot_controller._matches_academic_policy_source(question, direct_doc)
+    assert not chatbot_controller._matches_academic_policy_source(question, business_doc)
+
+
+def test_f_grade_comparison_policy_filter_accepts_articles_16_and_11():
+    question = "diem F+ va F khac nhau nhu the nao co phai hoc lai ca hai khong"
+    grade_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 16. Thang diem danh gia",
+        "content": "Diem hoc phan duoc quy doi sang diem chu F+ va F theo thang diem.",
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy_832_20092023.docx",
+        "dieu": 16,
+    }
+    retake_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 11. Hoc lai, hoc doi",
+        "content": "Hoc phan bat buoc khong dat phai hoc lai; hoc phan tu chon co the hoc doi hoc phan tuong duong.",
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy_832_20092023.docx",
+        "dieu": 11,
+    }
+    noisy_doc = {
+        "source_type": "official_document",
+        "title": "Diem hoc vien thac si",
+        "content": "Hoc vien thac si co diem F.",
+        "doc_name": "quy-che-thac-si-834.docx",
+    }
+
+    assert chatbot_controller._matches_academic_policy_source(question, grade_doc)
+    assert chatbot_controller._matches_academic_policy_source(question, retake_doc)
+    assert not chatbot_controller._matches_academic_policy_source(question, noisy_doc)
+
+
+def test_credit_definition_policy_filter_prefers_article_2():
+    question = "mot tin chi tuong duong voi bao nhieu tiet hoc ly thuyet va thuc hanh"
+    direct_doc = {
+        "source_type": "official_document",
+        "title": "Dieu 3. Phuong thuc to chuc dao tao (3)",
+        "content": "Mot tin chi bang 15 tiet ly thuyet, 30 tiet thuc hanh, 45 60 gio lam tieu luan.",
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy_832_20092023.docx",
+        "dieu": 3,
+    }
+    noisy_doc = {
+        "source_type": "official_document",
+        "title": "Dieu kien tot nghiep",
+        "content": "Sinh vien tot nghiep can du chung chi va diem trung binh tich luy.",
+        "doc_name": "quy-che-dao-tao.docx",
+        "dieu": 24,
+    }
+
+    assert chatbot_controller._matches_academic_policy_source(question, direct_doc)
+    assert not chatbot_controller._matches_academic_policy_source(question, noisy_doc)
+
+
 def test_attendance_exam_policy_drops_business_and_prefers_training_regulation(monkeypatch):
     business_doc = {
         "source_type": "business_document",

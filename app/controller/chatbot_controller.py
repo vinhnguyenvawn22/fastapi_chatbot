@@ -559,6 +559,150 @@ def _score_aggregate_evidence(question: str, doc: dict, query_context: dict | No
         elif "thi lai" in normalized and "huy" not in normalized and "dang ky thi lai" in source_text:
             score += 55
 
+    academic_terms = _academic_policy_terms(question)
+    if "course_registration_change" in academic_terms:
+        if source_type == "official_document":
+            if "rut bot hoc phan" in source_text or "huy dang ky hoc phan" in source_text:
+                score += 150
+            if doc.get("dieu") == 10:
+                score += 110
+            if "dang ky khoi luong hoc tap" in source_text:
+                score += 95
+            if doc.get("dieu") == 9:
+                score += 45
+            if "quy che dao tao dai hoc chinh quy" in source_text:
+                score += 45
+        if any(
+            noisy in source_text
+            for noisy in (
+                "tieng anh",
+                "toeic",
+                "ielts",
+                "chung chi",
+                "quy doi",
+                "ngoai ngu",
+                "tin hoc",
+                "khcn",
+                "nghien cuu",
+                "thiet bi",
+                "phong hoc",
+            )
+        ):
+            score -= 120
+
+    if "credit_load_warning" in academic_terms:
+        if source_type == "official_document":
+            if "canh bao hoc tap" in source_text or "canh bao ket qua hoc tap" in source_text:
+                score += 150
+            if "dang trong thoi gian bi canh bao" in source_text:
+                score += 80
+            if "dang ky khoi luong hoc tap" in source_text or "khoi luong hoc tap" in source_text:
+                score += 120
+            if "16 tin chi" in source_text or "khong qua 16" in source_text:
+                score += 180
+            if "3/2 so tin chi" in source_text and not (
+                "16 tin chi" in source_text or "khong qua 16" in source_text
+            ):
+                score -= 80
+            if doc.get("dieu") == 9:
+                score += 80
+            if "quy che dao tao dai hoc chinh quy" in source_text:
+                score += 60
+        if source_type == "business_document":
+            score -= 120
+        if any(
+            noisy in source_text
+            for noisy in (
+                "web support",
+                "thoi khoa bieu",
+                "lich hoc",
+                "lich thi",
+                "khcn",
+                "nghien cuu",
+                "thiet bi",
+                "phong hoc",
+            )
+        ):
+            score -= 120
+
+    if "transfer_school" in academic_terms:
+        if source_type == "official_document":
+            if "chuyen truong" in source_text:
+                score += 170
+            if doc.get("dieu") == 28:
+                score += 140
+            if "hieu truong" in source_text:
+                score += 80
+            if any(term in source_text for term in ("cung nganh", "noi cu tru", "hoan canh")):
+                score += 60
+            if "quy che dao tao dai hoc chinh quy" in source_text:
+                score += 80
+        if source_type == "business_document":
+            score -= 120
+        if "thac si" in source_text and "thac si" not in normalized:
+            score -= 180
+        if "chuyen chuong trinh dao tao" in source_text and "chuyen truong" not in source_text:
+            score -= 140
+
+    if "elective_failed_course" in academic_terms:
+        if source_type == "official_document":
+            if "hoc phan tu chon" in source_text:
+                score += 150
+            if any(term in source_text for term in ("diem f", "f+", "khong dat")):
+                score += 80
+            if "hoc doi" in source_text or "hoc phan khac tuong duong" in source_text:
+                score += 140
+            if "hoc cai thien" in source_text or "diem trung binh tich luy" in source_text:
+                score += 70
+            if doc.get("dieu") == 11:
+                score += 130
+            if "quy che dao tao dai hoc chinh quy" in source_text:
+                score += 70
+        if source_type == "business_document":
+            score -= 120
+        if "thac si" in source_text and "thac si" not in normalized:
+            score -= 140
+
+    if "f_grade_comparison" in academic_terms:
+        if source_type == "official_document":
+            if "f+" in source_text and " f" in source_text:
+                score += 140
+            if any(term in source_text for term in ("thang diem", "diem chu", "diem hoc phan")):
+                score += 100
+            if doc.get("dieu") == 16:
+                score += 140
+            if doc.get("dieu") == 11:
+                score += 120
+            if any(term in source_text for term in ("hoc lai", "hoc doi", "hoc phan tu chon", "hoc phan bat buoc")):
+                score += 90
+            if "quy che dao tao dai hoc chinh quy" in source_text:
+                score += 70
+        if source_type == "business_document":
+            score -= 120
+        if "thac si" in source_text and "thac si" not in normalized:
+            score -= 160
+
+    if "credit_definition" in academic_terms:
+        if source_type == "official_document":
+            if "tin chi" in source_text:
+                score += 80
+            if "15 tiet" in source_text and "ly thuyet" in source_text:
+                score += 120
+            if "30 tiet" in source_text and any(term in source_text for term in ("thuc hanh", "thi nghiem", "thao luan")):
+                score += 120
+            if any(term in source_text for term in ("30 40 gio", "30-40 gio", "30 den 40 gio")):
+                score += 100
+            if any(term in source_text for term in ("45 60 gio", "45-60 gio", "45 den 60 gio")):
+                score += 130
+            if doc.get("dieu") == 2:
+                score += 120
+            if "quy che dao tao dai hoc chinh quy" in source_text:
+                score += 80
+        if source_type == "business_document":
+            score -= 120
+        if any(term in source_text for term in ("gpa", "tot nghiep", "chung chi", "web support", "khcn")):
+            score -= 120
+
     if source_type == "business_document" and any(
         term in doc_name for term in ("khcn", "nghien cuu", "tap chi")
     ):
@@ -761,11 +905,69 @@ def _academic_policy_terms(question: str) -> list[str]:
         "nghi hoc khong phep",
         "nghi hoc tren",
         "so tiet vang",
+        "canh bao hoc tap",
+        "bao nhieu tin chi",
+        "toi da bao nhieu tin chi",
+        "so tin chi",
+        "khoi luong hoc tap",
+        "chuyen truong",
+        "hoc 2 bang",
+        "hoc cung luc hai chuong trinh",
+        "chuong trinh thu hai",
+        "hoc cai thien",
+        "diem f",
+        "f+",
+        "hoc phan tu chon",
+        "hoc doi",
+        "tin chi tuong duong",
+        "bao nhieu tiet",
+        "ly thuyet",
+        "thuc hanh",
+        "huy dang ky hoc phan",
+        "huy hoc phan",
+        "rut bot hoc phan",
+        "rut hoc phan",
+        "bo hoc phan",
+        "xoa hoc phan",
+        "dang ky khoi luong hoc tap",
         "hoc vu",
         "quy che dao tao",
         "quy dinh dao tao",
     )
     matched = [term for term in phrase_terms if term in normalized]
+    if (
+        any(term in normalized for term in ("huy", "rut", "bo", "xoa"))
+        and any(term in normalized for term in ("hoc phan", "mon", "dang ky", "dang ki"))
+        and "thi lai" not in normalized
+    ):
+        matched.append("course_registration_change")
+    if (
+        "canh bao hoc tap" in normalized
+        and any(term in normalized for term in ("tin chi", "khoi luong", "dang ky", "dang ki", "toi da", "bao nhieu"))
+    ) or (
+        any(term in normalized for term in ("toi da", "bao nhieu", "may tin chi", "so tin chi"))
+        and "tin chi" in normalized
+        and any(term in normalized for term in ("dang ky", "dang ki", "khoi luong hoc tap"))
+    ):
+        matched.append("credit_load_warning")
+    if "chuyen truong" in normalized:
+        matched.append("transfer_school")
+    if (
+        any(term in normalized for term in ("f+ va f", "f va f+", "diem f+", "f+"))
+        and "f" in normalized
+    ):
+        matched.append("f_grade_comparison")
+    if (
+        "tu chon" in normalized
+        and any(term in normalized for term in ("diem f", "bi f", "f+", "khong dat"))
+        and any(term in normalized for term in ("mon", "hoc phan", "chon mon", "thay the", "hoc doi"))
+    ):
+        matched.append("elective_failed_course")
+    if (
+        "tin chi" in normalized
+        and any(term in normalized for term in ("tuong duong", "bao nhieu tiet", "may tiet", "ly thuyet", "thuc hanh"))
+    ):
+        matched.append("credit_definition")
     if "tot nghiep" in normalized and any(term in normalized for term in ("chung chi", "dieu kien", "ra truong")):
         matched.append("tot_nghiep_condition")
     if "thi" in normalized and any(term in normalized for term in ("lai", "hoan", "vang", "du thi")):
@@ -797,7 +999,9 @@ def _matches_academic_policy_source(question: str, doc: dict) -> bool:
         for field in ("doc_name", "title", "relative_path", "phong_ban", "source_root")
     ))
 
-    if any(excluded in searchable for excluded in ("khcn", "nghien cuu", "thiet bi", "phong hoc", "tuyen sinh")):
+    if any(excluded in searchable for excluded in ("khcn", "nghien cuu", "thiet bi", "phong hoc")):
+        return False
+    if "tuyen sinh" in metadata_text:
         return False
 
     if "absence_permission_comparison" in terms:
@@ -832,6 +1036,128 @@ def _matches_academic_policy_source(question: str, doc: dict) -> bool:
                 "danh gia hoc phan" in searchable
                 and any(marker in searchable for marker in ("nghi hoc", "so tiet", "vang"))
             )
+        )
+
+    if "course_registration_change" in terms:
+        if "thac si" in searchable and "thac si" not in normalize_text(question):
+            return False
+        if any(
+            noisy in searchable
+            for noisy in (
+                "tieng anh",
+                "toeic",
+                "ielts",
+                "chung chi",
+                "quy doi",
+                "ngoai ngu",
+                "tin hoc",
+                "khcn",
+                "nghien cuu",
+                "thiet bi",
+                "phong hoc",
+            )
+        ):
+            return False
+        return (
+            "dang ky khoi luong hoc tap" in searchable
+            or "rut bot hoc phan" in searchable
+            or "huy dang ky hoc phan" in searchable
+            or (
+                doc.get("dieu") in {9, 10}
+                and "quy che dao tao" in searchable
+                and "hoc phan" in searchable
+            )
+        )
+
+    if "credit_load_warning" in terms:
+        if "thac si" in searchable and "thac si" not in normalize_text(question):
+            return False
+        if any(
+            noisy in searchable
+            for noisy in (
+                "web support",
+                "thoi khoa bieu",
+                "lich hoc",
+                "lich thi",
+                "tieng anh",
+                "toeic",
+                "ielts",
+                "chung chi",
+                "khcn",
+                "nghien cuu",
+                "thiet bi",
+                "phong hoc",
+            )
+        ):
+            return False
+        return (
+            "canh bao hoc tap" in searchable
+            or "canh bao ket qua hoc tap" in searchable
+            or "dang trong thoi gian bi canh bao" in searchable
+            or "dang ky khoi luong hoc tap" in searchable
+            or "khoi luong hoc tap" in searchable
+            or "16 tin chi" in searchable
+            or "khong qua 16" in searchable
+            or (
+                doc.get("dieu") == 9
+                and "quy che dao tao" in searchable
+                and any(term in searchable for term in ("tin chi", "hoc phan", "khoi luong"))
+            )
+        )
+
+    if "transfer_school" in terms:
+        if "thac si" in searchable and "thac si" not in normalize_text(question):
+            return False
+        if "tuyen sinh" in metadata_text:
+            return False
+        if any(noisy in searchable for noisy in ("web support", "khcn", "nghien cuu", "thiet bi", "phong hoc")):
+            return False
+        if "chuyen chuong trinh dao tao" in searchable and "chuyen truong" not in searchable:
+            return False
+        return (
+            "chuyen truong" in searchable
+            or (
+                doc.get("dieu") == 28
+                and "quy che dao tao" in searchable
+                and any(term in searchable for term in ("hieu truong", "cung nganh", "noi cu tru", "hoan canh"))
+            )
+        )
+
+    if "elective_failed_course" in terms:
+        if "thac si" in searchable and "thac si" not in normalize_text(question):
+            return False
+        if "tuyen sinh" in metadata_text:
+            return False
+        if any(noisy in searchable for noisy in ("web support", "khcn", "nghien cuu", "thiet bi", "phong hoc")):
+            return False
+        return (
+            doc.get("dieu") == 11
+            and any(term in searchable for term in ("hoc phan tu chon", "hoc doi", "hoc phan khac tuong duong", "diem f", "f+"))
+        ) or (
+            "hoc phan tu chon" in searchable
+            and any(term in searchable for term in ("hoc doi", "tuong duong", "hoc lai"))
+        )
+
+    if "f_grade_comparison" in terms:
+        if "thac si" in searchable and "thac si" not in normalize_text(question):
+            return False
+        if "tuyen sinh" in metadata_text:
+            return False
+        if any(noisy in searchable for noisy in ("web support", "khcn", "nghien cuu", "thiet bi", "phong hoc")):
+            return False
+        return (
+            doc.get("dieu") in {11, 16}
+            and any(term in searchable for term in ("f+", "diem f", "diem chu", "hoc lai", "hoc doi", "hoc phan tu chon"))
+        )
+
+    if "credit_definition" in terms:
+        if "thac si" in searchable and "thac si" not in normalize_text(question):
+            return False
+        if any(noisy in searchable for noisy in ("web support", "gpa", "tot nghiep", "chung chi", "khcn", "nghien cuu")):
+            return False
+        return (
+            "tin chi" in searchable
+            and any(term in searchable for term in ("15 tiet", "30 tiet", "45 60", "45-60", "ly thuyet", "thuc hanh"))
         )
 
     if "thi lai" in terms or (
@@ -945,6 +1271,70 @@ def _absence_permission_comparison_answer(question: str, docs: list[dict]) -> tu
         f"{source_summary}"
     )
     return answer, [*support_docs[:1], *evidence_docs[:2]]
+
+
+def _credit_load_warning_answer(question: str, docs: list[dict]) -> tuple[str | None, list[dict]]:
+    terms = _academic_policy_terms(question)
+    if "credit_load_warning" not in terms:
+        return None, []
+
+    evidence_docs = []
+    for doc in docs or []:
+        searchable = normalize_text(
+            " ".join(
+                str(doc.get(field) or "")
+                for field in ("doc_name", "title", "relative_path", "phong_ban", "content")
+            )
+        )
+        if (
+            _matches_academic_policy_source(question, doc)
+            and ("16 tin chi" in searchable or "khong qua 16" in searchable)
+            and (
+                "canh bao hoc tap" in searchable
+                or "canh bao ket qua hoc tap" in searchable
+                or "dang trong thoi gian bi canh bao" in searchable
+            )
+        ):
+            evidence_docs.append(doc)
+
+    if not evidence_docs:
+        return None, []
+
+    source_doc = evidence_docs[0]
+    source_label = (
+        f'{source_doc.get("title") or "Nguồn tài liệu"} - '
+        f'{source_doc.get("doc_name") or source_doc.get("relative_path") or "tài liệu"}'
+    )
+    answer = (
+        "Sinh viên đang trong thời gian bị cảnh báo kết quả học tập chỉ được đăng ký "
+        "khối lượng học tập trong học kỳ mới theo kế hoạch đào tạo **không quá 16 tín chỉ "
+        "cho mỗi học kỳ**.\n\n"
+        "Lưu ý: quy định này là trường hợp riêng đối với sinh viên điểm trung bình học kỳ "
+        "yếu/kém hoặc đang bị cảnh báo kết quả học tập; không áp dụng theo mức tối đa chung "
+        "3/2 số tín chỉ trung bình của học kỳ.\n\n"
+        f"(Nguồn: {source_label})"
+    )
+    return answer, evidence_docs[:2]
+
+
+async def _credit_load_warning_targeted_docs(question: str) -> list[dict]:
+    if "credit_load_warning" not in _academic_policy_terms(question):
+        return []
+
+    targeted_query = (
+        f"{question} cảnh báo kết quả học tập không quá 16 tín chỉ "
+        "đăng ký khối lượng học tập Điều 9 quy chế đào tạo đại học chính quy"
+    )
+    docs = await search_documents(
+        targeted_query,
+        source_type_filter=INTERNAL_SOURCE_TYPE,
+        ambiguity_decision={"action": DIRECT_RETRIEVAL},
+    )
+    matched_docs = [
+        doc for doc in docs or []
+        if _credit_load_warning_answer(question, [doc])[0]
+    ]
+    return matched_docs[:2]
 
 
 def _procedure_sources_fallback_answer(question: str, docs: list[dict]) -> tuple[str | None, list[dict]]:
@@ -1985,6 +2375,33 @@ async def _answer_with_aggregate_documents(
         })
         selected_internal = policy_internal
 
+    credit_load_answer, credit_load_docs = _credit_load_warning_answer(question, selected_internal)
+    if not credit_load_answer and "credit_load_warning" in academic_policy_terms:
+        credit_load_docs = await _credit_load_warning_targeted_docs(question)
+        credit_load_answer, credit_load_docs = _credit_load_warning_answer(question, credit_load_docs)
+    if credit_load_answer:
+        trace.add_step("policy_deterministic_answer", {
+            "reason": "credit_load_warning_16_credit_clause_before_soft_selection",
+            "source_count": len(credit_load_docs),
+            "sources": [
+                {
+                    "doc_name": doc.get("doc_name"),
+                    "title": doc.get("title"),
+                    "chunk_index": doc.get("chunk_index"),
+                    "source_type": doc.get("source_type"),
+                }
+                for doc in credit_load_docs
+            ],
+        })
+        best_doc = credit_load_docs[0]
+        return _finalize(trace, {
+            "question": question,
+            "answer": credit_load_answer,
+            "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
+            "sources": _build_sources(credit_load_docs, question),
+            "intent": intent,
+        })
+
     if (
         academic_policy_terms
         and selected_internal
@@ -2084,6 +2501,30 @@ async def _answer_with_aggregate_documents(
             "website_uneti_fallback",
             "aggregate_no_confident_source",
         )
+
+    credit_load_answer, credit_load_docs = _credit_load_warning_answer(question, docs)
+    if credit_load_answer:
+        trace.add_step("policy_deterministic_answer", {
+            "reason": "credit_load_warning_16_credit_clause",
+            "source_count": len(credit_load_docs),
+            "sources": [
+                {
+                    "doc_name": doc.get("doc_name"),
+                    "title": doc.get("title"),
+                    "chunk_index": doc.get("chunk_index"),
+                    "source_type": doc.get("source_type"),
+                }
+                for doc in credit_load_docs
+            ],
+        })
+        best_doc = credit_load_docs[0]
+        return _finalize(trace, {
+            "question": question,
+            "answer": credit_load_answer,
+            "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
+            "sources": _build_sources(credit_load_docs, question),
+            "intent": intent,
+        })
 
     internal_retrieval_debug = internal_state.get("retrieval_debug") or {}
     generation_retrieval_debug = (

@@ -13,6 +13,8 @@ SV_BUSINESS_TERMS = (
     "diem danh", "tra cuu diem danh", "chuyen can", "diem chuyen can",
     "so buoi vang", "so tiet vang", "ty le vang", "nghi co phep",
     "nghi khong phep", "ren luyen", "chuong trinh dao tao",
+    "canh bao hoc tap", "khoi luong hoc tap", "chuyen truong",
+    "hoc cai thien", "hoc phan tu chon", "hoc cung luc hai chuong trinh",
 )
 CBGV_BUSINESS_TERMS = (
     "lich day", "khoi luong giang day", "cong tac giang vien", "coi thi",
@@ -32,6 +34,7 @@ PROCEDURE_SIGNALS = (
     "gui yeu cau", "nop don", "thuc hien phuc khao", "huong dan",
     "thi lai", "hoan thi",
     "dang ky thi lai", "dang ki thi lai", "huy dang ky thi lai", "huy dang ki thi lai",
+    "huy dang ky hoc phan", "huy hoc phan", "rut bot hoc phan", "rut hoc phan",
 )
 POLICY_SIGNALS = (
     "quy dinh", "quy che", "quyet dinh", "thong bao", "van ban",
@@ -40,6 +43,10 @@ POLICY_SIGNALS = (
     "theo chuong", "theo van ban", "co bi", "bi cam thi", "cam thi",
     "khong duoc thi", "diem chuyen can", "nghi hoc khong phep",
     "nghi hoc co phep", "nghi hoc tren", "so tiet vang", "ty le vang",
+    "dang ky khoi luong hoc tap", "rut bot hoc phan", "huy dang ky hoc phan",
+    "canh bao hoc tap", "khoi luong hoc tap", "so tin chi", "bao nhieu tin chi",
+    "chuyen truong", "hoc phan tu chon", "hoc doi", "hoc cai thien",
+    "diem f", "f+", "tin chi tuong duong", "bao nhieu tiet",
 )
 
 

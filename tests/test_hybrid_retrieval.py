@@ -191,6 +191,250 @@ def test_exam_retake_policy_query_does_not_expand_to_hoc_lai():
     assert "dieu 11" not in expanded
 
 
+def test_gpa_query_expands_to_cumulative_average_terms():
+    expanded = retrieval._academic_policy_retrieval_query("gpa la gi")
+
+    assert retrieval._policy_query_profile("gpa la gi") == "grade_average"
+    assert "diem trung binh tich luy" in retrieval.normalize_text(expanded)
+    assert "diem trung binh hoc tap" in retrieval.normalize_text(expanded)
+    assert "tinh diem trung binh" in retrieval.normalize_text(expanded)
+    assert "dieu 20" in retrieval.normalize_text(expanded)
+
+
+def test_course_registration_change_query_expands_to_article_10_terms():
+    question = "cach huy hoc phan da dang ky"
+    expanded = retrieval._academic_policy_retrieval_query(question)
+    normalized = retrieval.normalize_text(expanded)
+
+    assert retrieval._policy_query_profile(question) == "course_registration_change"
+    assert "huy dang ky hoc phan" in normalized
+    assert "rut bot hoc phan" in normalized
+    assert "dang ky khoi luong hoc tap" in normalized
+    assert "dieu 10" in normalized
+    assert "dieu 9" in normalized
+
+
+def test_course_registration_change_priority_prefers_registration_article():
+    question = "cach huy hoc phan da dang ky"
+    direct_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy.docx",
+        "title": "Dieu 10. Rut bot hoc phan da dang ky",
+        "content": "Sinh vien duoc rut bot hoc phan trong thoi gian dang ky hoc phan.",
+        "dieu": 10,
+        "keyword_score": 10,
+    }
+    noisy_doc = {
+        "doc_name": "TTNNTH_Quy doi chung chi tieng Anh.docx",
+        "title": "Quy doi chung chi tieng Anh",
+        "content": "Hoc phan da dang ky va chung chi tieng Anh TOEIC IELTS.",
+        "keyword_score": 90,
+    }
+
+    results = retrieval._prioritize_policy_results(question, [noisy_doc, direct_doc])
+
+    assert results[0]["title"] == "Dieu 10. Rut bot hoc phan da dang ky"
+
+
+def test_credit_load_warning_query_expands_to_article_9_terms():
+    question = "em dang bi canh bao hoc tap thi toi da duoc dang ky bao nhieu tin chi"
+    expanded = retrieval._academic_policy_retrieval_query(question)
+    normalized = retrieval.normalize_text(expanded)
+
+    assert retrieval._policy_query_profile(question) == "credit_load_warning"
+    assert "canh bao hoc tap" in normalized
+    assert "dang ky khoi luong hoc tap" in normalized
+    assert "16 tin chi" in normalized
+    assert "dieu 9" in normalized
+    assert "120 tin chi" not in normalized
+    assert "150 tin chi" not in normalized
+
+
+def test_credit_load_warning_priority_prefers_training_regulation():
+    question = "em dang bi canh bao hoc tap thi toi da duoc dang ky bao nhieu tin chi"
+    direct_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy.docx",
+        "title": "Dieu 9. Dang ky khoi luong hoc tap",
+        "content": "Sinh vien bi canh bao hoc tap khong duoc dang ky qua 16 tin chi.",
+        "dieu": 9,
+        "keyword_score": 10,
+    }
+    noisy_doc = {
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "title": "Muc I -> 2 -> 2.2",
+        "content": "Thoi khoa bieu lich hoc lich thi dang ky hoc tap tin chi.",
+        "keyword_score": 90,
+    }
+
+    results = retrieval._prioritize_policy_results(question, [noisy_doc, direct_doc])
+
+    assert results[0]["title"] == "Dieu 9. Dang ky khoi luong hoc tap"
+
+
+def test_credit_load_warning_priority_prefers_specific_16_credit_clause():
+    question = "em dang bi canh bao hoc tap thi toi da duoc dang ky bao nhieu tin chi"
+    generic_clause = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy.docx",
+        "title": "Dieu 9. Dang ky khoi luong hoc tap (1)",
+        "content": (
+            "Khoi luong hoc tap toi da la 3/2 so tin chi trung binh mot hoc ky. "
+            "Sinh vien vua bi canh bao hoc tap o hoc ky truoc do."
+        ),
+        "dieu": 9,
+        "keyword_score": 100,
+    }
+    specific_clause = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy.docx",
+        "title": "Dieu 9. Dang ky khoi luong hoc tap (2)",
+        "content": (
+            "Sinh vien dang trong thoi gian bi canh bao ket qua hoc tap chi duoc "
+            "dang ky khoi luong hoc tap khong qua 16 tin chi cho moi hoc ky."
+        ),
+        "dieu": 9,
+        "keyword_score": 80,
+    }
+
+    results = retrieval._prioritize_policy_results(question, [generic_clause, specific_clause])
+
+    assert results[0]["title"] == "Dieu 9. Dang ky khoi luong hoc tap (2)"
+
+
+def test_transfer_school_query_expands_to_article_28_terms():
+    question = "toi muon chuyen truong khong phai chuyen chuong trinh dao tao"
+    expanded = retrieval._academic_policy_retrieval_query(question)
+    normalized = retrieval.normalize_text(expanded)
+
+    assert retrieval._policy_query_profile(question) == "transfer_school"
+    assert "chuyen truong" in normalized
+    assert "hieu truong" in normalized
+    assert "dieu 28" in normalized
+
+
+def test_transfer_school_priority_rejects_master_regulation():
+    question = "toi muon chuyen truong khong phai chuyen chuong trinh dao tao"
+    undergraduate_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy_832_20092023.docx",
+        "title": "Dieu 28. Chuyen truong",
+        "content": "Sinh vien duoc xet chuyen truong khi co dong y cua Hieu truong va cung nganh dao tao.",
+        "dieu": 28,
+        "keyword_score": 30,
+    }
+    master_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che tuyen sinh va dao tao trinh do thac si_834_20092023.docx",
+        "title": "Dieu 20. Chuyen truong doi voi hoc vien thac si",
+        "content": "Hoc vien thac si duoc xet chuyen truong theo quy che dao tao trinh do thac si.",
+        "keyword_score": 100,
+    }
+
+    results = retrieval._prioritize_policy_results(question, [master_doc, undergraduate_doc])
+
+    assert results[0]["title"] == "Dieu 28. Chuyen truong"
+
+
+def test_elective_failed_course_query_expands_to_article_11_terms():
+    question = "neu em bi F mon tu chon thi co the chon mon khac thay the khong"
+    expanded = retrieval._academic_policy_retrieval_query(question)
+    normalized = retrieval.normalize_text(expanded)
+
+    assert retrieval._policy_query_profile(question) == "elective_failed_course"
+    assert "hoc phan tu chon" in normalized
+    assert "hoc doi" in normalized
+    assert "tuong duong" in normalized
+    assert "dieu 11" in normalized
+
+
+def test_elective_failed_course_priority_prefers_article_11():
+    question = "neu em bi F mon tu chon thi co the chon mon khac thay the khong"
+    direct_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy_832_20092023.docx",
+        "title": "Dieu 11. Hoc lai, hoc cai thien diem",
+        "content": "Hoc phan tu chon bi diem F F+ thi sinh vien co the hoc doi sang hoc phan khac tuong duong.",
+        "dieu": 11,
+        "keyword_score": 30,
+    }
+    weak_doc = {
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "title": "Lop hoc phan",
+        "content": "Sinh vien xem lop hoc phan va so tin chi tren web support.",
+        "keyword_score": 100,
+    }
+
+    results = retrieval._prioritize_policy_results(question, [weak_doc, direct_doc])
+
+    assert results[0]["title"] == "Dieu 11. Hoc lai, hoc cai thien diem"
+
+
+def test_f_grade_comparison_query_expands_to_articles_16_and_11():
+    question = "diem F+ va F khac nhau nhu the nao co phai hoc lai ca hai khong"
+    expanded = retrieval._academic_policy_retrieval_query(question)
+    normalized = retrieval.normalize_text(expanded)
+
+    assert retrieval._policy_query_profile(question) == "f_grade_comparison"
+    assert "diem chu" in normalized
+    assert "dieu 16" in normalized
+    assert "dieu 11" in normalized
+
+
+def test_f_grade_comparison_priority_keeps_grade_and_retake_articles():
+    question = "diem F+ va F khac nhau nhu the nao co phai hoc lai ca hai khong"
+    grade_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy_832_20092023.docx",
+        "title": "Dieu 16. Thang diem danh gia",
+        "content": "Diem hoc phan duoc quy doi sang diem chu F+ va F theo thang diem.",
+        "dieu": 16,
+        "keyword_score": 20,
+    }
+    retake_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy_832_20092023.docx",
+        "title": "Dieu 11. Hoc lai, hoc doi hoc phan",
+        "content": "Hoc phan bat buoc khong dat phai hoc lai; hoc phan tu chon co the hoc doi hoc phan tuong duong.",
+        "dieu": 11,
+        "keyword_score": 20,
+    }
+    noisy_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che tuyen sinh va dao tao trinh do thac si_834_20092023.docx",
+        "title": "Diem hoc vien thac si",
+        "content": "Hoc vien thac si co diem F.",
+        "keyword_score": 200,
+    }
+
+    results = retrieval._prioritize_policy_results(question, [noisy_doc, retake_doc, grade_doc])
+
+    assert {results[0]["dieu"], results[1]["dieu"]} == {11, 16}
+
+
+def test_credit_definition_query_expands_to_article_2_terms():
+    question = "mot tin chi tuong duong voi bao nhieu tiet hoc ly thuyet va thuc hanh"
+    expanded = retrieval._academic_policy_retrieval_query(question)
+    normalized = retrieval.normalize_text(expanded)
+
+    assert retrieval._policy_query_profile(question) == "credit_definition"
+    assert "15 tiet" in normalized
+    assert "30 tiet" in normalized
+    assert "45 60 gio" in normalized
+    assert "dieu 2" in normalized
+
+
+def test_credit_definition_priority_prefers_article_2_full_definition():
+    question = "mot tin chi tuong duong voi bao nhieu tiet hoc ly thuyet va thuc hanh"
+    direct_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy che dao tao dai hoc chinh quy_832_20092023.docx",
+        "title": "Dieu 2. Tin chi",
+        "content": "Mot tin chi bang 15 tiet ly thuyet, 30 tiet thuc hanh, 30 40 gio thuc tap, 45 60 gio lam tieu luan do an.",
+        "dieu": 2,
+        "keyword_score": 30,
+    }
+    noisy_doc = {
+        "doc_name": "DHKTKTCN_PDT_QD_2025_12_09_Quy dinh xay dung chuong trinh dao tao_833_20092023.docx",
+        "title": "Khoi luong kien thuc",
+        "content": "Chuong trinh cu nhan co 120 tin chi, ky su co 150 tin chi.",
+        "keyword_score": 120,
+    }
+
+    results = retrieval._prioritize_policy_results(question, [noisy_doc, direct_doc])
+
+    assert results[0]["title"] == "Dieu 2. Tin chi"
+
+
 def test_policy_priority_prefers_direct_attendance_exam_source():
     question = "nghi hoc khong phep co bi cam thi khong"
     direct_doc = {
