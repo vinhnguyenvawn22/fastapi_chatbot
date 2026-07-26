@@ -87,6 +87,111 @@ def test_rrf_deduplicates_same_chunk():
     assert results[0]["vector_score"] == 0.8
 
 
+def test_local_business_query_gives_ann_a_bounded_rrf_advantage():
+    bm25_doc = _doc(
+        "regulation.pdf",
+        1,
+        retrieval_branches=["bm25_original"],
+    )
+    ann_doc = _doc(
+        "guide.docx",
+        1,
+        retrieval_branches=["ann_original"],
+    )
+
+    results = retrieval._merge_with_rrf(
+        [[bm25_doc], [ann_doc]],
+        limit=2,
+        branch_weights=retrieval._local_rrf_branch_weights(
+            "Trên màn hình thống kê một cửa, tôi xuất Excel thế nào?"
+        ),
+    )
+
+    assert results[0]["doc_name"] == "guide.docx"
+    assert retrieval._local_query_profile("Điều 15 khoản 2 quy định gì?") == "legal"
+    assert retrieval._local_query_profile(
+        "Tôi xem chi tiết điểm thành phần của môn học thế nào?"
+    ) == "business"
+
+
+def test_local_rank_uses_cross_encoder_as_primary_signal():
+    strong = _doc(
+        "regulation.pdf",
+        1,
+        document_type="regulation",
+        rerank_score=8.0,
+        rrf_score=0.02,
+    )
+    weak_business = _doc(
+        "guide.docx",
+        1,
+        document_type="business_document",
+        rerank_score=1.0,
+        rrf_score=0.03,
+    )
+
+    results = retrieval._rank_local_documents(
+        "Nhấn nút nào trên màn hình để xuất Excel?",
+        [strong, weak_business],
+        limit=2,
+    )
+
+    assert results[0]["doc_name"] == "regulation.pdf"
+    assert results[0]["local_final_score"] > results[1]["local_final_score"]
+
+
+def test_local_rank_uses_business_anchor_to_reject_semantic_neighbor():
+    correct = {
+        **_doc("guide.docx", 1),
+        "title": "Man Bao hong",
+        "content": "Nhap mo ta su co thiet bi, sau do nhan Gui yeu cau.",
+        "document_type": "business_document",
+        "rerank_score": -2.0,
+        "rrf_score": 0.02,
+    }
+    wrong = {
+        **_doc("graduation.docx", 1),
+        "title": "Dang ky tot nghiep",
+        "content": "Hoan tat ho so va gui yeu cau xet tot nghiep.",
+        "document_type": "business_document",
+        "rerank_score": -1.8,
+        "rrf_score": 0.021,
+    }
+
+    results = retrieval._rank_local_documents(
+        "Sau khi mo ta su co thiet bi, toi lam gi de gui yeu cau?",
+        [wrong, correct],
+        limit=2,
+    )
+
+    assert results[0]["doc_name"] == "guide.docx"
+
+
+def test_local_legal_rank_prefers_matching_document_name():
+    correct = {
+        **_doc("Quy che dao tao dai hoc chinh quy 832.docx", 1),
+        "title": "Dieu 15",
+        "document_type": "regulation",
+        "rerank_score": 1.0,
+        "rrf_score": 0.02,
+    }
+    wrong = {
+        **_doc("Quy che cong tac sinh vien dao tao dai hoc chinh quy.pdf", 1),
+        "title": "Dieu 15",
+        "document_type": "regulation",
+        "rerank_score": 1.0,
+        "rrf_score": 0.02,
+    }
+
+    results = retrieval._rank_local_documents(
+        "Dieu 15 Quy che dao tao dai hoc chinh quy quy dinh gi?",
+        [wrong, correct],
+        limit=2,
+    )
+
+    assert results[0]["doc_name"] == correct["doc_name"]
+
+
 def test_bm25_prioritizes_document_number_and_department(monkeypatch):
     weak = {
         **_doc("general.pdf", 1),
@@ -191,6 +296,18 @@ def test_exam_retake_policy_query_does_not_expand_to_hoc_lai():
     assert "dieu 11" not in expanded
 
 
+def test_policy_profile_does_not_match_inside_business_words():
+    assert retrieval._policy_query_profile(
+        "video huong dan nghiep vu chuyen mon"
+    ) is None
+    assert retrieval._policy_query_profile(
+        "mo ta su co thiet bi roi hoan tat gui yeu cau"
+    ) is None
+    assert retrieval._policy_query_profile(
+        "du lieu lop hoc phan da duoc dong bo"
+    ) is None
+
+
 def test_gpa_query_expands_to_cumulative_average_terms():
     expanded = retrieval._academic_policy_retrieval_query("gpa la gi")
 
@@ -199,6 +316,100 @@ def test_gpa_query_expands_to_cumulative_average_terms():
     assert "diem trung binh hoc tap" in retrieval.normalize_text(expanded)
     assert "tinh diem trung binh" in retrieval.normalize_text(expanded)
     assert "dieu 20" in retrieval.normalize_text(expanded)
+
+
+def test_graduation_classification_profile_targets_article_25():
+    question = "dieu kien tot nghiep la gi va dieu kien tot nghiep loai gioi"
+
+    assert retrieval._policy_query_profile(question) == "graduation_classification"
+
+    expanded = retrieval.normalize_text(
+        retrieval._academic_policy_retrieval_query(question)
+    )
+    assert "hang tot nghiep" in expanded
+    assert "hoc lai vuot qua 5 phan tram" in expanded
+    assert "dieu kien xet tot nghiep" in expanded
+    assert "dieu 24" in expanded
+    assert retrieval._effective_final_top_k(question, "local_file") >= 8
+
+    article_24 = {
+        "title": "Dieu 24. Dieu kien xet tot nghiep",
+        "content": "Sinh vien duoc cong nhan tot nghiep khi du cac dieu kien.",
+        "doc_name": "Quy che dao tao dai hoc chinh quy.docx",
+        "dieu": 24,
+    }
+    article_25 = {
+        "title": "Dieu 25. Cap bang tot nghiep",
+        "content": (
+            "Hang tot nghiep duoc xac dinh theo diem trung binh tich luy. "
+            "Loai gioi tu 3,20 den 3,59; hoc lai vuot qua 5% thi giam di mot muc."
+        ),
+        "doc_name": "Quy che dao tao dai hoc chinh quy.docx",
+        "dieu": 25,
+    }
+
+    assert retrieval._policy_result_priority(question, article_25) > (
+        retrieval._policy_result_priority(question, article_24)
+    )
+
+
+def test_exam_defer_how_to_query_uses_business_local_ranking():
+    question = "toi muon hoan thi thi lam the nao"
+    procedure_doc = {
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+        "title": "1.5. Hoan thi",
+        "content": (
+            "Huong dan sinh vien de nghi hoan thi. Buoc 1 dang nhap he thong. "
+            "Buoc 2 chon Thu tuc hanh chinh, Mot cua - Khao thi, Hoan thi. "
+            "Buoc 3 dien du lieu. Buoc 4 gui yeu cau."
+        ),
+        "document_type": "business_document",
+        "source_type": "local_file",
+        "relative_path": "nghiep_vu/web-support-sv.docx",
+        "chunk_index": 17,
+        "rerank_score": -1.0,
+        "rrf_score": 0.02,
+    }
+    policy_doc = {
+        "doc_name": "Quy che dao tao dai hoc chinh quy.docx",
+        "title": "Dieu 16. Cach tinh diem hoc phan",
+        "content": "Diem I duoc ap dung khi sinh vien duoc phep hoan thi.",
+        "document_type": "regulation",
+        "source_type": "local_file",
+        "relative_path": "quy-che.docx",
+        "chunk_index": 31,
+        "rerank_score": 0.0,
+        "rrf_score": 0.03,
+    }
+    master_doc = {
+        **policy_doc,
+        "doc_name": "Quy che dao tao trinh do thac si.docx",
+        "relative_path": "quy-che-thac-si.docx",
+        "title": "Dieu 21. Thi, kiem tra, danh gia",
+        "chunk_index": 36,
+        "rerank_score": 0.5,
+    }
+
+    assert retrieval._policy_query_profile(question) == "exam_defer"
+    assert retrieval._local_query_profile(question) == "business"
+
+    ranked = retrieval._rank_local_documents(
+        question,
+        [policy_doc, procedure_doc, master_doc],
+        limit=3,
+    )
+    assert ranked[0]["title"] == "1.5. Hoan thi"
+    assert ranked[-1]["doc_name"] == "Quy che dao tao trinh do thac si.docx"
+
+
+def test_exam_defer_multi_aspect_queries_choose_different_local_profiles():
+    condition_question = "Dieu kien hoan thi la gi"
+    procedure_question = "thu tuc xin hoan thi thuc hien nhu the nao"
+
+    assert retrieval._local_query_profile(condition_question) == "neutral"
+    assert retrieval._policy_query_profile(condition_question) == "exam_defer"
+    assert retrieval._local_query_profile(procedure_question) == "business"
+    assert retrieval._policy_query_profile(procedure_question) == "exam_defer"
 
 
 def test_course_registration_change_query_expands_to_article_10_terms():

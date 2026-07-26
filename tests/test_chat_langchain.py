@@ -31,6 +31,7 @@ client = TestClient(app)
         ("/api/chat/", "handle_chat"),
         ("/api/chat/business", "handle_business_chat"),
         ("/api/chat/internal", "handle_internal_chat"),
+        ("/api/chat/local-documents", "handle_local_documents_chat"),
         ("/api/chat/website", "handle_website_chat"),
     ],
 )
@@ -74,6 +75,33 @@ def test_document_prompt_is_preserved_through_chat_prompt_template():
     assert "Noi dung van ban?" in prompt
     assert "<NGUON>noi dung</NGUON>" in prompt
     assert not prompt.startswith("Human:")
+
+
+def test_local_documents_retriever_uses_hard_filters(monkeypatch):
+    captured = {}
+
+    async def fake_search(question, **kwargs):
+        captured["question"] = question
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(langchain_pipeline, "search_documents", fake_search)
+    result = asyncio.run(
+        langchain_pipeline.retrieve_local_documents({
+            "question": "Quy dinh canh bao hoc tap?",
+            "reason": "test",
+        })
+    )
+
+    assert result["docs"] == []
+    assert captured["source_type_filter"] == "local_file"
+    assert captured["corpus_filter"] == "local_documents"
+    assert captured["rag_enabled_filter"] is True
+    assert captured["exclude_document_names"] == {"PCNTT_MAPPING_FILE.docx"}
+    assert captured["exclude_source_types"] == {
+        "website_uneti",
+        "business_faq_mapping",
+    }
 
 
 def test_document_prompt_includes_interpreted_question_without_replacing_original():
@@ -594,11 +622,11 @@ def test_diverse_aggregate_selection_limits_single_document_dominance():
     assert any(doc["doc_name"] == "quy-che-b.docx" for doc in selected)
 
 
-def test_internal_retrieval_defaults_to_official_document_filter(monkeypatch):
+def test_internal_retrieval_defaults_to_local_document_filter(monkeypatch):
     captured = {}
 
-    async def fake_search_documents(question, debug=None, source_type_filter=None, ambiguity_decision=None):
-        captured["source_type_filter"] = source_type_filter
+    async def fake_search_documents(question, debug=None, **kwargs):
+        captured.update(kwargs)
         if debug is not None:
             debug["final_sources"] = []
         return []
@@ -613,7 +641,9 @@ def test_internal_retrieval_defaults_to_official_document_filter(monkeypatch):
         })
     )
 
-    assert captured["source_type_filter"] == "official_document"
+    assert captured["source_type_filter"] == "local_file"
+    assert captured["corpus_filter"] == "local_documents"
+    assert captured["rag_enabled_filter"] is True
     assert result["docs"] == []
 
 
@@ -670,7 +700,7 @@ def test_academic_policy_question_blocks_business_direct_answer(monkeypatch):
         }
 
     async def fake_internal(state):
-        assert state["source_type_filter"] == "official_document"
+        assert state["source_type_filter"] == "local_file"
         return {**state, "docs": [internal_doc], "retrieval_debug": {}}
 
     async def fake_generate(state):
@@ -1006,6 +1036,171 @@ def test_credit_definition_policy_filter_prefers_article_2():
 
     assert chatbot_controller._matches_academic_policy_source(question, direct_doc)
     assert not chatbot_controller._matches_academic_policy_source(question, noisy_doc)
+
+
+def test_graduation_answer_combines_requirements_and_good_classification():
+    question = "dieu kien tot nghiep la gi va dieu kien tot nghiep loai gioi"
+    requirements_doc = {
+        "source_type": "local_file",
+        "title": "Dieu 24. Dieu kien xet tot nghiep va cong nhan tot nghiep",
+        "content": (
+            "Dieu kien xet tot nghiep. Sinh vien duoc Truong xet va cong nhan tot nghiep "
+            "khi tich luy du hoc phan, diem trung binh tich luy tu 2,00, co chung chi "
+            "ngoai ngu va tin hoc."
+        ),
+        "doc_name": "Quy che dao tao dai hoc chinh quy.docx",
+        "dieu": 24,
+    }
+    classification_doc = {
+        "source_type": "local_file",
+        "title": "Dieu 25. Cap bang tot nghiep",
+        "content": (
+            "Hang tot nghiep: loai gioi co diem trung binh tich luy tu 3,20 den 3,59. "
+            "Hang tot nghiep bi giam mot muc neu hoc lai vuot qua 5% tong so tin chi "
+            "hoac bi ky luat tu muc canh cao."
+        ),
+        "doc_name": "Quy che dao tao dai hoc chinh quy.docx",
+        "dieu": 25,
+    }
+
+    answer, sources = chatbot_controller._graduation_classification_answer(
+        question,
+        [classification_doc, requirements_doc],
+    )
+
+    assert "Điều kiện được xét và công nhận tốt nghiệp" in answer
+    assert "Điều kiện xếp loại tốt nghiệp giỏi" in answer
+    assert "3,20 đến 3,59" in answer
+    assert "vượt quá 5%" in answer
+    assert [doc["dieu"] for doc in sources] == [24, 25]
+
+
+def test_exam_defer_answer_combines_policy_and_procedure_sources():
+    question = (
+        "Dieu kien hoan thi la gi va "
+        "thu tuc xin hoan thi thuc hien nhu the nao?"
+    )
+    policy_doc = {
+        "source_type": "local_file",
+        "title": "Dieu 16. Cach tinh diem hoc phan",
+        "content": (
+            "Diem I duoc ap dung khi sinh vien bi om hoac tai nan khong the du thi "
+            "va duoc Nha truong cho phep; ly do khach quan duoc Truong Khoa chap thuan."
+        ),
+        "doc_name": "Quy che dao tao dai hoc chinh quy.docx",
+        "dieu": 16,
+    }
+    procedure_doc = {
+        "source_type": "local_file",
+        "title": "1.5. Hoan thi",
+        "content": (
+            "Huong dan hoan thi tai Mot cua - Khao thi. Buoc 1 dang nhap. "
+            "Buoc 2 truy cap support.uneti.edu.vn/mot-cua/khao-thi/hoan-thi. "
+            "Buoc 3 dien du lieu. Buoc 4 chon hoc phan va Gui yeu cau."
+        ),
+        "doc_name": "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx",
+    }
+
+    answer, sources = chatbot_controller._exam_defer_answer(
+        question,
+        [policy_doc, procedure_doc],
+    )
+
+    assert "1. Điều kiện hoãn thi" in answer
+    assert "2. Thủ tục xin hoãn thi" in answer
+    assert "support.uneti.edu.vn/mot-cua/khao-thi/hoan-thi" in answer
+    assert "MC-KT-05" in answer
+    assert [doc["title"] for doc in sources] == [
+        "Dieu 16. Cach tinh diem hoc phan",
+        "1.5. Hoan thi",
+    ]
+
+
+def test_local_endpoint_retrieves_each_detected_aspect_separately(monkeypatch):
+    question = (
+        "Dieu kien chuyen truong la gi va "
+        "ho so chuyen truong can nhung gi?"
+    )
+    base_doc = {
+        "source_type": "local_file",
+        "title": "Thong tin chung",
+        "content": "Thong tin chung ve sinh vien.",
+        "doc_name": "base.docx",
+        "relative_path": "base.docx",
+        "chunk_index": 1,
+        "keyword_score": 50.0,
+    }
+    condition_doc = {
+        "source_type": "local_file",
+        "title": "Dieu kien chuyen truong",
+        "content": "Cac dieu kien sinh vien duoc xem xet chuyen truong.",
+        "doc_name": "condition.docx",
+        "relative_path": "condition.docx",
+        "chunk_index": 1,
+        "keyword_score": 90.0,
+    }
+    dossier_doc = {
+        "source_type": "local_file",
+        "title": "Ho so chuyen truong",
+        "content": (
+            "Ho so chuyen truong gom don xin chuyen truong, bang diem "
+            "va cac giay to minh chung."
+        ),
+        "doc_name": "dossier.docx",
+        "relative_path": "dossier.docx",
+        "chunk_index": 1,
+        "keyword_score": 90.0,
+    }
+    retrieval_questions = []
+    generated_states = []
+
+    async def fake_retrieve(state):
+        retrieval_questions.append(state["question"])
+        if state["question"] == question:
+            docs = [base_doc]
+        elif state["question"] == "Dieu kien chuyen truong la gi":
+            docs = [condition_doc]
+        else:
+            docs = [dossier_doc]
+        return {**state, "docs": docs, "retrieval_debug": {}}
+
+    async def fake_generate(state):
+        generated_states.append(state)
+        return {
+            **state,
+            "answer": (
+                "[Y_1]\nTra loi dieu kien.\n[/Y_1]\n"
+                "[Y_2]\nTra loi ho so.\n[/Y_2]"
+            ),
+        }
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_local_documents", fake_retrieve)
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_has_confident_evidence",
+        lambda question, docs: (bool(docs), "mock"),
+    )
+
+    result = asyncio.run(
+        chatbot_controller._answer_with_local_documents(
+            RagTrace(question),
+            question,
+            "internal_document",
+            "test_multi_aspect",
+        )
+    )
+
+    assert retrieval_questions[0] == question
+    assert "Dieu kien chuyen truong la gi" in retrieval_questions
+    assert "ho so chuyen truong can nhung gi" in retrieval_questions
+    assert len(generated_states) == 1
+    assert len(generated_states[0]["required_aspects"]) == 2
+    assert [doc["doc_name"] for doc in generated_states[0]["docs"][:2]] == [
+        "condition.docx",
+        "dossier.docx",
+    ]
+    assert result["answer"] == "Tra loi dieu kien.\nTra loi ho so."
 
 
 def test_attendance_exam_policy_drops_business_and_prefers_training_regulation(monkeypatch):
@@ -1573,6 +1768,46 @@ def test_gemini_exception_uses_extractive_fallback_from_sources(monkeypatch):
 
     assert "camera" in result["answer"]
     assert "Quy định camera" in result["answer"]
+
+
+def test_gemini_error_uses_single_business_procedure_source(monkeypatch):
+    monkeypatch.setattr(
+        langchain_pipeline,
+        "ask_gemini",
+        lambda prompt: "Loi khi goi Gemini API. Vui long thu lai sau.",
+    )
+    state = {
+        "question": "Tôi kiểm tra số giờ coi thi và chấm thi ở đâu?",
+        "prompt": "prompt",
+        "docs": [
+            {
+                "title": "Màn Khối lượng coi - chấm thi",
+                "doc_name": "AI_HDSD TREN WEB SUPPORT CBGV.docx",
+                "document_type": "business_document",
+                "content": (
+                    "Tài liệu hướng dẫn\n"
+                    "Chức năng: Xem khối lượng coi thi và chấm thi.\n"
+                    "B1: Đăng nhập tại https://support.uneti.edu.vntruy cập trực tiếp đường dẫn:\n"
+                    "https://support.uneti.edu.vn/cong-tac-giang-vien/tra-cuu/khoi-luong-coi-cham-thi\n"
+                    "B3: Chọn năm học và học kỳ.\n"
+                    "B4: Xem số tiết và trạng thái.\n"
+                    "Lưu ý: Kiểm tra kỹ số tiết."
+                ),
+            },
+            {
+                "title": "Quy định thanh tra",
+                "doc_name": "quy-dinh.docx",
+                "content": "Thanh tra công tác chấm thi.",
+            },
+        ],
+    }
+
+    result = asyncio.run(langchain_pipeline._generate_answer(state))
+
+    assert "Xem khối lượng coi thi và chấm thi" in result["answer"]
+    assert "support.uneti.edu.vn/cong-tac-giang-vien" in result["answer"]
+    assert "Chọn năm học và học kỳ" in result["answer"]
+    assert "Quy định thanh tra" not in result["answer"]
 
 
 def test_hyde_only_source_requires_rerank_score(monkeypatch):

@@ -1,0 +1,9 @@
+INFO:     127.0.0.1:58792 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58798 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52773 - "GET /api/chat/traces/16389c59-6349-4c1d-b551-110394d6893f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58797 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58796 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52774 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52782 - "GET /api/chat/traces/3152af95-e5b5-4b27-afc1-0b05f03fe017 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52784 - "GET /api/chat/traces/2d964a4f-1f73-47c5-a463-b55b946b80b7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52783 - "GET /api/chat/traces/53ae4cb6-9ede-46a4-80ff-5cbe5f7c4ef0 HTTP/1.1" 200 OK

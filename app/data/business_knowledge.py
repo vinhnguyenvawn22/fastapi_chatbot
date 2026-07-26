@@ -47,6 +47,8 @@ BUSINESS_SOURCE_TYPE = "business_document"
 BUSINESS_GUIDED_VECTOR_MIN_SCORE = 0.35
 BUSINESS_INDEX_CACHE_VERSION = 3
 BUSINESS_MAPPING_MIN_TOPIC_OVERLAP = 2
+SURVEY_FALLBACK_DOC_NAME = "2026.03.03.ChatbotAI_CBGV_SV_V4.docx"
+PROCEDURE_EVALUATION_LOCATION = "Mục III -> 6"
 
 _XLSX_NS = {
     "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
@@ -2254,6 +2256,94 @@ def _source_chunks_for_mapping(mapping: dict, chunks: list[dict]) -> list[dict]:
     ]
 
 
+def _is_survey_mapping_or_query(query: str, mapping: dict | None = None) -> bool:
+    searchable = normalize_text(
+        " ".join([
+            str(query or ""),
+            str((mapping or {}).get("faq_question") or ""),
+            str((mapping or {}).get("faq_answer") or ""),
+            str((mapping or {}).get("faq_keywords") or ""),
+            str((mapping or {}).get("faq_location") or ""),
+        ])
+    )
+    return "khao sat" in searchable or "phieu khao sat" in searchable
+
+
+def _is_procedure_evaluation_mapping_or_query(
+    query: str,
+    mapping: dict | None = None,
+) -> bool:
+    searchable = normalize_text(
+        " ".join([
+            str(query or ""),
+            str((mapping or {}).get("faq_question") or ""),
+            str((mapping or {}).get("faq_answer") or ""),
+            str((mapping or {}).get("faq_keywords") or ""),
+            str((mapping or {}).get("faq_location") or ""),
+        ])
+    )
+    return (
+        "danh gia thu tuc" in searchable
+        or (
+            "danh gia" in searchable
+            and "thu tuc hanh chinh" in searchable
+        )
+        or "muc do hai long" in searchable
+        or "phan hoi ve muc do hai long" in searchable
+    )
+
+
+def _retarget_procedure_evaluation_location(mapping: dict) -> tuple[dict, bool]:
+    if not _is_procedure_evaluation_mapping_or_query("", mapping):
+        return mapping, False
+
+    current_location = mapping.get("faq_location")
+    if current_location == PROCEDURE_EVALUATION_LOCATION:
+        return mapping, False
+
+    retargeted = dict(mapping)
+    retargeted.update({
+        "faq_location": PROCEDURE_EVALUATION_LOCATION,
+        "procedure_evaluation_location_override": True,
+        "procedure_evaluation_original_location": current_location,
+    })
+    return retargeted, True
+
+
+def _retarget_survey_mapping_source(
+    mapping: dict,
+    chunks: list[dict],
+) -> tuple[dict, list[dict], bool]:
+    """Survey FAQ rows are mapped to SV support, but detailed survey docs live in the catalog file."""
+    if not _is_survey_mapping_or_query("", mapping):
+        return mapping, [], False
+
+    target_doc = normalize_text(SURVEY_FALLBACK_DOC_NAME)
+    target_chunks = [
+        chunk
+        for chunk in chunks
+        if chunk.get("source_type") != BUSINESS_FAQ_SOURCE_TYPE
+        and normalize_text(chunk.get("doc_name", "")) == target_doc
+    ]
+    if not target_chunks:
+        return mapping, [], False
+
+    retargeted = dict(mapping)
+    first_chunk = target_chunks[0]
+    retargeted.update({
+        "doc_name": first_chunk.get("doc_name") or SURVEY_FALLBACK_DOC_NAME,
+        "relative_path": first_chunk.get("relative_path") or SURVEY_FALLBACK_DOC_NAME,
+        "source_relative_path": first_chunk.get("relative_path") or SURVEY_FALLBACK_DOC_NAME,
+        "source_file_found": True,
+        "file_path": first_chunk.get("file_path") or str(_business_path() / SURVEY_FALLBACK_DOC_NAME),
+        "source_root": first_chunk.get("source_root") or mapping.get("source_root"),
+        "survey_source_override": True,
+        "survey_original_doc_name": mapping.get("doc_name"),
+        "survey_original_relative_path": mapping.get("source_relative_path"),
+    })
+    return retargeted, target_chunks, True
+
+
 def _location_anchors(location: str) -> list[str]:
     normalized = normalize_text(location)
     normalized = normalized.replace("→", "->")
@@ -2402,6 +2492,38 @@ def _guided_keyword_score(query: str, mapping: dict, chunk: dict) -> float:
         if "mot cua" in searchable and "khao thi" in searchable:
             score += 90.0
         if any(term in searchable for term in ("khcn", "nghien cuu", "de tai", "nhiem vu kh&cn")):
+            score -= 180.0
+
+    if "khao sat" in normalized_query:
+        if "khao sat noi bo" in searchable:
+            score += 80.0
+        if "khao sat ben ngoai" in searchable:
+            score += 80.0
+        if any(term in normalized_query for term in ("loai", "khac biet", "may loai")):
+            if any(term in searchable for term in ("hai hinh thuc", "2 loai", "khao sat noi bo – yeu cau dang nhap")):
+                score += 160.0
+            if all(term in searchable for term in ("khao sat noi bo", "khao sat ben ngoai")):
+                score += 120.0
+            if any(term in searchable for term in ("buoc 3", "buoc 4", "nop khao sat")):
+                score -= 60.0
+        if any(term in normalized_query for term in ("quy trinh", "tham gia", "cach lam", "cac buoc", "nop phieu")):
+            if any(term in searchable for term in ("buoc 1", "buoc 2", "buoc 3", "nop khao sat")):
+                score += 140.0
+
+    if _is_procedure_evaluation_mapping_or_query(normalized_query, mapping):
+        if "danh gia thu tuc hanh chinh da xu ly" in searchable:
+            score += 240.0
+        if "mot-cua/danh-gia-thu-tuc-hanh-chinh" in searchable:
+            score += 180.0
+        if "thu tuc hanh chinh" in searchable and "danh gia" in searchable:
+            score += 120.0
+        if "muc do hai long" in searchable:
+            score += 100.0
+        if "5 muc" in searchable or "05 muc" in searchable:
+            score += 90.0
+        if "chi nhung thu tuc co trang thai da xu ly" in searchable:
+            score += 80.0
+        if any(term in searchable for term in ("khcn", "nghien cuu khoa hoc", "nhiem vu kh&cn")):
             score -= 180.0
 
     return round(score, 4)
@@ -3058,6 +3180,9 @@ def search_business_sources(
     final_search_query = retrieval_query
     source_chunks = []
     mapping_ambiguous = False
+    survey_source_override = False
+    procedure_evaluation_location_override = False
+    procedure_evaluation_original_location = None
 
     if (
         query_context
@@ -3069,7 +3194,20 @@ def search_business_sources(
         mapping_rejected_reason = "overly_generic_query"
 
     if selected_mapping:
-        source_chunks = _source_chunks_for_mapping(selected_mapping, chunks)
+        if _is_procedure_evaluation_mapping_or_query(query, selected_mapping):
+            selected_mapping, procedure_evaluation_location_override = (
+                _retarget_procedure_evaluation_location(selected_mapping)
+            )
+            procedure_evaluation_original_location = selected_mapping.get(
+                "procedure_evaluation_original_location"
+            )
+        if _is_survey_mapping_or_query(query, selected_mapping):
+            selected_mapping, source_chunks, survey_source_override = _retarget_survey_mapping_source(
+                selected_mapping,
+                chunks,
+            )
+        if not source_chunks:
+            source_chunks = _source_chunks_for_mapping(selected_mapping, chunks)
         if source_chunks:
             final_results = _search_location_in_source(
                 retrieval_query,
@@ -3158,6 +3296,14 @@ def search_business_sources(
         "file_id": selected_mapping.get("file_id") if selected_mapping else None,
         "source_file": selected_mapping.get("doc_name") if selected_mapping else None,
         "source_file_found": bool(source_chunks) if selected_mapping else None,
+        "survey_source_override": survey_source_override,
+        "survey_original_source_file": (
+            selected_mapping.get("survey_original_doc_name")
+            if selected_mapping
+            else None
+        ),
+        "procedure_evaluation_location_override": procedure_evaluation_location_override,
+        "procedure_evaluation_original_location": procedure_evaluation_original_location,
         "requested_location": selected_mapping.get("faq_location") if selected_mapping else None,
         "matched_location": (
             selected_mapping.get("faq_location")

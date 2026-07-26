@@ -5,6 +5,7 @@ from app.controller.chatbot_controller import (
     handle_business_chat,
     handle_chat,
     handle_internal_chat,
+    handle_local_documents_chat,
     handle_website_chat,
 )
 from app.schemas.chat_schema import (
@@ -40,6 +41,13 @@ async def chat_business(request: ChatRequest, http_request: Request):
 async def chat_internal(request: ChatRequest, http_request: Request):
     """Endpoint chi tra cuu tai lieu noi bo."""
     result = await _run_conversation(http_request, request, handle_internal_chat)
+    return ChatResponse(**result)
+
+
+@router.post("/local-documents", response_model=ChatResponse)
+async def chat_local_documents(request: ChatRequest, http_request: Request):
+    """Endpoint chi tra cuu corpus tai lieu local."""
+    result = await _run_conversation(http_request, request, handle_local_documents_chat)
     return ChatResponse(**result)
 
 

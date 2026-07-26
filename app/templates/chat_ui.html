@@ -372,7 +372,10 @@
   </div>
 
   <script>
-    const API = { chat: "/api/chat/", threads: "/api/chat/threads" };
+    const API = {
+      chat: "/api/chat/local-documents",
+      threads: "/api/chat/threads"
+    };
     const suggestions = [
       { label: "Điều kiện tốt nghiệp", question: "Điều kiện xét tốt nghiệp là gì?", icon: "TN" },
       { label: "Thi cải thiện điểm", question: "Điều kiện để được thi cải thiện điểm là gì?", icon: "Đ" },

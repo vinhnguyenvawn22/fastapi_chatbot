@@ -84,7 +84,16 @@ GEMINI_API_KEYS = _load_gemini_api_keys()
 GEMINI_API_KEY = GEMINI_API_KEYS[0] if GEMINI_API_KEYS else None
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
-DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", "uploads/Tổng hợp văn bản AI")
+DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", "uploads/document")
+LOCAL_DOCUMENTS_CORPUS = os.getenv("LOCAL_DOCUMENTS_CORPUS", "local_documents")
+LOCAL_DOCUMENTS_INDEX_VERSION = os.getenv(
+    "LOCAL_DOCUMENTS_INDEX_VERSION",
+    "local_documents_v1",
+)
+LOCAL_DOCUMENTS_MANIFEST_FILE = os.getenv(
+    "LOCAL_DOCUMENTS_MANIFEST_FILE",
+    "storage/local_documents_index/manifest.json",
+)
 DOCUMENT_INDEX_CACHE_ENABLED = os.getenv(
     "DOCUMENT_INDEX_CACHE_ENABLED",
     "true",

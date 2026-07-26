@@ -22,7 +22,15 @@ from app.data.langchain_pipeline import (
     generate_answer,
     retrieve_business,
     retrieve_internal,
+    retrieve_local_documents,
     retrieve_website,
+)
+from app.data.multi_aspect_query import (
+    clean_multi_aspect_answer,
+    decompose_multi_aspect_query,
+    filter_semantic_aspect_docs,
+    merge_multi_aspect_results,
+    validate_multi_aspect_answer,
 )
 from app.data.gemini_client import get_gemini_call_count
 from app.data.query_analyzer import QueryIntent, classify_query
@@ -46,7 +54,7 @@ MAX_CHUNKS_PER_DOCUMENT = 2
 AGGREGATE_MAX_CONTEXT_CHUNKS = 8
 AGGREGATE_MAX_DIVERSE_CONTEXT_CHUNKS = 10
 AGGREGATE_MIN_RELATIVE_SCORE = 0.32
-INTERNAL_SOURCE_TYPE = "official_document"
+INTERNAL_SOURCE_TYPE = "local_file"
 MULTI_HOP_MAX_SUBQUESTIONS = 6
 MULTI_HOP_DOCS_PER_ROUTE = 4
 
@@ -1317,6 +1325,176 @@ def _credit_load_warning_answer(question: str, docs: list[dict]) -> tuple[str | 
     return answer, evidence_docs[:2]
 
 
+def _graduation_classification_answer(
+    question: str,
+    docs: list[dict],
+) -> tuple[str | None, list[dict]]:
+    normalized_question = normalize_text(question)
+    asks_classification = "tot nghiep" in normalized_question and any(
+        term in normalized_question
+        for term in ("loai gioi", "xep loai", "xep hang", "hang tot nghiep")
+    )
+    if not asks_classification:
+        return None, []
+
+    general_docs = []
+    classification_docs = []
+    for doc in docs or []:
+        content = normalize_text(doc.get("content", ""))
+        if (
+            "dieu kien xet tot nghiep" in content
+            and "diem trung binh tich luy" in content
+            and ("chung chi" in content or "chung nhan ngoai ngu" in content)
+        ):
+            general_docs.append(doc)
+        if (
+            "loai gioi" in content
+            and ("3,20" in content or "3.20" in content)
+            and ("3,59" in content or "3.59" in content)
+            and "hoc lai" in content
+        ):
+            classification_docs.append(doc)
+
+    if not classification_docs:
+        return None, []
+
+    asks_general = any(
+        phrase in normalized_question
+        for phrase in (
+            "dieu kien tot nghiep la gi va",
+            "dieu kien tot nghiep va",
+            "dieu kien de tot nghiep va",
+            "vua du dieu kien tot nghiep",
+        )
+    )
+    if asks_general and not general_docs:
+        return None, []
+
+    parts = []
+    selected_docs = []
+    if asks_general:
+        parts.append(
+            "**1. Điều kiện được xét và công nhận tốt nghiệp**\n"
+            "Sinh viên phải đáp ứng đầy đủ các điều kiện sau:\n"
+            "- Tại thời điểm xét tốt nghiệp, không bị truy cứu trách nhiệm hình sự và "
+            "không đang bị kỷ luật ở mức đình chỉ học tập.\n"
+            "- Tích lũy đủ số học phần và khối lượng của chương trình đào tạo.\n"
+            "- Điểm trung bình tích lũy toàn khóa từ 2,00 trở lên.\n"
+            "- Có chứng chỉ hoặc chứng nhận ngoại ngữ, tin học theo quy định của Trường.\n"
+            "- Có chứng chỉ Giáo dục quốc phòng - an ninh và hoàn thành học phần "
+            "Giáo dục thể chất theo đối tượng áp dụng.\n"
+            "- Nếu xin tốt nghiệp sớm hoặc muộn hơn thời gian thiết kế của khóa học, "
+            "phải có đơn gửi Phòng Đào tạo."
+        )
+        selected_docs.extend(general_docs[:1])
+
+    heading = "**2. Điều kiện xếp loại tốt nghiệp giỏi**" if asks_general else "**Điều kiện xếp loại tốt nghiệp giỏi**"
+    parts.append(
+        f"{heading}\n"
+        "- Điểm trung bình tích lũy toàn khóa từ 3,20 đến 3,59.\n"
+        "- Hạng giỏi sẽ bị giảm một mức nếu khối lượng học phần phải học lại vượt quá "
+        "5% tổng số tín chỉ của chương trình, hoặc sinh viên từng bị kỷ luật từ mức "
+        "cảnh cáo trở lên trong thời gian học."
+    )
+    selected_docs.extend(classification_docs[:1])
+
+    source_labels = [
+        f'{doc.get("title") or "Nguồn tài liệu"} - '
+        f'{doc.get("doc_name") or doc.get("relative_path") or "tài liệu"}'
+        for doc in selected_docs
+    ]
+    parts.append(f'(Nguồn: {"; ".join(source_labels)})')
+    return "\n\n".join(parts), selected_docs
+
+
+def _exam_defer_answer(
+    question: str,
+    docs: list[dict],
+) -> tuple[str | None, list[dict]]:
+    normalized_question = normalize_text(question)
+    if "hoan thi" not in normalized_question:
+        return None, []
+
+    asks_procedure = any(
+        term in normalized_question
+        for term in (
+            "lam the nao",
+            "thuc hien nhu the nao",
+            "cach thuc hien",
+            "huong dan",
+            "thu tuc xin",
+            "gui yeu cau",
+        )
+    )
+    if not asks_procedure:
+        return None, []
+
+    procedure_docs = []
+    policy_docs = []
+    for doc in docs or []:
+        searchable = normalize_text(
+            " ".join(
+                str(doc.get(field) or "")
+                for field in ("title", "content", "doc_name")
+            )
+        )
+        if (
+            re.search(r"\bhoan thi\b", searchable)
+            and "mot cua - khao thi" in searchable
+            and "gui yeu cau" in searchable
+            and "support.uneti.edu.vn/mot-cua/khao-thi/hoan-thi" in searchable
+        ):
+            procedure_docs.append(doc)
+        if (
+            "diem i" in searchable
+            and "bi om" in searchable
+            and "tai nan" in searchable
+            and "truong khoa" in searchable
+            and "thac si" not in searchable
+        ):
+            policy_docs.append(doc)
+
+    if not procedure_docs:
+        return None, []
+
+    parts = []
+    selected_docs = []
+    asks_conditions = "dieu kien" in normalized_question
+    if asks_conditions and policy_docs:
+        parts.append(
+            "1. Điều kiện hoãn thi\n"
+            "- Sinh viên bị ốm hoặc tai nạn, không thể dự kiểm tra hoặc thi trong "
+            "thời gian học hoặc kỳ thi kết thúc học kỳ và được Nhà trường cho phép.\n"
+            "- Sinh viên không thể dự kiểm tra bộ phận hoặc thi vì lý do khách quan "
+            "và được Trưởng Khoa chấp thuận.\n"
+            "- Khi được Nhà trường cho phép vắng kỳ thi kết thúc học phần, sinh viên "
+            "được dự kỳ thi phụ hoặc thi vào học kỳ tiếp theo và vẫn được coi là thi lần đầu."
+        )
+        selected_docs.extend(policy_docs[:1])
+
+    procedure_heading = "2. Thủ tục xin hoãn thi" if asks_conditions and policy_docs else "Thủ tục xin hoãn thi"
+    parts.append(
+        f"{procedure_heading}\n"
+        "1. Đăng nhập https://support.uneti.edu.vn bằng tài khoản cá nhân.\n"
+        "2. Chọn Thủ tục hành chính → Một cửa - Khảo thí → Hoãn thi (Gửi yêu cầu), "
+        "hoặc truy cập https://support.uneti.edu.vn/mot-cua/khao-thi/hoan-thi.\n"
+        "3. Chọn hoặc nhập các dữ liệu được yêu cầu.\n"
+        "4. Tại lưới dữ liệu, chọn dòng học phần tương ứng rồi nhấn Gửi yêu cầu.\n"
+        "Sinh viên cần làm đơn theo mẫu và đính kèm giấy tờ minh chứng. "
+        "Biểu mẫu tham khảo: Giấy tiếp nhận yêu cầu hoãn thi (MC-KT-05), tại "
+        "https://uneti.edu.vn/wp-content/uploads/2021/10/MC-KT-05.pdf."
+    )
+    selected_docs.extend(procedure_docs[:1])
+
+    source_labels = [
+        f'{doc.get("title") or "Nguồn tài liệu"} - '
+        f'{doc.get("doc_name") or doc.get("relative_path") or "tài liệu"}'
+        for doc in selected_docs
+    ]
+    parts.append(f'(Nguồn: {"; ".join(source_labels)})')
+    return "\n\n".join(parts), selected_docs
+
+
 async def _credit_load_warning_targeted_docs(question: str) -> list[dict]:
     if "credit_load_warning" not in _academic_policy_terms(question):
         return []
@@ -1656,6 +1834,10 @@ def _build_sources(docs, question: str | None = None):
             "url": doc.get("url"),
             "attachment_url": doc.get("attachment_url"),
             "source_type": doc.get("source_type"),
+            "corpus": doc.get("corpus"),
+            "index_version": doc.get("index_version"),
+            "document_type": doc.get("document_type"),
+            "department": doc.get("department"),
             "relative_path": doc.get("relative_path"),
             "phong_ban": doc.get("phong_ban"),
             "source_root": doc.get("source_root"),
@@ -1668,7 +1850,14 @@ def _build_sources(docs, question: str | None = None):
             "chuong": doc.get("chuong"),
             "muc": doc.get("muc"),
             "dieu": doc.get("dieu"),
+            "section_path": doc.get("section_path"),
+            "heading": doc.get("heading"),
+            "section_type": doc.get("section_type"),
+            "page": doc.get("page"),
             "chunk_index": doc.get("chunk_index"),
+            "chunk_hash": doc.get("chunk_hash"),
+            "document_id": doc.get("document_id"),
+            "file_extension": doc.get("file_extension"),
             "file_id": doc.get("file_id"),
             "faq_location": doc.get("faq_location"),
             "audience": doc.get("audience"),
@@ -2156,6 +2345,300 @@ async def _answer_with_internal_documents(
     })
 
 
+async def _answer_with_local_documents(
+    trace: RagTrace,
+    question: str,
+    intent: str,
+    reason: str,
+    ambiguity_decision: dict | None = None,
+):
+    base_state = _pipeline_state(
+        trace,
+        question,
+        reason,
+        ambiguity_decision=ambiguity_decision,
+    )
+    decomposition = decompose_multi_aspect_query(question)
+    trace.add_step("multi_aspect_decomposition", decomposition)
+    if decomposition.get("needs_clarification"):
+        return _clarification_response(
+            trace,
+            question,
+            {
+                "action": CLARIFICATION_NEEDED,
+                "reason": decomposition.get("clarification_reason"),
+                "clarifying_question": (
+                    "Bạn muốn hỏi về loại thủ tục hoặc yêu cầu cụ thể nào?"
+                ),
+            },
+            retrieval_called=False,
+        )
+
+    state = await retrieve_local_documents(base_state)
+    retrieval_clarification = _retrieval_clarification_decision(state)
+    if retrieval_clarification:
+        return _clarification_response(
+            trace,
+            question,
+            retrieval_clarification,
+            retrieval_called=True,
+        )
+    docs = state.get("docs") or []
+    required_aspects = decomposition.get("aspects") or []
+    aspect_results = []
+    if decomposition.get("is_multi_aspect"):
+        async def retrieve_aspect(aspect: dict) -> dict:
+            async def retrieve_query(retrieval_query: str) -> list[dict]:
+                aspect_state = {
+                    **base_state,
+                    "question": retrieval_query,
+                    "original_question": question,
+                    "standalone_question": question,
+                    "reason": f'multi_aspect:{aspect["aspect_id"]}',
+                    "ambiguity_decision": {
+                        "action": DIRECT_RETRIEVAL,
+                        "topic": None,
+                        "confidence": 1.0,
+                        "reason": "multi_aspect_subquery_no_llm",
+                        "clarifying_question": None,
+                    },
+                }
+                query_context = dict(base_state.get("query_context") or {})
+                query_context["skip_retrieval_plan_llm"] = True
+                aspect_state["query_context"] = query_context
+                result_state = await retrieve_local_documents(aspect_state)
+                return result_state.get("docs") or []
+
+            query_results = await asyncio.gather(
+                *(
+                    retrieve_query(retrieval_query)
+                    for retrieval_query in aspect.get("retrieval_queries")
+                    or [aspect["retrieval_query"]]
+                )
+            )
+            aspect_docs = []
+            seen_docs = set()
+            max_rank = max((len(result) for result in query_results), default=0)
+            for rank in range(max_rank):
+                for result in query_results:
+                    if rank >= len(result):
+                        continue
+                    doc = result[rank]
+                    key = (
+                        doc.get("relative_path") or doc.get("doc_name"),
+                        doc.get("chunk_index"),
+                        doc.get("title"),
+                    )
+                    if key in seen_docs:
+                        continue
+                    seen_docs.add(key)
+                    aspect_docs.append(doc)
+            confident, confidence_reason = _has_confident_evidence(
+                aspect["retrieval_query"],
+                aspect_docs,
+            )
+            semantic_docs, semantic_reason = filter_semantic_aspect_docs(
+                aspect.get("semantic_query") or aspect["retrieval_query"],
+                aspect_docs if confident else [],
+            )
+            has_aspect_evidence = bool(semantic_docs)
+            evidence_reason = (
+                semantic_reason if confident else confidence_reason
+            )
+            return {
+                **aspect,
+                "docs": semantic_docs,
+                "retrieved_count": len(aspect_docs),
+                "has_evidence": has_aspect_evidence,
+                "evidence_reason": evidence_reason,
+            }
+
+        aspect_results = await asyncio.gather(
+            *(retrieve_aspect(aspect) for aspect in required_aspects)
+        )
+        docs, coverage_debug = merge_multi_aspect_results(
+            docs,
+            aspect_results,
+            limit=AGGREGATE_MAX_CONTEXT_CHUNKS,
+        )
+        trace.add_step("multi_aspect_retrieval", {
+            "method": decomposition.get("method"),
+            "aspect_results": [
+                {
+                    "aspect_id": result["aspect_id"],
+                    "question": result["question"],
+                    "retrieval_query": result["retrieval_query"],
+                    "retrieval_queries": result.get("retrieval_queries"),
+                    "context_inherited": result.get("context_inherited", False),
+                    "retrieved_count": result["retrieved_count"],
+                    "selected_candidate_count": len(result["docs"]),
+                    "has_evidence": result["has_evidence"],
+                    "evidence_reason": result["evidence_reason"],
+                }
+                for result in aspect_results
+            ],
+            "coverage": coverage_debug,
+            "final_document_count": len(docs),
+        })
+    has_evidence, evidence_reason = _has_confident_evidence(question, docs)
+    trace.add_step("local_documents_evidence_check", {
+        "evidence_decision": "pass" if has_evidence else "reject",
+        "has_confident_evidence": has_evidence,
+        "reason": evidence_reason,
+        "query_keyword_count": len(get_keywords(question)),
+        "llm_called": bool(docs and has_evidence),
+    })
+
+    if not docs or not has_evidence:
+        return _finalize(trace, {
+            "question": question,
+            "answer": NO_EVIDENCE_ANSWER,
+            "source": None,
+            "sources": _build_sources(docs, question),
+            "intent": intent,
+        })
+
+    if decomposition.get("is_multi_aspect"):
+        generation_docs, _ = merge_multi_aspect_results(
+            [],
+            aspect_results,
+            limit=AGGREGATE_MAX_CONTEXT_CHUNKS,
+        )
+        generation_aspects = []
+        for result in aspect_results:
+            aspect_docs = (result.get("docs") or [])[:2]
+            generation_aspects.append({
+                "aspect_id": result["aspect_id"],
+                "question": result["question"],
+                "has_evidence": bool(aspect_docs),
+                "sources": [
+                    {
+                        "title": doc.get("title"),
+                        "doc_name": doc.get("doc_name"),
+                        "chunk_index": doc.get("chunk_index"),
+                    }
+                    for doc in aspect_docs
+                ],
+            })
+
+        generation_state = {
+            **state,
+            "docs": generation_docs,
+            "max_context_chunks": min(
+                len(generation_docs),
+                AGGREGATE_MAX_CONTEXT_CHUNKS,
+            ),
+            "required_aspects": generation_aspects,
+        }
+        generated_state = await generate_answer(generation_state)
+        raw_answer = generated_state["answer"]
+        validation = validate_multi_aspect_answer(
+            raw_answer,
+            generation_aspects,
+        )
+        retry_used = False
+        if not validation["valid"]:
+            retry_used = True
+            failed_blocks = ", ".join(
+                f'{item["marker"]}: {item["reason"]}'
+                for item in validation["issues"]
+            )
+            retry_state = await generate_answer({
+                **generation_state,
+                "generation_guidance": (
+                    "Lan tra loi truoc khong dat hop dong tai cac khoi: "
+                    f"{failed_blocks}. Kiem tra lai ban do nguon va noi dung tung NGUON."
+                ),
+            })
+            raw_answer = retry_state["answer"]
+            validation = validate_multi_aspect_answer(
+                raw_answer,
+                generation_aspects,
+            )
+
+        answer = clean_multi_aspect_answer(raw_answer)
+        trace.add_step("multi_aspect_generation", {
+            "strategy": "single_call_grouped_evidence_with_validation",
+            "initial_call_count": 1,
+            "retry_used": retry_used,
+            "generation_call_count": 1 + int(retry_used),
+            "generation_source_count": len(generation_docs),
+            "validation": validation,
+            "answer_chars": len(answer),
+        })
+        best_doc = docs[0]
+        return _finalize(trace, {
+            "question": question,
+            "answer": answer,
+            "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
+            "sources": _build_sources(docs, question),
+            "intent": intent,
+        })
+
+    graduation_answer, graduation_docs = _graduation_classification_answer(question, docs)
+    if graduation_answer:
+        trace.add_step("policy_deterministic_answer", {
+            "reason": "graduation_requirements_and_classification",
+            "source_count": len(graduation_docs),
+            "sources": [
+                {
+                    "doc_name": doc.get("doc_name"),
+                    "title": doc.get("title"),
+                    "chunk_index": doc.get("chunk_index"),
+                    "source_type": doc.get("source_type"),
+                }
+                for doc in graduation_docs
+            ],
+        })
+        best_doc = graduation_docs[0]
+        return _finalize(trace, {
+            "question": question,
+            "answer": graduation_answer,
+            "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
+            "sources": _build_sources(graduation_docs, question),
+            "intent": intent,
+        })
+
+    exam_defer_answer, exam_defer_docs = _exam_defer_answer(question, docs)
+    if exam_defer_answer:
+        trace.add_step("policy_deterministic_answer", {
+            "reason": "exam_defer_conditions_and_procedure",
+            "source_count": len(exam_defer_docs),
+            "sources": [
+                {
+                    "doc_name": doc.get("doc_name"),
+                    "title": doc.get("title"),
+                    "chunk_index": doc.get("chunk_index"),
+                    "source_type": doc.get("source_type"),
+                }
+                for doc in exam_defer_docs
+            ],
+        })
+        best_doc = exam_defer_docs[0]
+        return _finalize(trace, {
+            "question": question,
+            "answer": exam_defer_answer,
+            "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
+            "sources": _build_sources(exam_defer_docs, question),
+            "intent": intent,
+        })
+
+    state = await generate_answer({
+        **state,
+        "docs": docs,
+        "max_context_chunks": min(len(docs), AGGREGATE_MAX_CONTEXT_CHUNKS),
+        "required_aspects": required_aspects,
+    })
+    best_doc = docs[0]
+    return _finalize(trace, {
+        "question": question,
+        "answer": state["answer"],
+        "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
+        "sources": _build_sources(docs, question),
+        "intent": intent,
+    })
+
+
 async def _answer_with_business_documents(trace: RagTrace, question: str, intent: str, reason: str):
     state = await retrieve_business(_pipeline_state(trace, question, reason))
     retrieval_clarification = _retrieval_clarification_decision(state)
@@ -2526,6 +3009,45 @@ async def _answer_with_aggregate_documents(
             "intent": intent,
         })
 
+    graduation_answer, graduation_docs = _graduation_classification_answer(question, docs)
+    if graduation_answer:
+        trace.add_step("policy_deterministic_answer", {
+            "reason": "graduation_requirements_and_classification",
+            "source_count": len(graduation_docs),
+            "sources": [
+                {
+                    "doc_name": doc.get("doc_name"),
+                    "title": doc.get("title"),
+                    "chunk_index": doc.get("chunk_index"),
+                    "source_type": doc.get("source_type"),
+                }
+                for doc in graduation_docs
+            ],
+        })
+        best_doc = graduation_docs[0]
+        return _finalize(trace, {
+            "question": question,
+            "answer": graduation_answer,
+            "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
+            "sources": _build_sources(graduation_docs, question),
+            "intent": intent,
+        })
+
+    exam_defer_answer, exam_defer_docs = _exam_defer_answer(question, docs)
+    if exam_defer_answer:
+        trace.add_step("policy_deterministic_answer", {
+            "reason": "exam_defer_conditions_and_procedure",
+            "source_count": len(exam_defer_docs),
+        })
+        best_doc = exam_defer_docs[0]
+        return _finalize(trace, {
+            "question": question,
+            "answer": exam_defer_answer,
+            "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
+            "sources": _build_sources(exam_defer_docs, question),
+            "intent": intent,
+        })
+
     internal_retrieval_debug = internal_state.get("retrieval_debug") or {}
     generation_retrieval_debug = (
         business_retrieval_debug
@@ -2687,6 +3209,30 @@ async def handle_internal_chat(request):
         question,
         QueryIntent.INTERNAL_DOCUMENT.value,
         "explicit_internal_endpoint",
+        decision,
+    )
+
+
+@traceable(name="UNETI Local Documents Chat Request", run_type="chain")
+async def handle_local_documents_chat(request):
+    question = request.question.strip()
+    trace = _new_trace(question)
+    trace.add_step("request_received", {
+        "question": question,
+        "is_empty": not bool(question),
+        "forced_route": "local_documents",
+    })
+
+    if not question:
+        return _empty_question_response(trace, request.question)
+
+    decision = _analyze_retrieval_question(trace, question)
+    decision = _use_retrieval_for_clarification(decision)
+    return await _answer_with_local_documents(
+        trace,
+        question,
+        QueryIntent.INTERNAL_DOCUMENT.value,
+        "explicit_local_documents_endpoint",
         decision,
     )
 

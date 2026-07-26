@@ -1,0 +1,44 @@
+INFO:     127.0.0.1:60091 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:50974 - "GET /api/health/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50978 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+     INFO:     127.0.0.1:54221 - "GET /api/health/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54225 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54225 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54225 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54225 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54225 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61813 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61813 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53948 - "GET /api/chat/traces/84c960ec-c4d6-4785-8428-28602cc194c7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49757 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58426 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58426 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58426 - "GET /api/chat/traces/2fd207d4-3ab3-44f6-9401-7a6de44a1acc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59796 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59796 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64996 - "GET /api/chat/traces/2fd207d4-3ab3-44f6-9401-7a6de44a1acc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62605 - "GET /api/chat/traces/6acbaee8-fa92-4f8b-ba46-b15b4d30f57c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53413 - "GET /api/chat/traces/478063b9-723f-4d55-8daf-f403de9a0114 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61874 - "GET /api/chat/traces/82241f3a-f575-404b-aa99-a38636d5beae HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57670 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57670 - "GET /api/chat/threads HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59256 - "GET /chat-ui HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59256 - "GET /api/chat/threads HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59256 - "POST /api/chat/local-documents HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:55879 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55879 - "GET /chat-ui HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55879 - "GET /api/chat/threads HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55879 - "GET /api/chat/threads/d539ed13-8d7f-4098-bb67-9e0983591441/messages HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55879 - "GET /api/chat/threads/528c5943-8519-4703-b045-a83e4f2fd8fd/messages HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55879 - "GET /api/chat/threads/d539ed13-8d7f-4098-bb67-9e0983591441/messages HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55879 - "POST /api/chat/local-documents HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:62126 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:57406 - "GET /chat-ui HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57406 - "GET /api/chat/threads HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57406 - "GET /api/chat/threads/25167ab8-de17-4d75-9d84-693cc45ad81b/messages HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57406 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57406 - "GET /api/chat/threads HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64756 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:65060 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60566 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+ 

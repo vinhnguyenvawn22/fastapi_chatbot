@@ -133,7 +133,8 @@ def _render_conversation_history(history):
 
 
 def build_prompt(question, context, retrieval_plan=None, conversation_history=None,
-                 original_question=None):
+                 original_question=None, required_aspects=None,
+                 generation_guidance=None):
     """Tao prompt cuoi cung gom huong dan, context truy xuat va cau hoi."""
     interpreted_question = _render_interpreted_question_block(retrieval_plan, question)
     history_text = _render_conversation_history(conversation_history)
@@ -143,6 +144,52 @@ def build_prompt(question, context, retrieval_plan=None, conversation_history=No
         if history_text else ""
     )
     interpreted_section = f"\n{interpreted_question}\n{history_section}"
+    aspect_lines = []
+    for index, item in enumerate(required_aspects or [], start=1):
+        if not item.get("question"):
+            continue
+        source_lines = [
+            f'   - {source.get("title")} - {source.get("doc_name")}'
+            for source in item.get("sources") or []
+        ]
+        evidence_status = (
+            "CO NGUON DA LOC"
+            if item.get("has_evidence")
+            else "CHUA CO NGUON DU CAN CU"
+        )
+        aspect_lines.append(
+            f'Y_{index}: {item.get("question")}\n'
+            f'   Trang thai: {evidence_status}\n'
+            + (
+                "   Nguon danh rieng cho y nay:\n" + "\n".join(source_lines)
+                if source_lines
+                else "   Nguon danh rieng cho y nay: khong co"
+            )
+        )
+    aspect_section = ""
+    if aspect_lines:
+        aspect_section = (
+            "\nCAC Y CAN TRA LOI VA BAN DO NGUON:\n"
+            + "\n".join(aspect_lines)
+            + "\n\nHOP DONG DAU RA BAT BUOC:\n"
+            "Viet dung mot khoi cho moi y, theo dung thu tu va dung chinh xac cac the sau:\n"
+            + "\n".join(
+                f"[Y_{index}]\nNoi dung tra loi y {index}, kem nguon cua y nay\n[/Y_{index}]"
+                for index in range(1, len(aspect_lines) + 1)
+            )
+            + "\nKhong duoc bo qua, gop chung hoac doi ten the Y_n.\n"
+            "Moi khoi chi dung cac NGUON co khia_canh/phu_khia_canh chua aspect_id tuong ung "
+            "va cac nguon duoc liet ke trong ban do tren.\n"
+            "Neu Trang thai la CO NGUON DA LOC, phai doc cac nguon cua y do va khong duoc "
+            "ket luan thieu thong tin khi nguon co noi dung tra loi.\n"
+            "Neu Trang thai la CHUA CO NGUON DU CAN CU, neu ro rieng rang y do chua co can cu.\n"
+        )
+    if generation_guidance:
+        aspect_section += (
+            "\nYEU CAU SUA LOI LAN TRUOC:\n"
+            + str(generation_guidance).strip()
+            + "\nHay viet lai TOAN BO cac khoi theo hop dong dau ra.\n"
+        )
     question = original_question or question
     prompt = f"""
 Bạn là trợ lý AI tư vấn dựa trên tài liệu nội bộ của nhà trường.
@@ -242,6 +289,7 @@ THÔNG TIN THAM KHẢO:
 CÂU HỎI GỐC:
 {question}
 {interpreted_section}
+{aspect_section}
 
 TRẢ LỜI:
 """

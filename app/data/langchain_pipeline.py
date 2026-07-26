@@ -51,10 +51,79 @@ def _gemini_error_reason(answer: Any, llm_error: str | None) -> str | None:
     return None
 
 
+def _business_procedure_fallback_answer(state: PipelineState) -> str | None:
+    question = normalize_text(state.get("question") or "")
+    if not any(
+        marker in question
+        for marker in (
+            "cach", "lam sao", "xem o dau", "kiem tra",
+            "tra cuu", "dang ky", "gui", "nop",
+        )
+    ):
+        return None
+
+    for doc in (state.get("docs") or [])[:3]:
+        content = str(doc.get("content") or "").strip()
+        is_business_doc = (
+            doc.get("document_type") == "business_document"
+            or "HDSD" in str(doc.get("doc_name") or "")
+        )
+        if not is_business_doc or not re.search(
+            r"(?im)^(?:B\d+|Bước\s+\d+)\s*:",
+            content,
+        ):
+            continue
+
+        content = re.sub(
+            r"(https?://[^\s]+?\.vn)(?=truy\b)",
+            r"\1\nTruy",
+            content,
+            flags=re.IGNORECASE,
+        )
+        raw_lines = [
+            re.sub(r"\s+", " ", line).strip()
+            for line in content.splitlines()
+            if line.strip()
+        ]
+        selected = []
+        for line in raw_lines:
+            if line.startswith("Chức năng:"):
+                selected.append(line)
+            elif re.match(r"^(?:B\d+|Bước\s+\d+)\s*:", line, re.IGNORECASE):
+                selected.append(re.sub(
+                    r"^(?:B\d+|Bước\s+\d+)\s*:\s*",
+                    "",
+                    line,
+                    flags=re.IGNORECASE,
+                ))
+            elif line.lower().startswith("truy cập trực tiếp"):
+                selected.append(line)
+            elif re.match(r"^https?://", line, re.IGNORECASE):
+                if selected and selected[-1].endswith(":"):
+                    selected[-1] = f"{selected[-1]} {line}"
+                else:
+                    selected.append(line)
+            elif line.startswith("Lưu ý:"):
+                selected.append(line)
+
+        if len(selected) < 2:
+            continue
+        title = doc.get("title") or "Nguồn hướng dẫn"
+        doc_name = doc.get("doc_name") or "Tài liệu"
+        return (
+            "\n".join(f"- {line}" for line in selected)
+            + f"\n(Nguồn: {title} - {doc_name})"
+        )
+    return None
+
+
 def _extractive_fallback_answer(state: PipelineState) -> str:
     docs = state.get("docs") or []
     if not docs:
         return GEMINI_UNAVAILABLE_ANSWER
+    business_answer = _business_procedure_fallback_answer(state)
+    if business_answer:
+        return business_answer
     retrieval_plan = state.get("retrieval_plan") or (state.get("retrieval_debug") or {}).get("retrieval_plan") or {}
     query_text = " ".join([
         str(state.get("question") or ""),
@@ -128,16 +197,50 @@ def _trace_hybrid_retrieval(state: PipelineState, debug: dict) -> None:
 
 async def _retrieve_internal(state: PipelineState) -> PipelineState:
     debug = {}
-    source_type_filter = state.get("source_type_filter") or "official_document"
+    source_type_filter = state.get("source_type_filter") or "local_file"
     docs = await search_documents(
         state["question"],
         debug=debug,
         source_type_filter=source_type_filter,
+        corpus_filter="local_documents" if source_type_filter == "local_file" else None,
+        rag_enabled_filter=True if source_type_filter == "local_file" else None,
+        exclude_document_names=(
+            {"PCNTT_MAPPING_FILE.docx"}
+            if source_type_filter == "local_file"
+            else None
+        ),
+        exclude_source_types=(
+            {"website_uneti", "business_faq_mapping"}
+            if source_type_filter == "local_file"
+            else None
+        ),
         ambiguity_decision=state.get("ambiguity_decision"),
     )
     _trace_hybrid_retrieval(state, debug)
     _trace(state, "lcel_internal_retrieval", debug, {
         "source_route": "internal_document",
+        "reason": state.get("reason"),
+    })
+    return {**state, "docs": docs, "retrieval_debug": debug}
+
+
+async def _retrieve_local_documents(state: PipelineState) -> PipelineState:
+    debug = {}
+    docs = await search_documents(
+        state["question"],
+        debug=debug,
+        source_type_filter="local_file",
+        corpus_filter="local_documents",
+        rag_enabled_filter=True,
+        exclude_document_names={"PCNTT_MAPPING_FILE.docx"},
+        exclude_source_types={"website_uneti", "business_faq_mapping"},
+        document_type_filter=state.get("document_type_filter"),
+        department_filter=state.get("department_filter"),
+        ambiguity_decision=state.get("ambiguity_decision"),
+    )
+    _trace_hybrid_retrieval(state, debug)
+    _trace(state, "lcel_local_documents_retrieval", debug, {
+        "source_route": "local_documents",
         "reason": state.get("reason"),
     })
     return {**state, "docs": docs, "retrieval_debug": debug}
@@ -221,6 +324,8 @@ def _build_generation_prompt(state: PipelineState) -> PipelineState:
             state["question"], context, retrieval_plan=retrieval_plan,
             conversation_history=state.get("conversation_history"),
             original_question=state.get("original_question"),
+            required_aspects=state.get("required_aspects"),
+            generation_guidance=state.get("generation_guidance"),
         )
 
     _trace(state, "context_selection", {
@@ -252,6 +357,7 @@ def _build_generation_prompt(state: PipelineState) -> PipelineState:
         "has_interpreted_question_block": (
             "CÁCH HỆ THỐNG ĐÃ HIỂU CÂU HỎI:" in prompt
         ),
+        "required_aspect_count": len(state.get("required_aspects") or []),
     })
     return {
         **state,
@@ -289,6 +395,9 @@ async def _generate_answer(state: PipelineState) -> PipelineState:
 internal_retriever = RunnableLambda(_retrieve_internal).with_config(
     {"run_name": "Retrieval"}
 )
+local_documents_retriever = RunnableLambda(_retrieve_local_documents).with_config(
+    {"run_name": "Local Documents Retrieval"}
+)
 business_retriever = RunnableLambda(_retrieve_business).with_config(
     {"run_name": "Retrieval"}
 )
@@ -303,6 +412,10 @@ generation_chain = (
 
 async def retrieve_internal(state: PipelineState) -> PipelineState:
     return await internal_retriever.ainvoke(state)
+
+
+async def retrieve_local_documents(state: PipelineState) -> PipelineState:
+    return await local_documents_retriever.ainvoke(state)
 
 
 async def retrieve_business(state: PipelineState) -> PipelineState:

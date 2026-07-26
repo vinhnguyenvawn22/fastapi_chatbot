@@ -17,6 +17,7 @@ from app.core.config import (
     BM25_MIN_SCORE,
     BM25_TOP_K,
     CROSS_ENCODER_FINAL_TOP_K,
+    CROSS_ENCODER_TOP_N,
     DOCUMENT_INDEX_CACHE_ENABLED,
     DOCUMENT_INDEX_CACHE_FILE,
     GROUNDED_HYDE_ANN_TOP_K,
@@ -58,6 +59,29 @@ STOP_WORDS = {
     "khi", "cần", "chú", "ý", "lưu",
 }
 QUERY_EXPANSION = {
+    "cap bang": [
+        "dieu kien xet tot nghiep",
+        "cong nhan tot nghiep",
+        "cap bang tot nghiep",
+    ],
+    "ket qua thi": [
+        "ket qua hoc tap",
+        "diem thi",
+        "tra cuu ket qua thi",
+        "web support sinh vien",
+    ],
+    "le phi thi lai": [
+        "dang ky thi lai",
+        "le phi thi lai",
+        "thanh toan hoc phi hoc ky tiep theo",
+        "web support sinh vien",
+    ],
+    "hoc lai": [
+        "dang ky hoc lai",
+        "dang ky hoc phan truc tuyen",
+        "website dang ky hoc tap",
+        "hoc phan chua dat",
+    ],
     "chuyen truong": [
         "chuyen truong",
         "dieu kien chuyen truong",
@@ -83,6 +107,21 @@ QUERY_EXPANSION = {
         "tot nghiep chuong trinh thu nhat",
         "quy che dao tao dai hoc chinh quy",
         "dieu 29",
+    ],
+    "chuong trinh hai": [
+        "hoc cung luc hai chuong trinh",
+        "chuong trinh thu hai",
+        "don dang ky hoc chuong trinh thu hai",
+        "phu luc 1",
+        "phong chinh tri va cong tac sinh vien",
+        "phong dao tao",
+    ],
+    "chuong trinh thu hai": [
+        "hoc cung luc hai chuong trinh",
+        "don dang ky hoc chuong trinh thu hai",
+        "phu luc 1",
+        "phong chinh tri va cong tac sinh vien",
+        "phong dao tao",
     ],
     "f mon tu chon": [
         "hoc phan tu chon bi diem F F+",
@@ -350,7 +389,7 @@ _INDEX_CACHE = {
     "bm25_corpus": [],
 }
 _SEARCH_CACHE = OrderedDict()
-DOCUMENT_INDEX_CACHE_VERSION = 1
+DOCUMENT_INDEX_CACHE_VERSION = 2
 METADATA_EXACT_SCORE = 100.0
 SEARCHABLE_METADATA_FIELDS = (
     "so_van_ban",
@@ -373,6 +412,13 @@ def normalize_text(text: str = ""):
     text = "".join(char for char in text if unicodedata.category(char) != "Mn")
     text = text.replace("đ", "d").replace("Đ", "D")
     return " ".join(text.lower().split())
+
+
+def _has_normalized_phrase(normalized_text: str, phrase: str) -> bool:
+    return bool(re.search(
+        rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])",
+        normalized_text,
+    ))
 
 
 NORMALIZED_STOP_WORDS = {normalize_text(word) for word in STOP_WORDS}
@@ -405,15 +451,23 @@ def apply_uneti_query_expansion(query: str) -> str:
 def _academic_policy_retrieval_query(query: str) -> str:
     normalized_query = normalize_text(query)
     profile = _policy_query_profile(query)
-    expanded_terms = [query if profile == "credit_load_warning" else apply_uneti_query_expansion(query)]
+    expanded_terms = [
+        query
+        if profile in {
+            "credit_load_warning",
+            "academic_warning_conditions",
+            "course_retake_conditions",
+        }
+        else apply_uneti_query_expansion(query)
+    ]
 
-    if "thi lai" in normalized_query or ("thi" in normalized_query and "lai" in normalized_query):
+    if _has_normalized_phrase(normalized_query, "thi lai"):
         expanded_terms.append(
             "dang ky thi lai ky thi lai du thi lai lich thi lai hoc phan "
             "khao thi thi ket thuc hoc phan"
         )
 
-    if "hoan thi" in normalized_query or ("thi" in normalized_query and "hoan" in normalized_query):
+    if _has_normalized_phrase(normalized_query, "hoan thi"):
         expanded_terms.append(
             "vang mat du thi co ly do chinh dang don xin hoan thi diem I "
             "ky thi phu danh gia hoc phan quy che dao tao dai hoc chinh quy"
@@ -436,8 +490,29 @@ def _academic_policy_retrieval_query(query: str) -> str:
             "so tin chi dang ky toi da khong qua 16 tin chi quy che dao tao "
             "dai hoc chinh quy dieu 9"
         )
+    elif profile == "academic_warning_conditions":
+        expanded_terms.append(
+            "canh bao ket qua hoc tap tin chi khong dat diem F F+ "
+            "diem trung binh hoc ky diem trung binh tich luy"
+        )
+    elif profile == "course_retake_conditions":
+        expanded_terms.append(
+            "hoc phan bat buoc diem F F+ phai dang ky hoc lai "
+            "hoc phan tu chon hoc doi hoc phan tuong duong"
+        )
 
-    if any(term in normalized_query for term in ("ra truong", "tot nghiep", "chung chi", "chuan dau ra")):
+    if profile == "graduation_classification":
+        expanded_terms.append(
+            "hang tot nghiep xep loai tot nghiep loai gioi diem trung binh tich luy "
+            "toan khoa hoc lai vuot qua 5 phan tram ky luat canh cao quy che dao tao "
+            "dai hoc chinh quy"
+        )
+        if "dieu kien tot nghiep la gi" in normalized_query:
+            expanded_terms.append(
+                "dieu kien xet tot nghiep cong nhan tot nghiep tich luy du hoc phan "
+                "chung chi ngoai ngu tin hoc chuan dau ra dieu 24"
+            )
+    elif any(term in normalized_query for term in ("ra truong", "tot nghiep", "chung chi", "chuan dau ra")):
         expanded_terms.append(
             "dieu kien xet tot nghiep cong nhan tot nghiep chung chi ngoai ngu "
             "chung chi tin hoc chuan dau ra quy che dao tao dai hoc chinh quy dieu 24"
@@ -511,9 +586,9 @@ def _policy_query_profile(query: str) -> str | None:
         )
     )
 
-    if "thi lai" in normalized_query or ("thi" in normalized_query and "lai" in normalized_query):
+    if _has_normalized_phrase(normalized_query, "thi lai"):
         return "exam_retake"
-    if "hoan thi" in normalized_query or ("thi" in normalized_query and "hoan" in normalized_query):
+    if _has_normalized_phrase(normalized_query, "hoan thi"):
         return "exam_defer"
     if asks_absence_comparison and not asks_attendance_exam:
         return "absence_permission_comparison"
@@ -529,10 +604,25 @@ def _policy_query_profile(query: str) -> str | None:
         or "so tiet" in normalized_query
     ):
         return "attendance_exam_eligibility"
+    if "tot nghiep" in normalized_query and any(
+        term in normalized_query
+        for term in ("loai gioi", "loai xuat sac", "xep loai", "xep hang", "hang tot nghiep")
+    ):
+        return "graduation_classification"
     if any(term in normalized_query for term in ("ra truong", "tot nghiep", "chung chi", "chuan dau ra")):
         return "graduation_requirements"
     if "gpa" in normalized_query or "diem trung binh" in normalized_query:
         return "grade_average"
+    if "canh bao hoc tap" in normalized_query and any(
+        term in normalized_query
+        for term in ("khi nao", "dieu kien", "truong hop", "vi sao")
+    ):
+        return "academic_warning_conditions"
+    if "hoc lai" in normalized_query and any(
+        term in normalized_query
+        for term in ("khi nao", "dieu kien", "truong hop", "diem f", "khong dat")
+    ):
+        return "course_retake_conditions"
     if "chuyen truong" in normalized_query:
         return "transfer_school"
     if (
@@ -560,11 +650,23 @@ def _policy_query_profile(query: str) -> str | None:
         and any(term in normalized_query for term in ("dang ky", "dang ki", "khoi luong hoc tap"))
     ):
         return "credit_load_warning"
-    if (
-        any(term in normalized_query for term in ("huy", "rut", "bo", "xoa"))
-        and any(term in normalized_query for term in ("hoc phan", "mon", "dang ky", "dang ki"))
-        and "thi lai" not in normalized_query
-    ):
+    registration_change = (
+        (
+            any(
+                _has_normalized_phrase(normalized_query, term)
+                for term in ("huy", "rut", "xoa")
+            )
+            and any(
+                _has_normalized_phrase(normalized_query, term)
+                for term in ("hoc phan", "mon", "dang ky", "dang ki")
+            )
+        )
+        or any(
+            phrase in normalized_query
+            for phrase in ("bo hoc phan", "bo mon", "bo dang ky", "bo dang ki")
+        )
+    )
+    if registration_change and "thi lai" not in normalized_query:
         return "course_registration_change"
     if (
         "nghi hoc" in normalized_query
@@ -576,7 +678,7 @@ def _policy_query_profile(query: str) -> str | None:
 
 def _effective_final_top_k(question: str, source_type_filter: str | None) -> int:
     base_top_k = min(CROSS_ENCODER_FINAL_TOP_K, SEARCH_TOP_K)
-    if source_type_filter == "official_document" and _policy_query_profile(question):
+    if source_type_filter in {"official_document", "local_file"} and _policy_query_profile(question):
         return max(base_top_k, 8)
     return base_top_k
 
@@ -733,6 +835,30 @@ def _policy_result_priority(question: str, doc: dict) -> int:
             score -= 130
         if any(term in metadata_text for term in ("khcn", "nghien cuu", "tap chi", "thiet bi", "phong hoc")):
             score -= 110
+    elif profile == "academic_warning_conditions":
+        if "canh bao ket qua hoc tap" in searchable:
+            score += 130
+        if any(
+            term in searchable
+            for term in (
+                "tin chi khong dat", "diem f", "diem trung binh hoc ky",
+                "diem trung binh tich luy",
+            )
+        ):
+            score += 80
+        if "dang ky khoi luong hoc tap" in searchable:
+            score -= 50
+    elif profile == "course_retake_conditions":
+        if "hoc phan bat buoc" in searchable and any(
+            term in searchable for term in ("diem f", "f+")
+        ):
+            score += 120
+        if "hoc phan tu chon" in searchable and any(
+            term in searchable for term in ("hoc doi", "tuong duong")
+        ):
+            score += 90
+        if "dang ky hoc lai" in searchable:
+            score += 50
     elif profile == "absence_permission_comparison":
         if "diem chuyen can" in searchable:
             score += 85
@@ -774,6 +900,23 @@ def _policy_result_priority(question: str, doc: dict) -> int:
             score += 100
         if "thi ket thuc hoc phan" in searchable:
             score += 35
+    elif profile == "graduation_classification":
+        if "hang tot nghiep" in searchable or "xep loai tot nghiep" in searchable:
+            score += 150
+        if "loai gioi" in searchable and any(term in searchable for term in ("3,20", "3.20")):
+            score += 180
+        if any(term in searchable for term in ("hoc lai vuot qua 5", "ky luat", "giam di mot muc")):
+            score += 90
+        if doc.get("dieu") == 25:
+            score += 150
+        if doc.get("dieu") == 24:
+            score += (
+                150
+                if "dieu kien tot nghiep la gi" in normalize_text(question)
+                else 45
+            )
+        if "thac si" in searchable and "thac si" not in normalize_text(question):
+            score -= 160
     elif profile == "graduation_requirements":
         if "dieu kien xet tot nghiep" in searchable or "cong nhan tot nghiep" in searchable:
             score += 100
@@ -801,6 +944,305 @@ def _prioritize_policy_results(question: str, docs: list[dict]) -> list[dict]:
         ),
         reverse=True,
     )
+
+
+def _rank_local_documents(question: str, docs: list[dict], limit: int) -> list[dict]:
+    normalized_question = normalize_text(question)
+    profile = _local_query_profile(question)
+
+    # Existing policy-specific ranking contains detailed legal rules. Keep that
+    # ordering intact so business-document tuning cannot regress those queries.
+    if _policy_query_profile(question) and profile != "business":
+        return _deduplicate_local_results(docs, limit)
+
+    rerank_values = [float(doc.get("rerank_score") or 0) for doc in docs]
+    rrf_values = [float(doc.get("rrf_score") or 0) for doc in docs]
+    rerank_is_confident = max(rerank_values, default=float("-inf")) >= 0
+
+    def normalized(value: float, values: list[float]) -> float:
+        low, high = min(values, default=0), max(values, default=0)
+        return (value - low) / (high - low) if high > low else 1.0
+
+    query_tokens = _bm25_tokens(question)
+    business_anchor_phrases = (
+        "hoan thi",
+        "video huong dan",
+        "su co thiet bi",
+        "du lieu giang day",
+        "lop hoc phan",
+        "thong ke mot cua",
+        "phieu khao sat",
+        "khao sat noi bo",
+        "ket qua hoc tap",
+        "khoi luong cong tac",
+        "tong hop thanh toan",
+        "bao hong",
+        "file excel",
+    )
+    query_anchors = [
+        phrase
+        for phrase in business_anchor_phrases
+        if phrase in normalized_question
+    ]
+    generic_query_tokens = {
+        "toi", "lam", "nao", "the", "gi", "co", "duoc", "sau", "khi",
+        "nhung", "cac", "mot", "de", "va", "tren", "trong", "cho",
+    }
+    section_query_tokens = {
+        token for token in query_tokens if token not in generic_query_tokens
+    }
+
+    ranked = []
+    for position, doc in enumerate(docs):
+        document_type = normalize_text(doc.get("document_type", ""))
+        domain_match = 0.0
+        if profile == "business" and document_type == "business_document":
+            domain_match = 1.0
+        elif profile == "legal" and document_type in {"regulation", "decision"}:
+            domain_match = 1.0
+
+        searchable = normalize_text(" ".join(
+            str(doc.get(field) or "")
+            for field in ("title", "heading", "section_path", "content")
+        ))
+        section_text = normalize_text(" ".join(
+            str(doc.get(field) or "")
+            for field in ("title", "heading", "section_path")
+        ))
+        document_name_text = normalize_text(" ".join(
+            str(doc.get(field) or "")
+            for field in ("doc_name", "ten_van_ban")
+        ))
+        section_tokens = set(_bm25_tokens(section_text))
+        section_match = (
+            len(section_query_tokens & section_tokens) / len(section_query_tokens)
+            if section_query_tokens
+            else 0.0
+        )
+        anchor_match = (
+            sum(phrase in searchable for phrase in query_anchors)
+            / len(query_anchors)
+            if query_anchors
+            else 0.0
+        )
+        phrase_count = max(len(query_tokens) - 1, 0)
+        phrase_matches = sum(
+            1
+            for index in range(phrase_count)
+            if " ".join(query_tokens[index:index + 2]) in searchable
+        )
+        exact_phrase_bonus = (
+            min(phrase_matches / phrase_count, 1.0)
+            if phrase_count
+            else float(normalized_question in searchable)
+        )
+        document_phrase_match = (
+            sum(
+                " ".join(query_tokens[index:index + 2]) in document_name_text
+                for index in range(phrase_count)
+            ) / phrase_count
+            if phrase_count
+            else 0.0
+        )
+        procedure_marker_count = sum(
+            marker in searchable
+            for marker in (
+                "buoc 1",
+                "dang nhap",
+                "gui yeu cau",
+                "truy cap truc tiep",
+                "support.uneti.edu.vn",
+            )
+        )
+        raw_rerank_score = float(doc.get("rerank_score") or 0)
+        rerank_score = (
+            normalized(raw_rerank_score, rerank_values)
+            if rerank_is_confident
+            else 1 / (1 + math.exp(-raw_rerank_score))
+        )
+        rrf_score = normalized(float(doc.get("rrf_score") or 0), rrf_values)
+        if rerank_is_confident:
+            final_score = (
+                0.55 * rerank_score
+                + 0.12 * rrf_score
+                + 0.10 * domain_match
+                + 0.07 * section_match
+                + 0.13 * anchor_match
+                + 0.03 * exact_phrase_bonus
+            )
+        else:
+            # Negative scores mean the cross-encoder considers every candidate
+            # weak. In that case, domain and section signals are more reliable
+            # than tiny differences between several irrelevant passages.
+            final_score = (
+                0.35 * rerank_score
+                + 0.15 * rrf_score
+                + 0.15 * domain_match
+                + 0.10 * section_match
+                + 0.20 * anchor_match
+                + 0.05 * exact_phrase_bonus
+            )
+        if (
+            "thiet bi giang duong" in normalized_question
+            and "tru thiet bi giang duong" in searchable
+        ):
+            final_score -= 0.25
+        if profile == "legal":
+            final_score += 0.50 * document_phrase_match
+        if profile == "business" and document_type == "business_document":
+            final_score += 0.45
+            if procedure_marker_count >= 2:
+                final_score += 0.20
+        if (
+            "thac si" in document_name_text
+            and "thac si" not in normalized_question
+        ):
+            final_score -= 0.85
+        if doc.get("metadata_matched"):
+            final_score += 1.0
+        ranked.append({
+            **doc,
+            "metadata_boost": round(0.10 * domain_match, 6),
+            "section_match": round(section_match, 6),
+            "business_anchor_match": round(anchor_match, 6),
+            "document_phrase_match": round(document_phrase_match, 6),
+            "exact_phrase_bonus": round(exact_phrase_bonus, 6),
+            "procedure_marker_count": procedure_marker_count,
+            "local_final_score": round(final_score, 6),
+            "_original_position": position,
+        })
+
+    ranked.sort(
+        key=lambda item: (
+            item["local_final_score"],
+            -item["_original_position"],
+        ),
+        reverse=True,
+    )
+    return _deduplicate_local_results(ranked, limit)
+
+
+def _deduplicate_local_results(docs: list[dict], limit: int) -> list[dict]:
+    selected = []
+    seen_chunks = set()
+    document_counts = Counter()
+    for raw_doc in docs:
+        doc = dict(raw_doc)
+        doc.pop("_original_position", None)
+        chunk_identity = doc.get("chunk_hash") or _chunk_key(doc)
+        if chunk_identity in seen_chunks:
+            continue
+        document_identity = (
+            doc.get("document_id")
+            or doc.get("content_hash")
+            or doc.get("relative_path")
+            or doc.get("doc_name")
+        )
+        if document_counts[document_identity] >= 3:
+            continue
+        seen_chunks.add(chunk_identity)
+        document_counts[document_identity] += 1
+        selected.append(doc)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _local_query_profile(question: str) -> str:
+    normalized_question = normalize_text(question)
+    if re.search(
+        r"\b(?:dieu|khoan|muc|chuong)\s+(?:\d+|[ivxlcdm]+)\b",
+        normalized_question,
+    ) or any(
+        term in normalized_question
+        for term in ("quy dinh", "quy che", "quyet dinh", "che tai")
+    ):
+        return "legal"
+
+    business_terms = (
+        "web support",
+        "uneti online",
+        "trang support",
+        "trang chu",
+        "man hinh",
+        "module",
+        "thao tac",
+        "xem chi tiet",
+        "nhan nut",
+        "click",
+        "thanh menu",
+        "truy cap",
+        "duong link",
+        "xuat excel",
+        "dieu kien loc",
+        "bo loc",
+        "huy loc",
+        "thong ke mot cua",
+        "phieu khao sat",
+        "khao sat",
+        "khao sat noi bo",
+        "tin tuc",
+        "bai viet",
+        "bai dang",
+        "bo cai dat",
+        "tai lieu huong dan",
+        "video huong dan",
+        "phan he",
+        "ket qua hoc tap",
+        "lich hoc",
+        "lich thi",
+        "danh gia thu tuc",
+        "thu tuc mot cua",
+        "thong ke thu tuc",
+        "cong tac giang vien",
+        "thanh toan du kien",
+        "thanh toan",
+        "le phi thi lai",
+        "tra cuu",
+        "ket qua thi",
+        "su co thiet bi",
+        "gui yeu cau",
+        "du lieu giang day",
+        "lop hoc phan",
+        "dong bo",
+        "file excel",
+        "bao cao mot cua",
+        "bao hong",
+        "khoi luong cong tac",
+        "tong hop thanh toan",
+        "lam the nao",
+        "thuc hien nhu the nao",
+        "thu tuc xin",
+        "cach lam",
+        "cach thuc hien",
+        "huong dan",
+        "nop don",
+        "gui yeu cau",
+    )
+    if any(term in normalized_question for term in business_terms):
+        return "business"
+    return "neutral"
+
+
+def _local_rrf_branch_weights(question: str) -> dict[str, float]:
+    profile = _local_query_profile(question)
+    if profile == "business":
+        return {
+            "bm25_original": 0.8,
+            "bm25_business": 1.0,
+            "ann_original": 1.2,
+            "ann_business": 1.2,
+            "ann_hyde": 1.2,
+            "ann_grounded_hyde": 1.2,
+        }
+    if profile == "legal":
+        return {
+            "bm25_original": 1.3,
+            "ann_original": 0.8,
+            "ann_hyde": 0.8,
+            "ann_grounded_hyde": 0.8,
+        }
+    return {}
 
 
 def get_keywords(text: str):
@@ -950,6 +1392,7 @@ def _search_cache_key(
     retrieval_action: str = DIRECT_RETRIEVAL,
     final_top_k: int | None = None,
     retrieval_query: str | None = None,
+    retrieval_filters: tuple = (),
 ):
     return (
         normalize_text(question),
@@ -958,6 +1401,7 @@ def _search_cache_key(
         retrieval_action,
         signature,
         final_top_k or SEARCH_TOP_K,
+        retrieval_filters,
     )
 
 
@@ -987,6 +1431,48 @@ def _filter_results_by_source_type(results: list[dict], source_type_filter: str 
     if not source_type_filter:
         return results
     return [doc for doc in results if doc.get("source_type") == source_type_filter]
+
+
+def _normalized_filter_values(values) -> set[str]:
+    if not values:
+        return set()
+    if isinstance(values, str):
+        values = {values}
+    return {normalize_text(value) for value in values if value is not None}
+
+
+def _matches_retrieval_filters(
+    chunk: dict,
+    *,
+    source_type_filter: str | None = None,
+    corpus_filter: str | None = None,
+    rag_enabled_filter: bool | None = None,
+    exclude_document_names=None,
+    exclude_source_types=None,
+    document_type_filter=None,
+    department_filter=None,
+) -> bool:
+    if source_type_filter and chunk.get("source_type") != source_type_filter:
+        return False
+    if corpus_filter and chunk.get("corpus") != corpus_filter:
+        return False
+    if rag_enabled_filter is not None and chunk.get("rag_enabled") is not rag_enabled_filter:
+        return False
+    if normalize_text(chunk.get("doc_name", "")) in _normalized_filter_values(exclude_document_names):
+        return False
+    if normalize_text(chunk.get("source_type", "")) in _normalized_filter_values(exclude_source_types):
+        return False
+    allowed_types = _normalized_filter_values(document_type_filter)
+    if allowed_types and normalize_text(chunk.get("document_type", "")) not in allowed_types:
+        return False
+    allowed_departments = _normalized_filter_values(department_filter)
+    if allowed_departments and normalize_text(chunk.get("department", "")) not in allowed_departments:
+        return False
+    return True
+
+
+def _filter_results_by_retrieval_filters(results: list[dict], **filters) -> list[dict]:
+    return [doc for doc in results if _matches_retrieval_filters(doc, **filters)]
 
 
 def _extract_document_number_query(question: str) -> str | None:
@@ -1058,6 +1544,7 @@ def _load_document_index():
     chunks = []
     doc_freq = Counter()
     skipped_files = []
+    seen_chunk_hashes = set()
 
     for file in files:
         if file.get("parse_supported") is False:
@@ -1074,6 +1561,11 @@ def _load_document_index():
             continue
 
         for chunk in file_chunks:
+            chunk_hash = chunk.get("chunk_hash")
+            if chunk_hash and chunk_hash in seen_chunk_hashes:
+                continue
+            if chunk_hash:
+                seen_chunk_hashes.add(chunk_hash)
             tokens = get_keywords(_chunk_search_text(chunk))
             chunk["_token_counts"] = Counter(tokens)
             chunk["_token_set"] = set(tokens)
@@ -1105,11 +1597,20 @@ def _load_document_index():
     return chunks, doc_freq, len(chunks)
 
 
-def _metadata_filter_from_constraints(constraints: dict, source_type_filter: str | None = None) -> dict:
+def _metadata_filter_from_constraints(
+    constraints: dict,
+    source_type_filter: str | None = None,
+    corpus_filter: str | None = None,
+    rag_enabled_filter: bool | None = None,
+) -> dict:
     metadata_filter = {}
 
     if source_type_filter:
         metadata_filter["source_type"] = source_type_filter
+    if corpus_filter:
+        metadata_filter["corpus"] = corpus_filter
+    if rag_enabled_filter is not None:
+        metadata_filter["rag_enabled"] = rag_enabled_filter
 
     if constraints.get("so_van_ban"):
         metadata_filter["so_van_ban_ngan"] = str(constraints["so_van_ban"])
@@ -1209,7 +1710,7 @@ def _metadata_match_count(chunk: dict, constraints: dict) -> int:
     )
 
 
-def _search_metadata_documents(question: str, limit: int):
+def _search_metadata_documents(question: str, limit: int, **retrieval_filters):
     constraints = extract_metadata_constraints(question)
     document_number = _extract_document_number_query(question)
     if document_number and not constraints.get("so_van_ban"):
@@ -1221,6 +1722,8 @@ def _search_metadata_documents(question: str, limit: int):
     results = []
 
     for chunk in chunks:
+        if not _matches_retrieval_filters(chunk, **retrieval_filters):
+            continue
         match_count = _metadata_match_count(chunk, constraints)
         if match_count == 0:
             continue
@@ -1312,6 +1815,7 @@ def _search_bm25_documents(
     question: str,
     limit: int,
     source_type_filter: str | None = None,
+    **retrieval_filters,
 ):
     """Search the in-memory document corpus with BM25 and metadata field boosts."""
     chunks, _, _ = _load_document_index()
@@ -1322,7 +1826,11 @@ def _search_bm25_documents(
 
     results = []
     for chunk, score in zip(chunks, bm25.get_scores(query_tokens)):
-        if source_type_filter and chunk.get("source_type") != source_type_filter:
+        if not _matches_retrieval_filters(
+            chunk,
+            source_type_filter=source_type_filter,
+            **retrieval_filters,
+        ):
             continue
         if float(score) <= BM25_MIN_SCORE:
             continue
@@ -1346,9 +1854,14 @@ def _search_keyword_documents(question: str, limit: int, source_type_filter: str
     return _search_bm25_documents(question, limit, source_type_filter)
 
 
-def _merge_with_rrf(result_sets: list[list[dict]], limit: int):
+def _merge_with_rrf(
+    result_sets: list[list[dict]],
+    limit: int,
+    branch_weights: dict[str, float] | None = None,
+):
     """Gộp nhiều danh sách kết quả bằng Reciprocal Rank Fusion dựa trên thứ hạng."""
     fused = {}
+    branch_weights = branch_weights or {}
 
     for result_set in result_sets:
         for rank, chunk in enumerate(result_set, start=1):
@@ -1360,7 +1873,12 @@ def _merge_with_rrf(result_sets: list[list[dict]], limit: int):
                     "rrf_score": 0.0,
                 },
             )
-            item["rrf_score"] += 1 / (RRF_K + rank)
+            branches = set(chunk.get("retrieval_branches") or [])
+            weight = max(
+                (branch_weights.get(branch, 1.0) for branch in branches),
+                default=1.0,
+            )
+            item["rrf_score"] += weight / (RRF_K + rank)
 
             if "distance" in chunk:
                 item["chunk"]["vector_score"] = chunk.get("score")
@@ -1370,9 +1888,9 @@ def _merge_with_rrf(result_sets: list[list[dict]], limit: int):
                 item["chunk"]["keyword_score"] = chunk.get("keyword_score")
             if "bm25_score" in chunk:
                 item["chunk"]["bm25_score"] = chunk.get("bm25_score")
-            branches = set(item["chunk"].get("retrieval_branches") or [])
-            branches.update(chunk.get("retrieval_branches") or [])
-            item["chunk"]["retrieval_branches"] = sorted(branches)
+            merged_branches = set(item["chunk"].get("retrieval_branches") or [])
+            merged_branches.update(branches)
+            item["chunk"]["retrieval_branches"] = sorted(merged_branches)
 
     ranked = sorted(fused.values(), key=lambda item: item["rrf_score"], reverse=True)
     results = []
@@ -1524,6 +2042,12 @@ async def search_documents(
     debug: dict | None = None,
     source_type_filter: str | None = None,
     ambiguity_decision: dict | None = None,
+    corpus_filter: str | None = None,
+    rag_enabled_filter: bool | None = None,
+    exclude_document_names=None,
+    exclude_source_types=None,
+    document_type_filter=None,
+    department_filter=None,
 ):
     """Run query expansion, BM25, Chroma ANN, RRF and cross-encoder reranking."""
     ambiguity_decision = ambiguity_decision or {
@@ -1544,6 +2068,32 @@ async def search_documents(
         ambiguity_action = DIRECT_RETRIEVAL
     retrieval_query = _academic_policy_retrieval_query(question)
     effective_final_top_k = _effective_final_top_k(question, source_type_filter)
+    active_filters = {
+        "source_type_filter": source_type_filter,
+        "corpus_filter": corpus_filter,
+        "rag_enabled_filter": rag_enabled_filter,
+        "exclude_document_names": exclude_document_names,
+        "exclude_source_types": exclude_source_types,
+        "document_type_filter": document_type_filter,
+        "department_filter": department_filter,
+    }
+    optional_filters = {
+        key: value
+        for key, value in active_filters.items()
+        if key != "source_type_filter" and value is not None and value != set()
+    }
+    metadata_search_filters = dict(optional_filters)
+    if source_type_filter:
+        metadata_search_filters["source_type_filter"] = source_type_filter
+    filter_signature = (
+        source_type_filter or "",
+        corpus_filter or "",
+        rag_enabled_filter,
+        tuple(sorted(_normalized_filter_values(exclude_document_names))),
+        tuple(sorted(_normalized_filter_values(exclude_source_types))),
+        tuple(sorted(_normalized_filter_values(document_type_filter))),
+        tuple(sorted(_normalized_filter_values(department_filter))),
+    )
     signature = _current_document_signature()
     cache_key = _search_cache_key(
         question,
@@ -1552,6 +2102,7 @@ async def search_documents(
         ambiguity_action,
         effective_final_top_k,
         retrieval_query,
+        filter_signature,
     )
     cached_results = _get_search_cache(cache_key)
     if cached_results is not None:
@@ -1561,6 +2112,7 @@ async def search_documents(
                 "cache_hit": True,
                 "ambiguity": ambiguity_decision,
                 "source_type_filter": source_type_filter,
+                "active_filters": filter_signature,
                 "probe_retrieval": {
                     "attempted": False,
                     "has_confident_evidence": bool(cached_results),
@@ -1595,7 +2147,9 @@ async def search_documents(
 
     candidate_limit = max(RRF_CANDIDATE_TOP_K, effective_final_top_k)
     metadata_results, metadata_constraints = _search_metadata_documents(
-        retrieval_query, candidate_limit
+        retrieval_query,
+        candidate_limit,
+        **metadata_search_filters,
     )
     original_metadata_constraints = extract_metadata_constraints(question)
 
@@ -1608,6 +2162,7 @@ async def search_documents(
                 "cache_hit": False,
                 "metadata_constraints": metadata_constraints,
                 "source_type_filter": source_type_filter,
+                "active_filters": filter_signature,
                 "final_search_query": retrieval_query,
                 "effective_final_top_k": effective_final_top_k,
                 "metadata_results_count": 0,
@@ -1639,6 +2194,8 @@ async def search_documents(
     metadata_filter = _metadata_filter_from_constraints(
         metadata_constraints if metadata_results else {},
         source_type_filter,
+        corpus_filter,
+        rag_enabled_filter,
     )
     for doc in metadata_results:
         doc["retrieval_branches"] = ["metadata"]
@@ -1693,6 +2250,7 @@ async def search_documents(
             retrieval_query,
             min(BM25_TOP_K, candidate_limit),
             source_type_filter,
+            **optional_filters,
         )
     except Exception as exc:
         bm25_error = str(exc)
@@ -1707,15 +2265,63 @@ async def search_documents(
         "results": _compact_debug_sources(bm25_results, limit=BM25_TOP_K),
     })
 
+    local_business_query = (
+        corpus_filter == "local_documents"
+        and _local_query_profile(question) == "business"
+        and not document_type_filter
+    )
+    if local_business_query:
+        business_bm25_error = None
+        try:
+            business_bm25_results = _search_bm25_documents(
+                retrieval_query,
+                min(BM25_TOP_K, candidate_limit),
+                source_type_filter,
+                **{
+                    **optional_filters,
+                    "document_type_filter": {"business_document"},
+                },
+            )
+        except Exception as exc:
+            business_bm25_results = []
+            business_bm25_error = str(exc)
+            bm25_errors.append({
+                "query": question,
+                "branch": "bm25_business",
+                "error": business_bm25_error,
+            })
+        for doc in business_bm25_results:
+            doc["retrieval_branches"] = ["bm25_business"]
+        if business_bm25_results:
+            result_sets.append(business_bm25_results)
+        bm25_debug.append({
+            "query": question,
+            "branch": "bm25_business",
+            "error": business_bm25_error,
+            "results": _compact_debug_sources(
+                business_bm25_results,
+                limit=BM25_TOP_K,
+            ),
+        })
+
     ann_original = []
     ann_original_error = None
     try:
+        ann_limit = ANN_TOP_K
+        if (
+            corpus_filter == "local_documents"
+            and _local_query_profile(question) == "business"
+        ):
+            ann_limit = max(ann_limit, 30)
         ann_original = search_similar_chunks(
             retrieval_query,
-            top_k=min(ANN_TOP_K, candidate_limit),
+            top_k=min(ann_limit, candidate_limit),
             metadata_filter=metadata_filter if metadata_filter else None,
         )
-        ann_original = _filter_results_by_source_type(ann_original, source_type_filter)
+        ann_original = _filter_results_by_retrieval_filters(
+            ann_original,
+            **active_filters,
+        )
     except Exception as exc:
         ann_original_error = str(exc)
         vector_errors.append({"branch": "ann_original", "error": ann_original_error})
@@ -1728,6 +2334,42 @@ async def search_documents(
         "error": ann_original_error,
         "results": _compact_debug_sources(ann_original, limit=ANN_TOP_K),
     })
+
+    if local_business_query:
+        business_ann_error = None
+        business_metadata_filter = {
+            **(metadata_filter or {}),
+            "document_type": "business_document",
+        }
+        try:
+            business_ann_results = search_similar_chunks(
+                retrieval_query,
+                top_k=min(max(ANN_TOP_K, 30), candidate_limit),
+                metadata_filter=business_metadata_filter,
+            )
+            business_ann_results = _filter_results_by_retrieval_filters(
+                business_ann_results,
+                **active_filters,
+            )
+        except Exception as exc:
+            business_ann_results = []
+            business_ann_error = str(exc)
+            vector_errors.append({
+                "branch": "ann_business",
+                "error": business_ann_error,
+            })
+        for doc in business_ann_results:
+            doc["retrieval_branches"] = ["ann_business"]
+        if business_ann_results:
+            result_sets.append(business_ann_results)
+        ann_debug.append({
+            "branch": "ann_business",
+            "error": business_ann_error,
+            "results": _compact_debug_sources(
+                business_ann_results,
+                limit=ANN_TOP_K,
+            ),
+        })
 
     ann_hyde = []
     ann_grounded_hyde = []
@@ -1798,9 +2440,9 @@ async def search_documents(
                     top_k=min(GROUNDED_HYDE_ANN_TOP_K, candidate_limit),
                     metadata_filter=metadata_filter if metadata_filter else None,
                 )
-                ann_grounded_hyde = _filter_results_by_source_type(
+                ann_grounded_hyde = _filter_results_by_retrieval_filters(
                     ann_grounded_hyde,
-                    source_type_filter,
+                    **active_filters,
                 )
             except Exception as exc:
                 grounded_error = str(exc)
@@ -1842,7 +2484,10 @@ async def search_documents(
                     top_k=min(HYDE_ANN_TOP_K, candidate_limit),
                     metadata_filter=metadata_filter if metadata_filter else None,
                 )
-                ann_hyde = _filter_results_by_source_type(ann_hyde, source_type_filter)
+                ann_hyde = _filter_results_by_retrieval_filters(
+                    ann_hyde,
+                    **active_filters,
+                )
             except Exception as exc:
                 hyde_error = str(exc)
                 vector_errors.append({"branch": "ann_hyde", "error": hyde_error})
@@ -1857,7 +2502,15 @@ async def search_documents(
             })
 
     if result_sets:
-        rrf_results = _merge_with_rrf(result_sets, candidate_limit)
+        rrf_results = _merge_with_rrf(
+            result_sets,
+            candidate_limit,
+            branch_weights=(
+                _local_rrf_branch_weights(question)
+                if corpus_filter == "local_documents"
+                else None
+            ),
+        )
         if metadata_results:
             metadata_keys = {_chunk_key(chunk) for chunk in metadata_results}
             rrf_results.sort(
@@ -1869,15 +2522,32 @@ async def search_documents(
                 ),
                 reverse=True,
             )
+        rerank_pool_size = _policy_rerank_pool_size(
+            question,
+            effective_final_top_k,
+        )
+        if corpus_filter == "local_documents":
+            rerank_pool_size = max(
+                rerank_pool_size,
+                min(CROSS_ENCODER_TOP_N, candidate_limit),
+            )
         final_results, rerank_debug = rerank_documents(
             question,
             rrf_results,
-            final_top_k=_policy_rerank_pool_size(question, effective_final_top_k),
+            final_top_k=rerank_pool_size,
         )
         final_results = _prioritize_policy_results(
             question,
             final_results,
-        )[:effective_final_top_k]
+        )
+        if corpus_filter == "local_documents":
+            final_results = _rank_local_documents(
+                question,
+                final_results,
+                effective_final_top_k,
+            )
+        else:
+            final_results = final_results[:effective_final_top_k]
         for doc in final_results:
             branches = set(doc.get("retrieval_branches") or [])
             doc["hyde_only"] = branches in (
@@ -1896,6 +2566,15 @@ async def search_documents(
             "cache_hit": False,
             "metadata_constraints": metadata_constraints,
             "source_type_filter": source_type_filter,
+            "active_filters": {
+                "source_type": source_type_filter,
+                "corpus": corpus_filter,
+                "rag_enabled": rag_enabled_filter,
+                "exclude_document_names": sorted(_normalized_filter_values(exclude_document_names)),
+                "exclude_source_types": sorted(_normalized_filter_values(exclude_source_types)),
+                "document_types": sorted(_normalized_filter_values(document_type_filter)),
+                "departments": sorted(_normalized_filter_values(department_filter)),
+            },
             "final_search_query": retrieval_query,
             "effective_final_top_k": effective_final_top_k,
             "metadata_results_count": len(metadata_results),

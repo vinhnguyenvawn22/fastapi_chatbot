@@ -17,6 +17,10 @@ class ChatSource(BaseModel):
     url: Optional[str] = None
     attachment_url: Optional[str] = None
     source_type: Optional[str] = None
+    corpus: Optional[str] = None
+    index_version: Optional[str] = None
+    document_type: Optional[str] = None
+    department: Optional[str] = None
     relative_path: Optional[str] = None
     phong_ban: Optional[str] = None
     source_root: Optional[str] = None
@@ -29,7 +33,14 @@ class ChatSource(BaseModel):
     chuong: Optional[str] = None
     muc: Optional[int] = None
     dieu: Optional[int] = None
+    section_path: Optional[str] = None
+    heading: Optional[str] = None
+    section_type: Optional[str] = None
+    page: Optional[int] = None
     chunk_index: Optional[int] = None
+    chunk_hash: Optional[str] = None
+    document_id: Optional[str] = None
+    file_extension: Optional[str] = None
     file_id: Optional[str] = None
     faq_location: Optional[str] = None
     audience: Optional[str] = None

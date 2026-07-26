@@ -96,6 +96,103 @@ def test_mapping_guided_grade_and_schedule_search_returns_student_source():
     assert docs[0]["doc_name"] == "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx"
 
 
+def test_survey_type_question_retargets_to_catalog_source():
+    clear_business_knowledge_cache()
+    debug = {}
+
+    docs = search_business_sources(
+        "Co may loai phieu khao sat tren he thong va su khac biet la gi?",
+        debug=debug,
+        query_context={
+            "audience_hint": "sv",
+            "audience_source": "query",
+            "information_need": "procedure_ui",
+        },
+    )
+
+    assert docs
+    assert debug["mapping_selected"] is True
+    assert debug["mapping_question"] == "Có mấy loại phiếu khảo sát trên hệ thống và sự khác biệt là gì?"
+    assert debug["source_file"] == "2026.03.03.ChatbotAI_CBGV_SV_V4.docx"
+    assert debug["survey_source_override"] is True
+    content = normalize_text(" ".join(doc["content"] for doc in docs[:2]))
+    assert "khao sat noi bo" in content
+    assert "khao sat ben ngoai" in content
+
+
+def test_internal_survey_process_question_uses_survey_source_location():
+    clear_business_knowledge_cache()
+    debug = {}
+
+    docs = search_business_sources(
+        "Quy trinh tham gia mot phieu Khao sat Noi bo nhu the nao?",
+        debug=debug,
+        query_context={
+            "audience_hint": "sv",
+            "audience_source": "query",
+            "information_need": "procedure_ui",
+        },
+    )
+
+    assert docs
+    assert debug["mapping_selected"] is True
+    assert debug["mapping_question"] == "Quy trình tham gia một phiếu Khảo sát Nội bộ như thế nào?"
+    assert debug["source_file"] == "2026.03.03.ChatbotAI_CBGV_SV_V4.docx"
+    assert debug["survey_source_override"] is True
+    assert debug["retrieval_method"] in {"location", "keyword"}
+    content = normalize_text(docs[0]["content"])
+    assert "dang nhap" in content
+    assert "nop khao sat" in content
+
+
+def test_procedure_evaluation_questions_use_correct_location_override():
+    clear_business_knowledge_cache()
+    debug = {}
+
+    docs = search_business_sources(
+        "Lam the nao de thuc hien danh gia mot yeu cau thu tuc hanh chinh da hoan thanh?",
+        debug=debug,
+        query_context={
+            "audience_hint": "sv",
+            "audience_source": "query",
+            "information_need": "procedure_ui",
+        },
+    )
+
+    assert docs
+    assert debug["mapping_selected"] is True
+    assert debug["source_file"] == "2026.03.25.AI_HDSD TREN WEB SUPPORT SV.docx"
+    assert debug["requested_location"] == "Mục III -> 6"
+    assert debug["procedure_evaluation_location_override"] is True
+    assert debug["procedure_evaluation_original_location"] == "Mục III -> 2"
+    content = normalize_text(" ".join(doc["content"] for doc in docs[:2]))
+    assert "danh gia thu tuc hanh chinh" in content
+    assert "mot-cua/danh-gia-thu-tuc-hanh-chinh" in content
+
+
+def test_procedure_evaluation_satisfaction_question_uses_correct_section():
+    clear_business_knowledge_cache()
+    debug = {}
+
+    docs = search_business_sources(
+        "Chuc nang danh gia thu tuc mot cua cung cap bao nhieu muc do hai long de sinh vien lua chon?",
+        debug=debug,
+        query_context={
+            "audience_hint": "sv",
+            "audience_source": "query",
+            "information_need": "procedure_ui",
+        },
+    )
+
+    assert docs
+    assert debug["mapping_selected"] is True
+    assert debug["requested_location"] == "Mục III -> 6"
+    assert debug["procedure_evaluation_location_override"] is True
+    content = normalize_text(" ".join(doc["content"] for doc in docs[:3]))
+    assert "muc do hai long" in content
+    assert "5 muc" in content or "05 muc" in content
+
+
 def test_mapping_location_selects_learning_results_in_original_file():
     clear_business_knowledge_cache()
     debug = {}
