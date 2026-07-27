@@ -41,4 +41,9 @@ INFO:     127.0.0.1:57406 - "GET /api/chat/threads HTTP/1.1" 200 OK
 INFO:     127.0.0.1:64756 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
  INFO:     127.0.0.1:65060 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
 INFO:     127.0.0.1:60566 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:52729 - "GET /api/chat/threads HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52729 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52729 - "GET /api/chat/threads HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53535 - "POST /api/chat/local-documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53535 - "GET /api/chat/threads HTTP/1.1" 200 OK
  

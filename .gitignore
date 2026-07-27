@@ -9,4 +9,3 @@ storage/chat_history.sqlite3
 .sync-manifest.json
 uris.json
 data/ChatAI/service-account.json
-uploads/
