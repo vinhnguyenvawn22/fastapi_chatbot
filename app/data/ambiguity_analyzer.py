@@ -103,7 +103,15 @@ def _looks_garbled(question: str, normalized: str) -> bool:
         return True
     digit_mixed = bool(re.search(r"(?=[a-z]*\d)(?=[a-z\d]*[a-z])[a-z\d]+", normalized))
     repeated_noise = bool(re.search(r"([a-z0-9])\1{3,}", normalized))
-    unsupported_chars = bool(re.search(r"[^0-9a-zA-ZÀ-ỹ\s,.;:()/_-]", question))
+    allowed_punctuation = set(",.;:!?()/_-'\"")
+    unsupported_chars = any(
+        not (
+            char.isalnum()
+            or char.isspace()
+            or char in allowed_punctuation
+        )
+        for char in question
+    )
     unknown_shape = digit_mixed or repeated_noise or unsupported_chars
     return unknown_shape and not any(
         term in normalized

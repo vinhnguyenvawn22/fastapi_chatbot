@@ -128,6 +128,69 @@ _BROAD_ENTITY_KEYWORDS = {
     "yeu", "cau", "thong", "trang", "thai", "xu", "ly",
     "thong", "tin", "chuc", "nang", "noi", "dung",
 }
+_AUDIENCE_ROLES = {
+    "sinh vien": "student",
+    "hoc vien": "student",
+    "nguoi hoc": "student",
+    "giang vien": "staff",
+    "can bo": "staff",
+    "cbgv": "staff",
+    "thay co": "staff",
+}
+_SHARED_PREDICATE_START = re.compile(
+    r"^(?P<subjects>.+?)\s+"
+    r"(?P<predicate>(?:xem|tra cứu|tra cuu|kiểm tra|kiem tra|tìm|tim|"
+    r"gửi|gui|đăng ký|dang ky|dang ki|theo dõi|theo doi|"
+    r"có thể|co the|có được|co duoc|được|duoc|có|co)\b.+)$",
+    flags=re.IGNORECASE,
+)
+_COORDINATED_SUBJECT_SEPARATOR = re.compile(
+    r"\s*(?:,|(?:\b(?:và|va|cùng với|cung voi)\b))\s*",
+    flags=re.IGNORECASE,
+)
+_ROLE_PAIRED_TERMS = (
+    {
+        "pattern": re.compile(
+            r"\bhọc tập\s*/\s*công tác\b",
+            flags=re.IGNORECASE,
+        ),
+        "student": "học tập",
+        "staff": "công tác",
+    },
+    {
+        "pattern": re.compile(
+            r"\bcông tác\s*/\s*học tập\b",
+            flags=re.IGNORECASE,
+        ),
+        "student": "học tập",
+        "staff": "công tác",
+    },
+    {
+        "pattern": re.compile(
+            r"\bhọc\s*/\s*dạy\b",
+            flags=re.IGNORECASE,
+        ),
+        "student": "học",
+        "staff": "dạy",
+    },
+    {
+        "pattern": re.compile(
+            r"\bdạy\s*/\s*học\b",
+            flags=re.IGNORECASE,
+        ),
+        "student": "học",
+        "staff": "dạy",
+    },
+)
+_AUDIENCE_TITLES = {
+    "sinh vien": "Sinh viên",
+    "hoc vien": "Học viên",
+    "nguoi hoc": "Người học",
+    "giang vien": "Giảng viên",
+    "can bo": "Cán bộ",
+    "cbgv": "Cán bộ, giảng viên",
+    "thay co": "Thầy cô",
+}
 
 
 def _content_keywords(text: str) -> list[str]:
@@ -164,6 +227,74 @@ def _deduplicate_clauses(clauses: list[str]) -> list[str]:
         seen.add(key)
         deduplicated.append(cleaned)
     return deduplicated
+
+
+def _audience_role(text: str) -> str | None:
+    return _AUDIENCE_ROLES.get(normalize_text(text))
+
+
+def _specialize_predicate_for_audience(
+    predicate: str,
+    audience_role: str,
+) -> str:
+    specialized = predicate
+    for pair in _ROLE_PAIRED_TERMS:
+        specialized = pair["pattern"].sub(
+            pair[audience_role],
+            specialized,
+        )
+    return specialized
+
+
+def _expand_coordinated_audience_need(
+    question: str,
+) -> tuple[list[str], list[str]] | None:
+    """Duplicate a shared information need for each explicitly named audience."""
+    match = _SHARED_PREDICATE_START.match(question.strip(" .;?"))
+    if not match:
+        return None
+
+    subjects = _deduplicate_clauses(
+        _COORDINATED_SUBJECT_SEPARATOR.split(match.group("subjects"))
+    )
+    if len(subjects) < 2 or len(subjects) > MAX_ASPECTS:
+        return None
+
+    roles = [_audience_role(subject) for subject in subjects]
+    if any(role is None for role in roles) or len(set(roles)) < 2:
+        return None
+
+    predicate = match.group("predicate").strip()
+    expanded = [
+        f"{subject} {_specialize_predicate_for_audience(predicate, role)}"
+        for subject, role in zip(subjects, roles)
+    ]
+    if not all(_has_information_need(clause) for clause in expanded):
+        return None
+    return _deduplicate_clauses(expanded), subjects
+
+
+def _presentation_title(
+    clause: str,
+    audience_scope: str | None,
+    prefer_audience: bool,
+) -> str:
+    if prefer_audience and audience_scope:
+        return _AUDIENCE_TITLES.get(audience_scope, audience_scope.capitalize())
+
+    title = re.sub(r"\s+", " ", str(clause or "")).strip(" .;:?")
+    title = re.sub(
+        r"\s+(?:là gì|la gi|như thế nào|nhu the nao|thế nào|the nao|"
+        r"ở đâu|o dau|khi nào|khi nao|cần những gì|can nhung gi|"
+        r"gồm những gì|gom nhung gi)\s*$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip(" .;:?")
+    if not title:
+        return "Thông tin cần biết"
+    title = title[0].upper() + title[1:]
+    return title[:100].rstrip()
 
 
 def _inherit_shared_need_for_coordinated_actions(
@@ -302,6 +433,18 @@ def _specific_topic_keywords(text: str) -> set[str]:
     return set(_specific_topic_tokens(text))
 
 
+def _specific_topic_bigrams(text: str, keywords: set[str]) -> set[str]:
+    raw_tokens = re.findall(r"[a-z0-9]+", normalize_text(text))
+    return {
+        f"{raw_tokens[index]} {raw_tokens[index + 1]}"
+        for index in range(len(raw_tokens) - 1)
+        if (
+            raw_tokens[index] in keywords
+            and raw_tokens[index + 1] in keywords
+        )
+    }
+
+
 def _focused_retrieval_query(clause: str, retrieval_query: str) -> str | None:
     primary_question = normalize_text(clause)
     query_parts = re.split(
@@ -335,7 +478,16 @@ def _focused_retrieval_query(clause: str, retrieval_query: str) -> str | None:
     ):
         hints.extend(("dieu kien", "truong hop", "neu", "phai"))
     if "o dau" in primary_question:
-        hints.extend(("noi nop", "don vi tiep nhan", "phong", "bo phan"))
+        asks_lookup_location = any(
+            marker in primary_question
+            for marker in ("xem", "tra cuu", "kiem tra", "theo doi")
+        )
+        if asks_lookup_location:
+            hints.extend(
+                ("man hinh", "chuc nang", "duong dan", "truy cap", "he thong")
+            )
+        else:
+            hints.extend(("noi nop", "don vi tiep nhan", "phong", "bo phan"))
     if "thoi han" in primary_question:
         hints.extend(("thoi han", "cham nhat", "trong vong"))
     if any(
@@ -435,7 +587,12 @@ def decompose_multi_aspect_query(question: str) -> dict[str, Any]:
             "aspects": [],
         }
 
-    clauses = _deduplicate_clauses(_CLAUSE_SEPARATOR.split(cleaned_question))
+    coordinated_audience = _expand_coordinated_audience_need(cleaned_question)
+    if coordinated_audience:
+        clauses, raw_clauses = coordinated_audience
+    else:
+        clauses = _deduplicate_clauses(_CLAUSE_SEPARATOR.split(cleaned_question))
+        raw_clauses = list(clauses)
     if _is_single_collective_metric_question(cleaned_question, clauses):
         return {
             "is_multi_aspect": False,
@@ -444,7 +601,10 @@ def decompose_multi_aspect_query(question: str) -> dict[str, Any]:
             "candidate_clauses": clauses,
             "aspects": [],
         }
-    clauses, raw_clauses = _inherit_shared_need_for_coordinated_actions(clauses)
+    if not coordinated_audience:
+        clauses, raw_clauses = _inherit_shared_need_for_coordinated_actions(
+            clauses
+        )
     valid_clauses = [clause for clause in clauses if _has_information_need(clause)]
     if len(clauses) < 2 or len(valid_clauses) != len(clauses):
         return {
@@ -458,16 +618,28 @@ def decompose_multi_aspect_query(question: str) -> dict[str, Any]:
 
     aspects = []
     normalized_full_question = normalize_text(cleaned_question)
-    audience_scope = next(
-        (
-            audience
-            for audience in ("sinh vien", "hoc vien", "giang vien", "can bo")
-            if audience in normalized_full_question
-        ),
-        None,
+    audience_terms = tuple(_AUDIENCE_ROLES)
+    full_audiences = [
+        audience
+        for audience in audience_terms
+        if audience in normalized_full_question
+    ]
+    shared_audience_scope = (
+        full_audiences[0]
+        if len(full_audiences) == 1
+        else None
     )
     previous_topic_clause = None
     for index, clause in enumerate(valid_clauses[:MAX_ASPECTS], start=1):
+        normalized_clause = normalize_text(clause)
+        audience_scope = next(
+            (
+                audience
+                for audience in audience_terms
+                if audience in normalized_clause
+            ),
+            shared_audience_scope,
+        )
         retrieval_query, context_inherited = _retrieval_query_for_clause(
             clause,
             previous_topic_clause,
@@ -476,6 +648,22 @@ def decompose_multi_aspect_query(question: str) -> dict[str, Any]:
         guidance_query = _guidance_retrieval_query(clause, retrieval_query)
         submission_query = _submission_retrieval_query(clause, retrieval_query)
         alias_query = _semantic_alias_retrieval_query(clause)
+        if audience_scope:
+            focused_query = (
+                f"{audience_scope} {focused_query}"
+                if focused_query
+                else None
+            )
+            guidance_query = (
+                f"{audience_scope} {guidance_query}"
+                if guidance_query
+                else None
+            )
+            submission_query = (
+                f"{audience_scope} {submission_query}"
+                if submission_query
+                else None
+            )
         retrieval_queries = list(dict.fromkeys(
             query
             for query in (
@@ -508,6 +696,11 @@ def decompose_multi_aspect_query(question: str) -> dict[str, Any]:
         aspects.append({
             "aspect_id": f"aspect_{index}",
             "question": clause,
+            "presentation_title": _presentation_title(
+                clause,
+                audience_scope,
+                prefer_audience=len(full_audiences) > 1,
+            ),
             "retrieval_query": retrieval_query,
             "retrieval_queries": retrieval_queries,
             "focused_retrieval_query": focused_query,
@@ -549,7 +742,8 @@ def filter_semantic_aspect_docs(
     """Filter chunks by topic and by the kind of information being requested."""
     normalized_question = normalize_text(aspect_question)
     semantic_body = re.sub(
-        r"\.\s*doi tuong:\s*(?:sinh vien|hoc vien|giang vien|can bo)\s*$",
+        r"\.\s*doi tuong:\s*(?:sinh vien|hoc vien|nguoi hoc|"
+        r"giang vien|can bo|cbgv|thay co)\s*$",
         "",
         normalized_question,
     )
@@ -563,12 +757,10 @@ def filter_semantic_aspect_docs(
     for part in query_parts:
         keywords = _specific_topic_tokens(part)
         if keywords:
+            keyword_set = set(keywords)
             topic_groups.append({
-                "keywords": set(keywords),
-                "bigrams": {
-                    f"{keywords[index]} {keywords[index + 1]}"
-                    for index in range(len(keywords) - 1)
-                },
+                "keywords": keyword_set,
+                "bigrams": _specific_topic_bigrams(part, keyword_set),
             })
 
     accepted = []
@@ -655,10 +847,65 @@ def filter_semantic_aspect_docs(
 
         asks_student_scope = (
             "sinh vien" in primary_question
+            or "hoc vien" in primary_question
+            or "nguoi hoc" in primary_question
             or "doi tuong: sinh vien" in normalized_question
+            or "doi tuong: hoc vien" in normalized_question
+            or "doi tuong: nguoi hoc" in normalized_question
         )
-        if asks_student_scope and "sinh vien" not in searchable:
+        if asks_student_scope and not any(
+            marker in searchable
+            for marker in ("sinh vien", "hoc vien", "nguoi hoc")
+        ):
             continue
+
+        asks_staff_scope = any(
+            marker in primary_question
+            for marker in ("giang vien", "can bo", "cbgv", "thay co")
+        ) or any(
+            f"doi tuong: {marker}" in normalized_question
+            for marker in ("giang vien", "can bo", "cbgv", "thay co")
+        )
+        if asks_staff_scope and not any(
+            marker in searchable
+            for marker in ("giang vien", "can bo", "cbgv", "thay co")
+        ):
+            continue
+
+        asks_lookup_location = (
+            "o dau" in primary_question
+            and any(
+                marker in primary_question
+                for marker in ("xem", "tra cuu", "kiem tra", "theo doi")
+            )
+        )
+        if asks_lookup_location:
+            document_type = normalize_text(doc.get("document_type", ""))
+            section_type = normalize_text(doc.get("section_type", ""))
+            source_identity = normalize_text(
+                " ".join(
+                    str(doc.get(field) or "")
+                    for field in (
+                        "doc_name", "relative_path", "ten_van_ban",
+                        "don_vi_ban_hanh",
+                    )
+                )
+            )
+            is_guidance_source = (
+                document_type == "business_document"
+                or section_type == "business_section"
+                or "web support" in source_identity
+            )
+            ui_evidence_hits = sum(
+                marker in searchable
+                for marker in (
+                    "man ", "man hinh", "chuc nang", "tra cuu",
+                    "truy cap", "duong dan", "support.uneti",
+                    "website", "click", "nhan nut",
+                )
+            )
+            if not is_guidance_source or ui_evidence_hits < 1:
+                continue
 
         if asks_procedure:
             action_hits = sum(
@@ -723,14 +970,21 @@ def filter_semantic_aspect_docs(
         if asks_payment and payment_hits < 2:
             continue
 
-        if "o dau" in primary_question and not any(
-            marker in searchable
-            for marker in (
-                "phong ", "bo phan", "mot cua", "tai ",
-                "tren website", "he thong",
+        if "o dau" in primary_question:
+            location_markers = (
+                (
+                    "man ", "man hinh", "chuc nang", "tra cuu",
+                    "truy cap", "duong dan", "support.uneti",
+                    "website", "he thong",
+                )
+                if asks_lookup_location
+                else (
+                    "phong ", "bo phan", "mot cua", "tai ",
+                    "noi nop", "don vi tiep nhan",
+                )
             )
-        ):
-            continue
+            if not any(marker in searchable for marker in location_markers):
+                continue
 
         asks_deadline = (
             "thoi han" in primary_question
@@ -939,11 +1193,32 @@ def validate_multi_aspect_answer(answer: str, aspects: list[dict]) -> dict:
     }
 
 
-def clean_multi_aspect_answer(answer: str) -> str:
-    """Remove machine-readable aspect markers from an answer shown to users."""
-    cleaned = re.sub(
-        r"(?im)^[ \t]*\[/?Y_\d+\][ \t]*\r?\n?",
-        "",
-        str(answer or ""),
-    )
-    return cleaned.strip()
+def clean_multi_aspect_answer(
+    answer: str,
+    aspects: list[dict] | None = None,
+) -> str:
+    """Remove aspect markers and join self-contained answer sections."""
+    raw_answer = str(answer or "")
+    matches = list(re.finditer(
+        r"(?ims)^[ \t]*\[Y_(\d+)\][ \t]*\r?\n?"
+        r"(.*?)"
+        r"^[ \t]*\[/Y_\1\][ \t]*(?:\r?\n)?",
+        raw_answer,
+    ))
+    if not matches:
+        return re.sub(
+            r"(?im)^[ \t]*\[/?Y_\d+\][ \t]*\r?\n?",
+            "",
+            raw_answer,
+        ).strip()
+
+    sections = []
+    for match in matches:
+        content = match.group(2).strip()
+        if content:
+            sections.append(content)
+
+    suffix = raw_answer[matches[-1].end():].strip()
+    if suffix:
+        sections.append(suffix)
+    return "\n\n".join(sections).strip()

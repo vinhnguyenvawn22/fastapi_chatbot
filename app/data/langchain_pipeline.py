@@ -51,6 +51,17 @@ def _gemini_error_reason(answer: Any, llm_error: str | None) -> str | None:
     return None
 
 
+def _format_answer_for_display(answer: Any) -> str:
+    """Normalize model markdown into the plain, readable style used by chat UI."""
+    text = str(answer or "")
+    text = re.sub(
+        r"(?m)^[ \t]*(?:-|•|\*(?!\*))[ \t]+",
+        "• ",
+        text,
+    )
+    return text.replace("**", "").strip()
+
+
 def _business_procedure_fallback_answer(state: PipelineState) -> str | None:
     question = normalize_text(state.get("question") or "")
     if not any(
@@ -380,6 +391,7 @@ async def _generate_answer(state: PipelineState) -> PipelineState:
     gemini_error_message = _short_debug_message(llm_error or answer) if fallback_used else None
     if fallback_used:
         answer = _extractive_fallback_answer(state) if state.get("docs") else GEMINI_UNAVAILABLE_ANSWER
+    answer = _format_answer_for_display(answer)
     _trace(state, "lcel_llm_call", {
         "answer_chars": len(answer or ""),
         "llm_called": True,

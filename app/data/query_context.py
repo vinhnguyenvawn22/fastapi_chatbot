@@ -15,6 +15,8 @@ SV_BUSINESS_TERMS = (
     "nghi khong phep", "ren luyen", "chuong trinh dao tao",
     "canh bao hoc tap", "khoi luong hoc tap", "chuyen truong",
     "hoc cai thien", "hoc phan tu chon", "hoc cung luc hai chuong trinh",
+    "diem gia dinh", "diem du kien", "gpa du kien",
+    "du kien ket qua hoc tap", "nhap diem mong muon",
 )
 CBGV_BUSINESS_TERMS = (
     "lich day", "khoi luong giang day", "cong tac giang vien", "coi thi",
@@ -32,6 +34,7 @@ PROCEDURE_SIGNALS = (
     "lam the nao de", "chon hoc ky", "theo hoc ky", "xem chi tiet",
     "truy cap nhanh", "lam the nao", "cach gui", "cach thuc hien",
     "gui yeu cau", "nop don", "thuc hien phuc khao", "huong dan",
+    "co cho nao", "nhap diem", "gpa du kien", "du kien ket qua hoc tap",
     "thi lai", "hoan thi",
     "dang ky thi lai", "dang ki thi lai", "huy dang ky thi lai", "huy dang ki thi lai",
     "huy dang ky hoc phan", "huy hoc phan", "rut bot hoc phan", "rut hoc phan",

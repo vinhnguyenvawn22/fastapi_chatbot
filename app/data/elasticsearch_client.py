@@ -267,6 +267,18 @@ QUERY_EXPANSION = {
         "tính điểm trung bình",
         "điểm hệ 4",
     ],
+    "điểm giả định": [
+        "điểm dự kiến",
+        "điểm mong muốn",
+        "dự kiến kết quả học tập",
+        "nhập điểm tổng kết dự kiến",
+    ],
+    "gpa dự kiến": [
+        "điểm tích lũy dự kiến",
+        "dự kiến kết quả học tập",
+        "nhập điểm mong muốn",
+        "ước tính điểm trung bình tích lũy",
+    ],
     "ra trường": ["điều kiện xét tốt nghiệp", "công nhận tốt nghiệp"],
     "tốt nghiệp": [
         "điều kiện xét tốt nghiệp",
@@ -448,6 +460,48 @@ def apply_uneti_query_expansion(query: str) -> str:
     return " ".join(dict.fromkeys(expanded_terms))
 
 
+def _is_exam_regrade_query(query: str) -> bool:
+    normalized_query = normalize_text(query)
+    return any(
+        phrase in normalized_query
+        for phrase in (
+            "phuc khao",
+            "cham lai bai thi",
+            "cham lai bai",
+            "xem xet lai diem thi",
+            "khieu nai diem thi",
+            "diem thi sai",
+        )
+    )
+
+
+def _is_projected_grade_ui_query(query: str) -> bool:
+    """Detect requests to simulate future grades, not policy GPA calculations."""
+    normalized_query = normalize_text(query)
+    has_grade_target = any(
+        _has_normalized_phrase(normalized_query, phrase)
+        for phrase in (
+            "gpa", "diem trung binh", "diem tich luy",
+            "ket qua hoc tap", "xep loai hoc luc",
+        )
+    )
+    has_projection = any(
+        _has_normalized_phrase(normalized_query, phrase)
+        for phrase in (
+            "gia dinh", "du kien", "mong muon", "uoc tinh",
+            "neu dat", "thu diem", "mo phong",
+        )
+    )
+    has_interaction = any(
+        _has_normalized_phrase(normalized_query, phrase)
+        for phrase in (
+            "nhap diem", "co cho nao", "xem", "tinh", "tra cuu",
+            "chuc nang", "man hinh", "o dau", "vao dau",
+        )
+    )
+    return has_grade_target and has_projection and has_interaction
+
+
 def _academic_policy_retrieval_query(query: str) -> str:
     normalized_query = normalize_text(query)
     profile = _policy_query_profile(query)
@@ -460,6 +514,19 @@ def _academic_policy_retrieval_query(query: str) -> str:
         }
         else apply_uneti_query_expansion(query)
     ]
+
+    if _is_exam_regrade_query(query):
+        expanded_terms.append(
+            "phuc khao ket qua bai thi man phuc khao mot cua khao thi "
+            "gui yeu cau phuc khao sinh vien support uneti"
+        )
+
+    if _is_projected_grade_ui_query(query):
+        expanded_terms.append(
+            "du kien ket qua hoc tap nhap diem du kien diem tong ket du kien "
+            "diem mong muon tinh diem tich luy du kien he 10 he 4 "
+            "xep loai hoc luc tra cuu support uneti"
+        )
 
     if _has_normalized_phrase(normalized_query, "thi lai"):
         expanded_terms.append(
@@ -518,7 +585,10 @@ def _academic_policy_retrieval_query(query: str) -> str:
             "chung chi tin hoc chuan dau ra quy che dao tao dai hoc chinh quy dieu 24"
         )
 
-    if "gpa" in normalized_query or "diem trung binh" in normalized_query:
+    if (
+        ("gpa" in normalized_query or "diem trung binh" in normalized_query)
+        and not _is_projected_grade_ui_query(query)
+    ):
         expanded_terms.append(
             "diem trung binh hoc ky diem trung binh tich luy diem trung binh chung "
             "tich luy tinh diem trung binh thang diem 4 quy che dao tao dai hoc "
@@ -586,6 +656,8 @@ def _policy_query_profile(query: str) -> str | None:
         )
     )
 
+    if _is_projected_grade_ui_query(query):
+        return "projected_grade_ui"
     if _has_normalized_phrase(normalized_query, "thi lai"):
         return "exam_retake"
     if _has_normalized_phrase(normalized_query, "hoan thi"):
@@ -724,6 +796,19 @@ def _policy_result_priority(question: str, doc: dict) -> int:
             score += 35
         if "quy che cong tac sinh vien" in searchable:
             score -= 40
+    elif profile == "projected_grade_ui":
+        if "du kien ket qua hoc tap" in searchable:
+            score += 180
+        if "nhap diem mong muon" in searchable or "diem tong ket du kien" in searchable:
+            score += 120
+        if "support uneti" in searchable or "web support sv" in metadata_text:
+            score += 80
+        if doc.get("document_type") == "business_document":
+            score += 50
+        if doc.get("dieu") == 20:
+            score -= 80
+        if "quy che dao tao dai hoc chinh quy" in searchable:
+            score -= 50
     elif profile == "grade_average":
         if "tinh diem trung binh" in searchable:
             score += 120
@@ -984,6 +1069,8 @@ def _rank_local_documents(question: str, docs: list[dict], limit: int) -> list[d
         for phrase in business_anchor_phrases
         if phrase in normalized_question
     ]
+    if _is_exam_regrade_query(question):
+        query_anchors.append("phuc khao")
     generic_query_tokens = {
         "toi", "lam", "nao", "the", "gi", "co", "duoc", "sau", "khi",
         "nhung", "cac", "mot", "de", "va", "tren", "trong", "cho",
@@ -1054,6 +1141,12 @@ def _rank_local_documents(question: str, docs: list[dict], limit: int) -> list[d
                 "support.uneti.edu.vn",
             )
         )
+        semantic_section_match = 0.0
+        if _is_exam_regrade_query(question):
+            if "phuc khao" in section_text:
+                semantic_section_match = 1.0
+            elif "thi lai" in section_text:
+                semantic_section_match = -1.0
         raw_rerank_score = float(doc.get("rerank_score") or 0)
         rerank_score = (
             normalized(raw_rerank_score, rerank_values)
@@ -1093,6 +1186,7 @@ def _rank_local_documents(question: str, docs: list[dict], limit: int) -> list[d
             final_score += 0.45
             if procedure_marker_count >= 2:
                 final_score += 0.20
+        final_score += 0.55 * semantic_section_match
         if (
             "thac si" in document_name_text
             and "thac si" not in normalized_question
@@ -1108,6 +1202,7 @@ def _rank_local_documents(question: str, docs: list[dict], limit: int) -> list[d
             "document_phrase_match": round(document_phrase_match, 6),
             "exact_phrase_bonus": round(exact_phrase_bonus, 6),
             "procedure_marker_count": procedure_marker_count,
+            "semantic_section_match": semantic_section_match,
             "local_final_score": round(final_score, 6),
             "_original_position": position,
         })
@@ -1158,6 +1253,11 @@ def _local_query_profile(question: str) -> str:
         for term in ("quy dinh", "quy che", "quyet dinh", "che tai")
     ):
         return "legal"
+
+    if _is_exam_regrade_query(question):
+        return "business"
+    if _is_projected_grade_ui_query(question):
+        return "business"
 
     business_terms = (
         "web support",

@@ -247,6 +247,51 @@ def test_regrade_exam_question_returns_student_appeal_source():
         assert "phuc khao" in normalize_text(debug["final_search_query"])
 
 
+def test_regrade_exam_registration_location_uses_procedure_rule():
+    question = "Tôi muốn chấm lại bài thi thì đăng ký ở đâu?"
+
+    plan = _generate_business_retrieval_plan(question)
+
+    assert plan["status"] == "rule_success"
+    assert plan["llm_called"] is False
+    assert plan["intent"] == "phuc_khao"
+    assert plan["domain"] == "khao_thi"
+    normalized_query = normalize_text(plan["query"])
+    assert "phuc khao" in normalized_query
+    assert "gui yeu cau" in normalized_query
+    assert "mot cua" in normalized_query
+    assert "khao thi" in normalized_query
+
+    clear_business_knowledge_cache()
+    debug = {}
+    docs = search_business_sources(question, debug=debug)
+
+    assert docs
+    assert (
+        debug["mapping_selected"]
+        or debug["retrieval_plan"]["status"] == "rule_success"
+    )
+    assert debug["retrieval_plan"]["llm_called"] is False
+    assert "WEB SUPPORT SV" in docs[0]["doc_name"].upper()
+    assert "phuc khao" in normalize_text(
+        f'{docs[0].get("title", "")} {docs[0].get("content", "")}'
+    )
+
+
+def test_regrade_exam_procedure_rule_supports_everyday_variants():
+    questions = (
+        "Em muốn chấm lại bài thì vào đâu?",
+        "Cách gửi yêu cầu xem xét lại điểm thi như thế nào?",
+        "Khiếu nại điểm thi thì nộp đơn ở đâu?",
+    )
+
+    for question in questions:
+        plan = _generate_business_retrieval_plan(question)
+        assert plan["status"] == "rule_success"
+        assert plan["intent"] == "phuc_khao"
+        assert "gui yeu cau" in normalize_text(plan["query"])
+
+
 def test_ambiguous_review_grade_question_continues_to_retrieval():
     clear_business_knowledge_cache()
     debug = {}

@@ -167,6 +167,36 @@ def test_local_rank_uses_business_anchor_to_reject_semantic_neighbor():
     assert results[0]["doc_name"] == "guide.docx"
 
 
+def test_local_rank_prefers_appeal_section_for_regrade_alias():
+    appeal = {
+        **_doc("web-support-sv.docx", 1),
+        "title": "1.2. Phuc khao",
+        "section_path": "Mot cua > Khao thi > Phuc khao",
+        "content": "Mo man Phuc khao va chon Gui yeu cau.",
+        "document_type": "business_document",
+        "rerank_score": -3.0,
+        "rrf_score": 0.018,
+    }
+    exam_retake = {
+        **_doc("web-support-sv.docx", 2),
+        "title": "1.4. Dang ky thi lai",
+        "section_path": "Mot cua > Khao thi > Dang ky thi lai",
+        "content": "Sinh vien dang ky thi lai va gui yeu cau.",
+        "document_type": "business_document",
+        "rerank_score": -2.0,
+        "rrf_score": 0.021,
+    }
+
+    results = retrieval._rank_local_documents(
+        "Tôi muốn chấm lại bài thi thì đăng ký ở đâu?",
+        [exam_retake, appeal],
+        limit=2,
+    )
+
+    assert results[0]["title"] == "1.2. Phuc khao"
+    assert results[0]["semantic_section_match"] == 1.0
+
+
 def test_local_legal_rank_prefers_matching_document_name():
     correct = {
         **_doc("Quy che dao tao dai hoc chinh quy 832.docx", 1),
@@ -316,6 +346,53 @@ def test_gpa_query_expands_to_cumulative_average_terms():
     assert "diem trung binh hoc tap" in retrieval.normalize_text(expanded)
     assert "tinh diem trung binh" in retrieval.normalize_text(expanded)
     assert "dieu 20" in retrieval.normalize_text(expanded)
+
+
+def test_projected_gpa_query_targets_student_simulation_screen():
+    question = "Có chỗ nào nhập điểm giả định để xem GPA dự kiến không?"
+    expanded = retrieval.normalize_text(
+        retrieval._academic_policy_retrieval_query(question)
+    )
+
+    assert retrieval._policy_query_profile(question) == "projected_grade_ui"
+    assert retrieval._local_query_profile(question) == "business"
+    assert "du kien ket qua hoc tap" in expanded
+    assert "nhap diem mong muon" in expanded
+    assert "diem tong ket du kien" in expanded
+    assert "support uneti" in expanded
+    assert "dieu 20" not in expanded
+    assert "quy che dao tao dai hoc chinh quy" not in expanded
+
+
+def test_projected_grade_intent_handles_everyday_variants_without_hijacking_gpa_policy():
+    projected_questions = (
+        "Tôi thử nhập điểm mong muốn để tính điểm tích lũy ở đâu?",
+        "Có chức năng mô phỏng GPA nếu kỳ này tôi đạt điểm B không?",
+        "Làm sao ước tính xếp loại học lực với điểm dự kiến?",
+    )
+
+    for question in projected_questions:
+        assert retrieval._policy_query_profile(question) == "projected_grade_ui"
+        assert retrieval._local_query_profile(question) == "business"
+
+    assert retrieval._policy_query_profile(
+        "GPA được tính như thế nào?"
+    ) == "grade_average"
+
+
+def test_regrade_everyday_query_expands_to_appeal_ui_terms():
+    question = "Tôi muốn chấm lại bài thi thì đăng ký ở đâu?"
+
+    expanded = retrieval.normalize_text(
+        retrieval._academic_policy_retrieval_query(question)
+    )
+
+    assert retrieval._local_query_profile(question) == "business"
+    assert "phuc khao" in expanded
+    assert "man phuc khao" in expanded
+    assert "mot cua" in expanded
+    assert "khao thi" in expanded
+    assert "gui yeu cau" in expanded
 
 
 def test_graduation_classification_profile_targets_article_25():

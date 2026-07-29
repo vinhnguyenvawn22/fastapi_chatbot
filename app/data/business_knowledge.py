@@ -304,6 +304,28 @@ def _is_exam_regrade_query(text: str) -> bool:
     )
 
 
+def _is_exam_regrade_procedure_query(text: str) -> bool:
+    if not _is_exam_regrade_query(text):
+        return False
+
+    normalized = normalize_text(text)
+    return any(
+        phrase in normalized
+        for phrase in (
+            "dang ky",
+            "dang ki",
+            "o dau",
+            "vao dau",
+            "gui yeu cau",
+            "nop don",
+            "lam the nao",
+            "cach lam",
+            "cach thuc hien",
+            "tren he thong",
+        )
+    )
+
+
 def clear_business_knowledge_cache():
     _BUSINESS_INDEX_CACHE["signature"] = None
     _BUSINESS_INDEX_CACHE["chunks"] = []
@@ -703,16 +725,30 @@ def _rule_based_retrieval_plan(question: str) -> dict | None:
             ),
         }
     if _is_exam_regrade_query(question):
+        asks_for_procedure = _is_exam_regrade_procedure_query(question)
         return {
             **_empty_retrieval_plan("rule_success"),
             "intent": "phuc_khao",
             "domain": "khao_thi",
-            "query": "phuc khao ket qua bai thi diem thi hoc phan sinh vien",
-            "hyde": (
-                "Sinh vien de nghi phuc khao khi cho rang diem thi hoac ket qua bai thi "
-                "da cong bo chua chinh xac."
+            "query": (
+                "man phuc khao mot cua khao thi gui yeu cau phuc khao sinh vien"
+                if asks_for_procedure
+                else "phuc khao ket qua bai thi diem thi hoc phan sinh vien"
             ),
-            "must": ["phuc khao", "diem thi", "bai thi", "hoc phan"],
+            "hyde": (
+                "Sinh vien mo Man Phuc khao trong Mot cua - Khao thi va gui yeu cau "
+                "phuc khao ket qua bai thi."
+                if asks_for_procedure
+                else (
+                    "Sinh vien de nghi phuc khao khi cho rang diem thi hoac ket qua bai thi "
+                    "da cong bo chua chinh xac."
+                )
+            ),
+            "must": (
+                ["phuc khao", "gui yeu cau", "mot cua", "khao thi"]
+                if asks_for_procedure
+                else ["phuc khao", "diem thi", "bai thi", "hoc phan"]
+            ),
             "avoid": ["bai bao", "tap chi", "thanh tra cham thi", "hoi dong thi"],
         }
     return None
@@ -1804,6 +1840,8 @@ _SV_BUSINESS_TERMS = {
     "diem danh", "tra cuu diem danh", "chuyen can", "diem chuyen can",
     "so buoi vang", "so tiet vang", "ty le vang", "ren luyen",
     "thoi khoa bieu", "chuong trinh dao tao",
+    "diem gia dinh", "diem du kien", "gpa du kien",
+    "du kien ket qua hoc tap", "nhap diem mong muon",
 }
 _CBGV_BUSINESS_TERMS = {
     "lich day", "coi thi", "cham thi", "muon thiet bi phong hoc",

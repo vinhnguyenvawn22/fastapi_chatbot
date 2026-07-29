@@ -96,7 +96,19 @@ class ConversationService:
         ) or []
         history = limit_history(all_history, CHAT_HISTORY_MAX_MESSAGES, CHAT_HISTORY_MAX_CHARS)
         try:
-            standalone, rewrite_debug = await contextualize_question(original, history)
+            if getattr(handler, "defer_contextualization", False):
+                standalone = original
+                rewrite_debug = {
+                    "history_present": bool(history),
+                    "llm_called": False,
+                    "fallback": False,
+                    "reason": "deferred_until_after_original_retrieval",
+                }
+            else:
+                standalone, rewrite_debug = await contextualize_question(
+                    original,
+                    history,
+                )
             history_chars = sum(len(str(item.get("content") or "")) for item in history)
             metadata = {
                 "original_question": original,

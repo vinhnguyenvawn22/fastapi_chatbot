@@ -7,6 +7,7 @@ from app.controller.chatbot_controller import (
     _should_prefer_business_over_internal,
 )
 from app.data.business_knowledge import clear_business_knowledge_cache, search_business_sources
+from app.data.ambiguity_analyzer import analyze_ambiguity
 from app.data.query_context import analyze_query_context
 from app.data.query_analyzer import QueryIntent, classify_query
 
@@ -33,6 +34,15 @@ def test_explicit_history_inference_and_default_audience_priority():
     assert defaulted["audience_source"] == "default_student"
 
 
+def test_vietnamese_regrade_question_is_not_treated_as_garbled():
+    decision = analyze_ambiguity(
+        "Tôi muốn chấm lại bài thi thì đăng ký ở đâu?"
+    )
+
+    assert decision.reason != "garbled_query_requires_probe"
+    assert decision.action != "probe_retrieval"
+
+
 def test_current_question_overrides_history_and_mixed_is_preserved():
     history = [{"role": "user", "content": "Toi la sinh vien"}]
     corrected = analyze_query_context("Khong, toi la giang vien", history)
@@ -51,6 +61,17 @@ def test_information_need_is_separate_from_audience():
     assert procedure["information_need"] == "procedure_ui"
     assert policy["information_need"] == "policy_document"
     assert mixed["information_need"] == "mixed"
+
+
+def test_projected_gpa_is_student_procedure_context():
+    context = analyze_query_context(
+        "Có chỗ nào nhập điểm giả định để xem GPA dự kiến không?",
+        [],
+    )
+
+    assert context["audience_hint"] == "sv"
+    assert context["audience_source"] == "business_inference"
+    assert context["information_need"] == "procedure_ui"
 
 
 def test_procedure_ui_terms_cover_student_and_teacher_web_support():

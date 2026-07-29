@@ -38,6 +38,7 @@ from app.data.query_context import analyze_query_context
 from app.data.reranker import rerank_chunks
 from app.data.trace_logger import RagTrace, load_trace
 from app.data.conversation_context import get_conversation_context
+from app.data.contextualizer import contextualize_question
 from app.data.website_search_client import index_uneti_website
 
 
@@ -2352,18 +2353,24 @@ async def _answer_with_local_documents(
     reason: str,
     ambiguity_decision: dict | None = None,
 ):
+    conversation = get_conversation_context()
+    original_question = conversation.original_question or question
+    contextual_question = conversation.standalone_question or question
     base_state = _pipeline_state(
         trace,
-        question,
+        original_question,
         reason,
         ambiguity_decision=ambiguity_decision,
     )
-    decomposition = decompose_multi_aspect_query(question)
+    base_state["question"] = original_question
+    base_state["original_question"] = original_question
+    base_state["standalone_question"] = original_question
+    decomposition = decompose_multi_aspect_query(original_question)
     trace.add_step("multi_aspect_decomposition", decomposition)
     if decomposition.get("needs_clarification"):
         return _clarification_response(
             trace,
-            question,
+            original_question,
             {
                 "action": CLARIFICATION_NEEDED,
                 "reason": decomposition.get("clarification_reason"),
@@ -2375,25 +2382,101 @@ async def _answer_with_local_documents(
         )
 
     state = await retrieve_local_documents(base_state)
+    contextualization_debug = {
+        "history_present": bool(conversation.history),
+        "llm_called": False,
+        "fallback": False,
+        "reason": "context_already_resolved",
+    }
+    if (
+        conversation.history
+        and normalize_text(contextual_question) == normalize_text(original_question)
+    ):
+        contextual_question, contextualization_debug = await contextualize_question(
+            original_question,
+            conversation.history,
+        )
+    trace.add_step("contextual_supplement_decision", {
+        **contextualization_debug,
+        "original_question": original_question,
+        "contextual_question": contextual_question,
+        "original_retrieval_completed": True,
+    })
     retrieval_clarification = _retrieval_clarification_decision(state)
-    if retrieval_clarification:
+    has_contextual_supplement = (
+        bool(conversation.history)
+        and normalize_text(contextual_question) != normalize_text(original_question)
+    )
+    if retrieval_clarification and not has_contextual_supplement:
         return _clarification_response(
             trace,
-            question,
+            original_question,
             retrieval_clarification,
             retrieval_called=True,
         )
-    docs = state.get("docs") or []
+    original_docs = list(state.get("docs") or [])
+    base_docs = list(original_docs)
+    contextual_docs = []
+    if has_contextual_supplement:
+        contextual_state = {
+            **base_state,
+            "question": contextual_question,
+            "standalone_question": contextual_question,
+            "reason": "contextual_supplement_after_original",
+            "ambiguity_decision": {
+                "action": DIRECT_RETRIEVAL,
+                "topic": None,
+                "confidence": 1.0,
+                "reason": "contextual_query_is_supplemental_only",
+                "clarifying_question": None,
+            },
+        }
+        contextual_state["query_context"] = analyze_query_context(
+            contextual_question,
+            conversation.history,
+        )
+        contextual_result = await retrieve_local_documents(contextual_state)
+        contextual_docs = contextual_result.get("docs") or []
+
+    base_docs = _deduplicate_docs(base_docs, contextual_docs)
+    docs = list(base_docs)
+    state["docs"] = docs
+    trace.add_step("base_evidence_preservation", {
+        "original_question": original_question,
+        "contextual_question": contextual_question,
+        "original_source_count": len(original_docs),
+        "contextual_supplement_used": bool(contextual_docs),
+        "contextual_source_count": len(contextual_docs),
+        "preserved_source_count": len(base_docs),
+    })
     required_aspects = decomposition.get("aspects") or []
     aspect_results = []
     if decomposition.get("is_multi_aspect"):
         async def retrieve_aspect(aspect: dict) -> dict:
+            base_confident, base_confidence_reason = _has_confident_evidence(
+                aspect["retrieval_query"],
+                base_docs,
+            )
+            base_semantic_docs, base_semantic_reason = filter_semantic_aspect_docs(
+                aspect.get("semantic_query") or aspect["retrieval_query"],
+                base_docs if base_confident else [],
+            )
+            if base_semantic_docs:
+                return {
+                    **aspect,
+                    "docs": base_semantic_docs,
+                    "retrieved_count": 0,
+                    "has_evidence": True,
+                    "evidence_reason": base_semantic_reason,
+                    "evidence_origin": "base_retrieval",
+                }
+
             async def retrieve_query(retrieval_query: str) -> list[dict]:
                 aspect_state = {
                     **base_state,
                     "question": retrieval_query,
-                    "original_question": question,
-                    "standalone_question": question,
+                    "original_question": original_question,
+                    "standalone_question": original_question,
                     "reason": f'multi_aspect:{aspect["aspect_id"]}',
                     "ambiguity_decision": {
                         "action": DIRECT_RETRIEVAL,
@@ -2451,18 +2534,35 @@ async def _answer_with_local_documents(
                 "retrieved_count": len(aspect_docs),
                 "has_evidence": has_aspect_evidence,
                 "evidence_reason": evidence_reason,
+                "evidence_origin": "supplemental_retrieval",
+                "base_evidence_reason": (
+                    base_semantic_reason
+                    if base_confident
+                    else base_confidence_reason
+                ),
             }
 
         aspect_results = await asyncio.gather(
             *(retrieve_aspect(aspect) for aspect in required_aspects)
         )
         docs, coverage_debug = merge_multi_aspect_results(
-            docs,
+            [],
             aspect_results,
             limit=AGGREGATE_MAX_CONTEXT_CHUNKS,
         )
         trace.add_step("multi_aspect_retrieval", {
             "method": decomposition.get("method"),
+            "unassigned_base_sources_excluded": max(
+                len(base_docs) - sum(
+                    1
+                    for doc in base_docs
+                    if any(
+                        doc in (result.get("docs") or [])
+                        for result in aspect_results
+                    )
+                ),
+                0,
+            ),
             "aspect_results": [
                 {
                     "aspect_id": result["aspect_id"],
@@ -2474,42 +2574,44 @@ async def _answer_with_local_documents(
                     "selected_candidate_count": len(result["docs"]),
                     "has_evidence": result["has_evidence"],
                     "evidence_reason": result["evidence_reason"],
+                    "evidence_origin": result.get("evidence_origin"),
+                    "base_evidence_reason": result.get("base_evidence_reason"),
                 }
                 for result in aspect_results
             ],
             "coverage": coverage_debug,
             "final_document_count": len(docs),
         })
-    has_evidence, evidence_reason = _has_confident_evidence(question, docs)
+    has_evidence, evidence_reason = _has_confident_evidence(
+        original_question,
+        docs,
+    )
     trace.add_step("local_documents_evidence_check", {
         "evidence_decision": "pass" if has_evidence else "reject",
         "has_confident_evidence": has_evidence,
         "reason": evidence_reason,
-        "query_keyword_count": len(get_keywords(question)),
+        "query_keyword_count": len(get_keywords(original_question)),
         "llm_called": bool(docs and has_evidence),
     })
 
     if not docs or not has_evidence:
         return _finalize(trace, {
-            "question": question,
+            "question": original_question,
             "answer": NO_EVIDENCE_ANSWER,
             "source": None,
-            "sources": _build_sources(docs, question),
+            "sources": _build_sources(docs, original_question),
             "intent": intent,
         })
 
     if decomposition.get("is_multi_aspect"):
-        generation_docs, _ = merge_multi_aspect_results(
-            [],
-            aspect_results,
-            limit=AGGREGATE_MAX_CONTEXT_CHUNKS,
-        )
+        generation_docs = docs[:AGGREGATE_MAX_CONTEXT_CHUNKS]
         generation_aspects = []
         for result in aspect_results:
             aspect_docs = (result.get("docs") or [])[:2]
             generation_aspects.append({
                 "aspect_id": result["aspect_id"],
                 "question": result["question"],
+                "presentation_title": result.get("presentation_title"),
                 "has_evidence": bool(aspect_docs),
                 "sources": [
                     {
@@ -2556,7 +2658,7 @@ async def _answer_with_local_documents(
                 generation_aspects,
             )
 
-        answer = clean_multi_aspect_answer(raw_answer)
+        answer = clean_multi_aspect_answer(raw_answer, generation_aspects)
         trace.add_step("multi_aspect_generation", {
             "strategy": "single_call_grouped_evidence_with_validation",
             "initial_call_count": 1,
@@ -2568,14 +2670,17 @@ async def _answer_with_local_documents(
         })
         best_doc = docs[0]
         return _finalize(trace, {
-            "question": question,
+            "question": original_question,
             "answer": answer,
             "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
-            "sources": _build_sources(docs, question),
+            "sources": _build_sources(docs, original_question),
             "intent": intent,
         })
 
-    graduation_answer, graduation_docs = _graduation_classification_answer(question, docs)
+    graduation_answer, graduation_docs = _graduation_classification_answer(
+        original_question,
+        docs,
+    )
     if graduation_answer:
         trace.add_step("policy_deterministic_answer", {
             "reason": "graduation_requirements_and_classification",
@@ -2592,14 +2697,17 @@ async def _answer_with_local_documents(
         })
         best_doc = graduation_docs[0]
         return _finalize(trace, {
-            "question": question,
+            "question": original_question,
             "answer": graduation_answer,
             "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
-            "sources": _build_sources(graduation_docs, question),
+            "sources": _build_sources(graduation_docs, original_question),
             "intent": intent,
         })
 
-    exam_defer_answer, exam_defer_docs = _exam_defer_answer(question, docs)
+    exam_defer_answer, exam_defer_docs = _exam_defer_answer(
+        original_question,
+        docs,
+    )
     if exam_defer_answer:
         trace.add_step("policy_deterministic_answer", {
             "reason": "exam_defer_conditions_and_procedure",
@@ -2616,10 +2724,10 @@ async def _answer_with_local_documents(
         })
         best_doc = exam_defer_docs[0]
         return _finalize(trace, {
-            "question": question,
+            "question": original_question,
             "answer": exam_defer_answer,
             "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
-            "sources": _build_sources(exam_defer_docs, question),
+            "sources": _build_sources(exam_defer_docs, original_question),
             "intent": intent,
         })
 
@@ -2631,10 +2739,10 @@ async def _answer_with_local_documents(
     })
     best_doc = docs[0]
     return _finalize(trace, {
-        "question": question,
+        "question": original_question,
         "answer": state["answer"],
         "source": f'{best_doc.get("title")} - {best_doc.get("doc_name")}',
-        "sources": _build_sources(docs, question),
+        "sources": _build_sources(docs, original_question),
         "intent": intent,
     })
 
@@ -3235,6 +3343,9 @@ async def handle_local_documents_chat(request):
         "explicit_local_documents_endpoint",
         decision,
     )
+
+
+handle_local_documents_chat.defer_contextualization = True
 
 
 @traceable(name="UNETI Chat Request", run_type="chain")

@@ -46,6 +46,61 @@ def test_does_not_split_a_coordinated_noun_list():
     assert result["aspects"] == []
 
 
+def test_splits_coordinated_audiences_with_shared_information_need():
+    result = decompose_multi_aspect_query(
+        "Sinh viên và giảng viên xem thông tin học tập/công tác cá nhân ở đâu?"
+    )
+
+    assert result["is_multi_aspect"] is True
+    assert [item["question"] for item in result["aspects"]] == [
+        "Sinh viên xem thông tin học tập cá nhân ở đâu",
+        "giảng viên xem thông tin công tác cá nhân ở đâu",
+    ]
+    assert [item["audience_scope"] for item in result["aspects"]] == [
+        "sinh vien",
+        "giang vien",
+    ]
+    assert "Đối tượng: sinh vien" in result["aspects"][0]["semantic_query"]
+    assert "Đối tượng: giang vien" in result["aspects"][1]["semantic_query"]
+    assert result["aspects"][0]["focused_retrieval_query"].startswith(
+        "sinh vien man hinh chuc nang duong dan truy cap he thong"
+    )
+    assert result["aspects"][1]["focused_retrieval_query"].startswith(
+        "giang vien man hinh chuc nang duong dan truy cap he thong"
+    )
+
+
+def test_splits_other_shared_needs_for_student_and_staff():
+    questions = (
+        "Sinh viên và cán bộ tra cứu lịch cá nhân ở đâu?",
+        "Học viên cùng với giảng viên có được xem thông tin cá nhân không?",
+        "Giảng viên và sinh viên kiểm tra công tác/học tập ở đâu?",
+    )
+
+    for question in questions:
+        result = decompose_multi_aspect_query(question)
+        assert result["is_multi_aspect"] is True
+        assert len(result["aspects"]) == 2
+        assert {
+            _audience
+            for _audience in (
+                item["audience_scope"] for item in result["aspects"]
+            )
+        } in (
+            {"sinh vien", "can bo"},
+            {"hoc vien", "giang vien"},
+            {"giang vien", "sinh vien"},
+        )
+
+
+def test_does_not_split_unknown_subjects_just_because_of_and():
+    result = decompose_multi_aspect_query(
+        "Phòng học và thư viện xem thông tin ở đâu?"
+    )
+
+    assert result["is_multi_aspect"] is False
+
+
 def test_inherits_shared_how_to_prefix_for_coordinated_actions():
     result = decompose_multi_aspect_query(
         "Làm sao để đăng ký thi lại và hoãn thi?"
@@ -189,6 +244,54 @@ def test_semantic_filter_rejects_policy_chunk_for_procedure_question():
     assert [doc["doc_name"] for doc in docs] == ["procedure.docx"]
 
 
+def test_lookup_location_requires_audience_guidance_source():
+    policy_doc = {
+        **_doc("student-policy.pdf", 1),
+        "title": "Co van hoc tap",
+        "content": (
+            "Co van thong bao cho sinh vien dia diem lam viec va tu van "
+            "cac van de hoc tap ca nhan."
+        ),
+        "document_type": "regulation",
+    }
+    student_guide = {
+        **_doc("WEB SUPPORT SV.docx", 1),
+        "title": "Tra cuu ket qua hoc tap",
+        "content": (
+            "Sinh vien truy cap chuc nang Ket qua hoc tap tren "
+            "support.uneti.edu.vn de xem thong tin hoc tap ca nhan."
+        ),
+        "document_type": "business_document",
+        "section_type": "business_section",
+    }
+    staff_guide = {
+        **_doc("WEB SUPPORT CBGV.docx", 1),
+        "title": "Tra cuu khoi luong cong tac giang vien",
+        "content": (
+            "Giang vien truy cap chuc nang Tra cuu de xem thong tin "
+            "cong tac ca nhan."
+        ),
+        "document_type": "business_document",
+        "section_type": "business_section",
+    }
+
+    student_docs, _ = filter_semantic_aspect_docs(
+        "Sinh viên xem thông tin học tập cá nhân ở đâu. Đối tượng: sinh vien",
+        [policy_doc, staff_guide, student_guide],
+    )
+    staff_docs, _ = filter_semantic_aspect_docs(
+        "Giảng viên xem thông tin công tác cá nhân ở đâu. Đối tượng: giang vien",
+        [policy_doc, student_guide, staff_guide],
+    )
+
+    assert [doc["doc_name"] for doc in student_docs] == [
+        "WEB SUPPORT SV.docx"
+    ]
+    assert [doc["doc_name"] for doc in staff_docs] == [
+        "WEB SUPPORT CBGV.docx"
+    ]
+
+
 def test_merge_reserves_context_for_every_aspect():
     aspect_results = [
         {
@@ -265,28 +368,70 @@ def test_prompt_contains_explicit_aspect_checklist():
 
     assert "CAC Y CAN TRA LOI VA BAN DO NGUON:" in prompt
     assert "Y_1: Y thu nhat la gi" in prompt
+    assert "Tieu de hien thi: Y thu nhat la gi" in prompt
     assert "Dieu 20 - quy-che.docx" in prompt
     assert "Y_2: Y thu hai can gi" in prompt
     assert "[Y_1]" in prompt
     assert "[/Y_2]" in prompt
 
 
+def test_location_prompt_uses_concise_dynamic_response_mode():
+    prompt = build_prompt(
+        "Sinh viên và giảng viên xem thông tin cá nhân ở đâu?",
+        "context",
+        required_aspects=[
+            {
+                "aspect_id": "aspect_1",
+                "question": "Sinh viên xem thông tin cá nhân ở đâu",
+                "presentation_title": "Sinh viên",
+                "has_evidence": True,
+                "sources": [],
+            },
+            {
+                "aspect_id": "aspect_2",
+                "question": "Giảng viên xem thông tin cá nhân ở đâu",
+                "presentation_title": "Giảng viên",
+                "has_evidence": True,
+                "sources": [],
+            },
+        ],
+    )
+
+    assert "CHE DO TRINH BAY: TRA CUU VI TRI" in prompt
+    assert "Moi khoi toi da 3 gach dau dong ngan" in prompt
+    assert "Khong mo ta toan bo du lieu hien thi" in prompt
+
+
 def test_validates_and_cleans_single_call_multi_aspect_answer():
     aspects = [
-        {"aspect_id": "aspect_1", "has_evidence": True},
-        {"aspect_id": "aspect_2", "has_evidence": True},
+        {
+            "aspect_id": "aspect_1",
+            "has_evidence": True,
+            "presentation_title": "Cách tính điểm",
+        },
+        {
+            "aspect_id": "aspect_2",
+            "has_evidence": True,
+            "presentation_title": "Xếp loại giỏi",
+        },
     ]
     answer = (
         "[Y_1]\nĐiểm được tính theo công thức A.\n[/Y_1]\n"
-        "[Y_2]\nLoại giỏi từ 3,20 đến 3,59.\n[/Y_2]"
+        "[Y_2]\nLoại giỏi từ 3,20 đến 3,59.\n[/Y_2]\n"
+        "(Nguồn: Điều 20 - quy-che.docx)"
     )
 
     validation = validate_multi_aspect_answer(answer, aspects)
 
     assert validation["valid"] is True
     assert validation["covered_aspects"] == ["aspect_1", "aspect_2"]
-    assert "[Y_1]" not in clean_multi_aspect_answer(answer)
-    assert "Loại giỏi từ 3,20 đến 3,59." in clean_multi_aspect_answer(answer)
+    cleaned = clean_multi_aspect_answer(answer, aspects)
+    assert "[Y_1]" not in cleaned
+    assert cleaned == (
+        "Điểm được tính theo công thức A.\n\n"
+        "Loại giỏi từ 3,20 đến 3,59.\n\n"
+        "(Nguồn: Điều 20 - quy-che.docx)"
+    )
 
 
 def test_rejects_missing_block_and_false_no_evidence_claim():

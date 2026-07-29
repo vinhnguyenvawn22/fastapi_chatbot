@@ -14,6 +14,11 @@ from app.controller.document_controller import (
     _is_ignored_document,
 )
 from app.data.prompt_builder import build_context, build_prompt
+from app.data.conversation_context import (
+    ConversationContext,
+    reset_conversation_context,
+    set_conversation_context,
+)
 from app.data.trace_logger import RagTrace
 import app.data.elasticsearch_client as document_search
 import app.data.langchain_pipeline as langchain_pipeline
@@ -77,6 +82,39 @@ def test_document_prompt_is_preserved_through_chat_prompt_template():
     assert not prompt.startswith("Human:")
 
 
+def test_document_prompt_requires_readable_plain_text_answer():
+    prompt = build_prompt(
+        "Tôi xem kết quả học tập ở đâu?",
+        "<NGUON>noi dung</NGUON>",
+    )
+
+    assert 'Có thể mở đầu bằng một lời chào ngắn như "Chào bạn,"' in prompt
+    assert "Không sử dụng ký tự dấu sao trong câu trả lời" in prompt
+    assert 'Dùng ký tự "•" cho danh sách thông tin' in prompt
+    assert 'Dùng danh sách đánh số "1. 2. 3."' in prompt
+    assert "nêu tên module, màn hình hoặc" in prompt
+    assert "Kết thúc câu trả lời bằng đúng một dòng nguồn" in prompt
+    assert "Chỉ xuất câu trả lời cuối cùng" in prompt
+
+
+def test_answer_display_format_uses_bullet_character_and_removes_bold_markers():
+    answer = (
+        "**Sinh viên có thể xem tại các màn hình sau:**\n"
+        "- Kết quả học tập\n"
+        "* Dự kiến kết quả học tập\n\n"
+        "(Nguồn: Hướng dẫn - tai-lieu.docx)"
+    )
+
+    formatted = langchain_pipeline._format_answer_for_display(answer)
+
+    assert formatted == (
+        "Sinh viên có thể xem tại các màn hình sau:\n"
+        "• Kết quả học tập\n"
+        "• Dự kiến kết quả học tập\n\n"
+        "(Nguồn: Hướng dẫn - tai-lieu.docx)"
+    )
+
+
 def test_local_documents_retriever_uses_hard_filters(monkeypatch):
     captured = {}
 
@@ -126,7 +164,7 @@ def test_document_prompt_includes_interpreted_question_without_replacing_origina
     assert "Sinh vien de nghi phuc khao." not in prompt
 
 
-def test_document_prompt_includes_fallback_interpreted_block_for_empty_plan():
+def test_document_prompt_omits_empty_interpreted_block():
     prompt = build_prompt(
         "Noi dung van ban?",
         "<NGUON>noi dung</NGUON>",
@@ -139,10 +177,9 @@ def test_document_prompt_includes_fallback_interpreted_block_for_empty_plan():
         },
     )
 
-    assert "CÁCH HỆ THỐNG ĐÃ HIỂU CÂU HỎI:" in prompt
-    assert "Intent: unknown" in prompt
-    assert "Nhóm nghiệp vụ: unknown" in prompt
-    assert "Truy vấn nghiệp vụ: Noi dung van ban?" in prompt
+    assert "CÁCH HỆ THỐNG ĐÃ HIỂU CÂU HỎI:" not in prompt
+    assert "Intent: unknown" not in prompt
+    assert "Nhóm nghiệp vụ: unknown" not in prompt
 
 
 @pytest.mark.parametrize(
@@ -1200,7 +1237,274 @@ def test_local_endpoint_retrieves_each_detected_aspect_separately(monkeypatch):
         "condition.docx",
         "dossier.docx",
     ]
-    assert result["answer"] == "Tra loi dieu kien.\nTra loi ho so."
+    assert "base.docx" not in [
+        doc["doc_name"] for doc in generated_states[0]["docs"]
+    ]
+    assert result["answer"] == (
+        "Tra loi dieu kien.\n\n"
+        "Tra loi ho so."
+    )
+
+
+def test_local_endpoint_covers_each_coordinated_audience(monkeypatch):
+    question = (
+        "Sinh vien va giang vien xem thong tin "
+        "hoc tap/cong tac ca nhan o dau?"
+    )
+    student_doc = {
+        "source_type": "local_file",
+        "title": "Tra cuu thong tin hoc tap",
+        "content": "Sinh vien xem thong tin hoc tap ca nhan tren he thong.",
+        "doc_name": "WEB SUPPORT SV.docx",
+        "relative_path": "WEB SUPPORT SV.docx",
+        "chunk_index": 1,
+        "keyword_score": 90.0,
+    }
+    staff_doc = {
+        "source_type": "local_file",
+        "title": "Tra cuu thong tin cong tac",
+        "content": "Giang vien xem thong tin cong tac ca nhan tren he thong.",
+        "doc_name": "WEB SUPPORT CBGV.docx",
+        "relative_path": "WEB SUPPORT CBGV.docx",
+        "chunk_index": 1,
+        "keyword_score": 90.0,
+    }
+    retrieval_questions = []
+    generated_states = []
+
+    async def fake_retrieve(state):
+        retrieval_questions.append(state["question"])
+        docs = (
+            [staff_doc]
+            if "giang vien" in document_search.normalize_text(state["question"])
+            else [student_doc]
+        )
+        return {**state, "docs": docs, "retrieval_debug": {}}
+
+    def fake_semantic_filter(aspect_question, docs):
+        normalized = document_search.normalize_text(aspect_question)
+        expected_name = (
+            "web support cbgv.docx"
+            if "giang vien" in normalized
+            else "web support sv.docx"
+        )
+        selected = [
+            doc for doc in docs
+            if document_search.normalize_text(doc["doc_name"]) == expected_name
+        ]
+        return selected, "mock_audience_match"
+
+    async def fake_generate(state):
+        generated_states.append(state)
+        return {
+            **state,
+            "answer": (
+                "[Y_1]\nThong tin danh cho sinh vien.\n[/Y_1]\n"
+                "[Y_2]\nThong tin danh cho giang vien.\n[/Y_2]"
+            ),
+        }
+
+    monkeypatch.setattr(
+        chatbot_controller,
+        "retrieve_local_documents",
+        fake_retrieve,
+    )
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "filter_semantic_aspect_docs",
+        fake_semantic_filter,
+    )
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_has_confident_evidence",
+        lambda _question, docs: (bool(docs), "mock"),
+    )
+
+    result = asyncio.run(chatbot_controller._answer_with_local_documents(
+        RagTrace(question),
+        question,
+        "internal_document",
+        "test_coordinated_audiences",
+    ))
+
+    assert any(
+        "sinh vien" in document_search.normalize_text(q)
+        for q in retrieval_questions
+    )
+    assert any(
+        "giang vien" in document_search.normalize_text(q)
+        for q in retrieval_questions
+    )
+    assert {
+        doc["doc_name"] for doc in generated_states[0]["docs"]
+    } == {"WEB SUPPORT SV.docx", "WEB SUPPORT CBGV.docx"}
+    assert len(generated_states[0]["required_aspects"]) == 2
+    assert result["answer"] == (
+        "Thong tin danh cho sinh vien.\n\n"
+        "Thong tin danh cho giang vien."
+    )
+
+
+def test_local_endpoint_uses_base_evidence_before_supplemental_aspects(monkeypatch):
+    question = (
+        "Dieu kien chuyen truong la gi va "
+        "ho so chuyen truong can nhung gi?"
+    )
+    condition_doc = {
+        "source_type": "local_file",
+        "title": "Dieu kien chuyen truong",
+        "content": (
+            "Dieu kien chuyen truong quy dinh cac truong hop sinh vien "
+            "duoc xem xet chuyen truong."
+        ),
+        "doc_name": "condition.docx",
+        "relative_path": "condition.docx",
+        "chunk_index": 1,
+        "keyword_score": 90.0,
+    }
+    dossier_doc = {
+        "source_type": "local_file",
+        "title": "Ho so chuyen truong",
+        "content": (
+            "Ho so chuyen truong gom don xin chuyen truong, bang diem "
+            "va cac giay to minh chung."
+        ),
+        "doc_name": "dossier.docx",
+        "relative_path": "dossier.docx",
+        "chunk_index": 1,
+        "keyword_score": 90.0,
+    }
+    retrieval_questions = []
+    generated_states = []
+
+    async def fake_retrieve(state):
+        retrieval_questions.append(state["question"])
+        return {
+            **state,
+            "docs": [condition_doc, dossier_doc],
+            "retrieval_debug": {},
+        }
+
+    async def fake_generate(state):
+        generated_states.append(state)
+        return {
+            **state,
+            "answer": (
+                "[Y_1]\nTra loi dieu kien.\n[/Y_1]\n"
+                "[Y_2]\nTra loi ho so.\n[/Y_2]"
+            ),
+        }
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_local_documents", fake_retrieve)
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_has_confident_evidence",
+        lambda _question, docs: (bool(docs), "mock"),
+    )
+
+    result = asyncio.run(chatbot_controller._answer_with_local_documents(
+        RagTrace(question),
+        question,
+        "internal_document",
+        "test_base_coverage",
+    ))
+
+    assert retrieval_questions == [question]
+    assert {
+        doc["doc_name"] for doc in generated_states[0]["docs"]
+    } == {"condition.docx", "dossier.docx"}
+    assert result["answer"] == (
+        "Tra loi dieu kien.\n\n"
+        "Tra loi ho so."
+    )
+
+
+def test_local_endpoint_retrieves_original_before_contextual_supplement(monkeypatch):
+    original = "Còn cái đó thì xem ở đâu?"
+    standalone = "Lịch thi của sinh viên xem ở đâu?"
+    original_doc = {
+        "source_type": "local_file",
+        "title": "Thong tin chung",
+        "content": "Thong tin chung trong tai lieu.",
+        "doc_name": "original.docx",
+        "relative_path": "original.docx",
+        "chunk_index": 1,
+        "keyword_score": 60.0,
+    }
+    contextual_doc = {
+        "source_type": "local_file",
+        "title": "Lich thi",
+        "content": "Sinh vien xem lich thi tren he thong.",
+        "doc_name": "schedule.docx",
+        "relative_path": "schedule.docx",
+        "chunk_index": 1,
+        "keyword_score": 90.0,
+    }
+    retrieval_questions = []
+    generated_states = []
+    events = []
+
+    async def fake_retrieve(state):
+        events.append(("retrieve", state["question"]))
+        retrieval_questions.append(state["question"])
+        docs = [original_doc] if state["question"] == original else [contextual_doc]
+        return {**state, "docs": docs, "retrieval_debug": {}}
+
+    async def fake_contextualize(question, history):
+        events.append(("contextualize", question))
+        assert history
+        return standalone, {
+            "history_present": True,
+            "llm_called": True,
+            "fallback": False,
+            "reason": "rewritten",
+        }
+
+    async def fake_generate(state):
+        generated_states.append(state)
+        return {**state, "answer": "Xem tai muc Lich thi."}
+
+    monkeypatch.setattr(chatbot_controller, "retrieve_local_documents", fake_retrieve)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "contextualize_question",
+        fake_contextualize,
+    )
+    monkeypatch.setattr(chatbot_controller, "generate_answer", fake_generate)
+    monkeypatch.setattr(
+        chatbot_controller,
+        "_has_confident_evidence",
+        lambda _question, docs: (bool(docs), "mock"),
+    )
+
+    token = set_conversation_context(ConversationContext(
+        original_question=original,
+        standalone_question=original,
+        history=[{"role": "user", "content": "Toi dang hoi ve lich thi"}],
+    ))
+    try:
+        result = asyncio.run(chatbot_controller._answer_with_local_documents(
+            RagTrace(standalone),
+            standalone,
+            "internal_document",
+            "test_contextual_supplement",
+        ))
+    finally:
+        reset_conversation_context(token)
+
+    assert retrieval_questions == [original, standalone]
+    assert events[:3] == [
+        ("retrieve", original),
+        ("contextualize", original),
+        ("retrieve", standalone),
+    ]
+    assert [doc["doc_name"] for doc in generated_states[0]["docs"][:2]] == [
+        "original.docx",
+        "schedule.docx",
+    ]
+    assert result["question"] == original
 
 
 def test_attendance_exam_policy_drops_business_and_prefers_training_regulation(monkeypatch):

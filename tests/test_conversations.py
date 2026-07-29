@@ -10,10 +10,21 @@ from app.data.conversation_context import get_conversation_context
 from app.data.conversation_context import (
     ConversationContext, reset_conversation_context, set_conversation_context,
 )
-from app.data.contextualizer import limit_history
+from app.data.contextualizer import _needs_rewrite, limit_history
 from app.data.conversation_repository import ConversationRepository
 from app.main import app
 from app.controller.chatbot_controller import _new_trace
+
+
+def test_contextualizer_does_not_rewrite_independent_short_questions():
+    history = [{"role": "user", "content": "Cau hoi truoc"}]
+
+    assert _needs_rewrite(
+        "Ôn tập và Thi thử trên UNETI Online khác nhau thế nào?",
+        history,
+    ) is False
+    assert _needs_rewrite("Phúc khảo ở đâu?", history) is False
+    assert _needs_rewrite("Còn cái đó thì sao?", history) is True
 
 
 def _client_with_repository(tmp_path):
@@ -100,6 +111,54 @@ def test_second_turn_uses_standalone_question_and_history(monkeypatch, tmp_path)
     assert second.status_code == 200
     assert second.json()["question"] == "Can giay to gi?"
     assert observed[-1] == ("Giay to can co khi cap lai mat khau?", "Can giay to gi?", 2)
+
+
+def test_local_endpoint_defers_contextualization_in_conversation_service(
+    monkeypatch,
+    tmp_path,
+):
+    client, _ = _client_with_repository(tmp_path)
+    observed = []
+
+    async def fail_if_called_before_handler(_question, _history):
+        raise AssertionError("contextualizer must be deferred for local endpoint")
+
+    async def fake_handle(request):
+        context = get_conversation_context()
+        observed.append((
+            request.question,
+            context.original_question,
+            context.rewrite_debug.get("reason"),
+        ))
+        return _fake_result(request)
+
+    fake_handle.defer_contextualization = True
+    monkeypatch.setattr(
+        conversation_service,
+        "contextualize_question",
+        fail_if_called_before_handler,
+    )
+    monkeypatch.setattr(chat_router, "handle_local_documents_chat", fake_handle)
+
+    first = client.post(
+        "/api/chat/local-documents",
+        json={"question": "Lich thi o dau?", "request_id": "local-defer-1"},
+    ).json()
+    second = client.post(
+        "/api/chat/local-documents",
+        json={
+            "question": "Con cai do thi sao?",
+            "thread_id": first["thread_id"],
+            "request_id": "local-defer-2",
+        },
+    )
+
+    assert second.status_code == 200
+    assert observed[-1] == (
+        "Con cai do thi sao?",
+        "Con cai do thi sao?",
+        "deferred_until_after_original_retrieval",
+    )
 
 
 def test_two_sessions_cannot_access_same_thread(monkeypatch, tmp_path):

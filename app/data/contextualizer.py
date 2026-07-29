@@ -6,7 +6,11 @@ from app.data.gemini_client import ask_gemini
 
 
 _DEPENDENT_MARKERS = re.compile(
-    r"\b(nó|đó|này|trên|vậy|thế|còn|như vậy|trường hợp ấy|cái đó)\b",
+    (
+        r"\b(nó|đó|cái đó|việc đó|nội dung đó|trường hợp này|"
+        r"trường hợp đó|trường hợp ấy|trường hợp trên|nội dung trên|"
+        r"loại còn lại|ý còn lại|như vậy|vậy còn)\b"
+    ),
     re.IGNORECASE,
 )
 
@@ -27,8 +31,7 @@ def limit_history(messages: list[dict], max_messages: int, max_chars: int) -> li
 def _needs_rewrite(question: str, history: list[dict]) -> bool:
     if not history:
         return False
-    words = question.split()
-    return bool(_DEPENDENT_MARKERS.search(question)) or len(words) <= 7
+    return bool(_DEPENDENT_MARKERS.search(question))
 
 
 async def contextualize_question(question: str, history: list[dict]) -> tuple[str, dict]:
