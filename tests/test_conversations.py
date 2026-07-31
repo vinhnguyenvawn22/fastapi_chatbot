@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 os.environ.setdefault("GEMINI_API_KEY", "test-gemini-api-key")
@@ -10,21 +11,51 @@ from app.data.conversation_context import get_conversation_context
 from app.data.conversation_context import (
     ConversationContext, reset_conversation_context, set_conversation_context,
 )
+import app.data.contextualizer as contextualizer
 from app.data.contextualizer import _needs_rewrite, limit_history
 from app.data.conversation_repository import ConversationRepository
 from app.main import app
 from app.controller.chatbot_controller import _new_trace
 
 
-def test_contextualizer_does_not_rewrite_independent_short_questions():
+def test_contextualizer_rewrites_questions_with_at_most_seven_words():
     history = [{"role": "user", "content": "Cau hoi truoc"}]
 
     assert _needs_rewrite(
         "Ôn tập và Thi thử trên UNETI Online khác nhau thế nào?",
         history,
     ) is False
-    assert _needs_rewrite("Phúc khảo ở đâu?", history) is False
+    assert _needs_rewrite("Phúc khảo ở đâu?", history) is True
+    assert _needs_rewrite("có mất phí không", history) is True
     assert _needs_rewrite("Còn cái đó thì sao?", history) is True
+
+
+def test_contextualizer_expands_short_followup_with_recent_topic(monkeypatch):
+    history = [
+        {
+            "role": "user",
+            "content": "Tôi muốn chấm lại bài thi thì làm thế nào",
+        },
+        {
+            "role": "assistant",
+            "content": "Bạn có thể gửi yêu cầu phúc khảo trực tuyến.",
+        },
+    ]
+    observed = {}
+
+    def fake_ask_gemini(prompt):
+        observed["prompt"] = prompt
+        return '{"question":"Phúc khảo có mất phí không?"}'
+
+    monkeypatch.setattr(contextualizer, "ask_gemini", fake_ask_gemini)
+    standalone, debug = asyncio.run(
+        contextualizer.contextualize_question("có mất phí không", history)
+    )
+
+    assert standalone == "Phúc khảo có mất phí không?"
+    assert debug["llm_called"] is True
+    assert debug["reason"] == "rewritten"
+    assert "Câu hỏi hiện tại ngắn" in observed["prompt"]
 
 
 def _client_with_repository(tmp_path):
