@@ -84,6 +84,15 @@ GEMINI_API_KEYS = _load_gemini_api_keys()
 GEMINI_API_KEY = GEMINI_API_KEYS[0] if GEMINI_API_KEYS else None
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
+# Local Qwen through Ollama is the LLM backend. Legacy Gemini values above are
+# still parsed so older test/deployment environments can import the application.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b-instruct").strip()
+OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
+OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "512"))
+LLM_MODEL = OLLAMA_MODEL
+
 DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", "uploads/document")
 LOCAL_DOCUMENTS_CORPUS = os.getenv("LOCAL_DOCUMENTS_CORPUS", "local_documents")
 LOCAL_DOCUMENTS_INDEX_VERSION = os.getenv(
@@ -147,7 +156,7 @@ RERANK_AMBIGUOUS_QUERY_KEYWORDS = int(os.getenv("RERANK_AMBIGUOUS_QUERY_KEYWORDS
 QUERY_EXPANSION_ENABLED = os.getenv("QUERY_EXPANSION_ENABLED", "true").lower() in {
     "1", "true", "yes", "on",
 }
-QUERY_EXPANSION_MODEL = os.getenv("QUERY_EXPANSION_MODEL", GEMINI_MODEL)
+QUERY_EXPANSION_MODEL = os.getenv("QUERY_EXPANSION_MODEL", LLM_MODEL)
 QUERY_EXPANSION_MAX_VARIANTS = int(os.getenv("QUERY_EXPANSION_MAX_VARIANTS", "2"))
 QUERY_EXPANSION_MAX_WORDS = int(os.getenv("QUERY_EXPANSION_MAX_WORDS", "6"))
 QUERY_EXPANSION_CACHE_TTL_SECONDS = int(os.getenv("QUERY_EXPANSION_CACHE_TTL_SECONDS", "1800"))
@@ -155,7 +164,7 @@ QUERY_EXPANSION_CACHE_MAX_ITEMS = int(os.getenv("QUERY_EXPANSION_CACHE_MAX_ITEMS
 HYDE_ENABLED = os.getenv("HYDE_ENABLED", "true").lower() in {
     "1", "true", "yes", "on",
 }
-HYDE_MODEL = os.getenv("HYDE_MODEL", GEMINI_MODEL)
+HYDE_MODEL = os.getenv("HYDE_MODEL", LLM_MODEL)
 HYDE_MAX_WORDS = int(os.getenv("HYDE_MAX_WORDS", "100"))
 HYDE_ANN_TOP_K = int(os.getenv("HYDE_ANN_TOP_K", "20"))
 HYDE_MIN_TOPIC_CONFIDENCE = float(os.getenv("HYDE_MIN_TOPIC_CONFIDENCE", "0.65"))
@@ -263,5 +272,5 @@ WEBSITE_FETCH_TIMEOUT = float(os.getenv("WEBSITE_FETCH_TIMEOUT", "15"))
 WEBSITE_FETCH_MAX_BYTES = int(os.getenv("WEBSITE_FETCH_MAX_BYTES", str(20 * 1024 * 1024)))
 WEBSITE_EXTRACT_MAX_CHARS = int(os.getenv("WEBSITE_EXTRACT_MAX_CHARS", "12000"))
 
-if not GEMINI_API_KEYS:
-    raise ValueError("Thieu GEMINI_API_KEY hoac GEMINI_API_KEYS trong file .env")
+if LLM_PROVIDER != "ollama":
+    raise ValueError("LLM_PROVIDER hien chi ho tro gia tri 'ollama'")

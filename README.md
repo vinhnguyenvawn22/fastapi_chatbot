@@ -267,18 +267,22 @@ Ví dụ request chat:
 
 Tạo file `.env` từ `.env.example`. Không commit `.env` thật.
 
-Biến bắt buộc:
+Biến cấu hình mô hình local:
 
 ```env
-GEMINI_API_KEY=your_gemini_api_key_here
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:4b-instruct
+OLLAMA_TIMEOUT_SECONDS=180
 ```
 
-Nếu có nhiều Gemini API key, có thể dùng `GEMINI_API_KEYS=key_1,key_2,key_3`, hoặc khai báo `GEMINI_API_KEY_1`, `GEMINI_API_KEY_2`, hoặc lặp nhiều dòng `GEMINI_API_KEY=...` trong `.env`. Hệ thống sẽ tự xoay vòng key và thử key tiếp theo khi gặp quota/rate limit hoặc lỗi tạm thời.
+Qwen chạy trên máy qua Ollama nên không cần API key và không phát sinh phí theo token.
 
 Biến thường dùng:
 
 ```env
-GEMINI_MODEL=gemini-2.5-flash
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=qwen3:4b
 DOCUMENTS_DIR=uploads/Tong hop van ban AI
 DOCUMENT_INDEX_CACHE_ENABLED=true
 DOCUMENT_INDEX_CACHE_FILE=storage/document_index/index.json
@@ -363,7 +367,15 @@ Trên Windows PowerShell:
 Copy-Item .env.example .env
 ```
 
-Sau đó điền `GEMINI_API_KEY` thật trong `.env`.
+### Cài Ollama và tải Qwen
+
+Cài Ollama cho Windows, mở Ollama rồi chạy:
+
+```powershell
+ollama run qwen3:4b-instruct
+```
+
+Lệnh này tự tải model ở lần chạy đầu tiên. Sau khi model trả lời được trong terminal, có thể thoát phiên chat bằng `/bye` rồi chạy server FastAPI.
 
 ### Chạy server
 

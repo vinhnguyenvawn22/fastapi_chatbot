@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="FastAPI Chatbot",
-    description="Chatbot RAG using FastAPI and Gemini",
+    description="Chatbot RAG using FastAPI and local Qwen through Ollama",
     version="1.0.0",
     lifespan=lifespan,
 )

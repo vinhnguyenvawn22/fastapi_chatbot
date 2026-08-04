@@ -22,6 +22,9 @@ GEMINI_ERROR_MARKERS = {
     "gemini_quota_or_rate_limit": "He thong AI tam thoi vuot gioi han",
     "gemini_unavailable": "He thong AI dang ban",
     "gemini_api_error": "Loi khi goi Gemini API",
+    "qwen_unavailable": "Khong ket noi duoc Qwen local",
+    "qwen_timeout": "Qwen local phan hoi qua thoi gian cho phep",
+    "qwen_local_error": "Loi khi goi mo hinh Qwen local",
 }
 
 

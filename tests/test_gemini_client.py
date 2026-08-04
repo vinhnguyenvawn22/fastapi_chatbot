@@ -1,64 +1,62 @@
-import itertools
-import os
-from types import SimpleNamespace
-
-
-os.environ.setdefault("GEMINI_API_KEY", "test-gemini-api-key")
+import json
 
 from app.data import gemini_client
 
 
-class _FakeModels:
-    def __init__(self, api_key, calls, failures):
-        self.api_key = api_key
-        self.calls = calls
-        self.failures = failures
+class _FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
 
-    def generate_content(self, model, contents):
-        self.calls.append((self.api_key, model, contents))
-        error = self.failures.get(self.api_key)
-        if error:
-            raise RuntimeError(error)
-        return SimpleNamespace(text=f"ok:{self.api_key}")
+    def __enter__(self):
+        return self
 
+    def __exit__(self, *_args):
+        return False
 
-class _FakeClient:
-    def __init__(self, api_key, calls, failures):
-        self.models = _FakeModels(api_key, calls, failures)
+    def read(self):
+        return json.dumps(self.payload).encode("utf-8")
 
 
-def test_generate_content_fails_over_to_next_key(monkeypatch):
-    calls = []
-    failures = {"key-1": "429 RESOURCE_EXHAUSTED"}
-
-    monkeypatch.setattr(gemini_client, "GEMINI_API_KEYS", ["key-1", "key-2"])
-    monkeypatch.setattr(gemini_client, "_key_counter", itertools.count())
-    monkeypatch.setattr(
-        gemini_client,
-        "_client_for_key",
-        lambda api_key: _FakeClient(api_key, calls, failures),
-    )
-
-    response = gemini_client.generate_content("model", "prompt")
-
-    assert response.text == "ok:key-2"
-    assert [call[0] for call in calls] == ["key-1", "key-2"]
-
-
-def test_generate_content_rotates_starting_key(monkeypatch):
+def test_generate_content_calls_local_ollama(monkeypatch):
     calls = []
 
-    monkeypatch.setattr(gemini_client, "GEMINI_API_KEYS", ["key-1", "key-2"])
-    monkeypatch.setattr(gemini_client, "_key_counter", itertools.count())
+    def fake_urlopen(request, timeout):
+        calls.append(
+            {
+                "url": request.full_url,
+                "body": json.loads(request.data.decode("utf-8")),
+                "timeout": timeout,
+            }
+        )
+        return _FakeResponse({"response": "xin chao"})
+
+    monkeypatch.setattr(gemini_client, "urlopen", fake_urlopen)
+    response = gemini_client.generate_content("qwen3:4b", "prompt test")
+
+    assert response.text == "xin chao"
+    assert calls[0]["url"].endswith("/api/generate")
+    assert calls[0]["body"] == {
+        "model": "qwen3:4b",
+        "prompt": "prompt test",
+        "stream": False,
+        "options": {
+            "num_predict": gemini_client.OLLAMA_NUM_PREDICT,
+            "temperature": 0.2,
+        },
+    }
+
+
+def test_ask_gemini_is_backward_compatible_qwen_alias(monkeypatch):
     monkeypatch.setattr(
         gemini_client,
-        "_client_for_key",
-        lambda api_key: _FakeClient(api_key, calls, {}),
+        "generate_content",
+        lambda model, contents: _FakeTextResponse("tra loi local"),
     )
 
-    first = gemini_client.generate_content("model", "first")
-    second = gemini_client.generate_content("model", "second")
+    assert gemini_client.ask_gemini("cau hoi") == "tra loi local"
+    assert gemini_client.ask_llm("cau hoi") == "tra loi local"
 
-    assert first.text == "ok:key-1"
-    assert second.text == "ok:key-2"
-    assert [call[0] for call in calls] == ["key-1", "key-2"]
+
+class _FakeTextResponse:
+    def __init__(self, text):
+        self.text = text
